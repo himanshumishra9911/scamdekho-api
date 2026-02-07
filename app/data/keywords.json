@@ -1,0 +1,80 @@
+{
+  "en": {
+    "high_risk": [
+      "kyc",
+      "kyc pending",
+      "kyc expired",
+      "kyc update",
+      "verify kyc",
+      "verify immediately",
+      "update now",
+      "urgent",
+      "final warning",
+      "last chance",
+      "account blocked",
+      "account suspended",
+      "upi blocked",
+      "otp",
+      "share otp",
+      "scan qr",
+      "qr code",
+      "loan approved",
+      "instant loan",
+      "guaranteed returns",
+      "double your money",
+      "job offer",
+      "telegram job",
+      "digital arrest",
+      "court notice",
+      "legal action",
+      "parcel seized",
+      "customs fee",
+      "suspicious activity"
+    ],
+    "medium_risk": [
+      "offer",
+      "free",
+      "reward",
+      "bonus",
+      "cashback",
+      "click here",
+      "apply now",
+      "register now",
+      "customer care",
+      "relationship manager",
+      "investment",
+      "work from home",
+      "part time job"
+    ]
+  },
+
+  "hi": {
+    "high_risk": [
+      "केवाईसी",
+      "kyc",
+      "खाता बंद",
+      "account band",
+      "upi blocked",
+      "otp",
+      "qr",
+      "loan approved",
+      "गारंटीड रिटर्न",
+      "डिजिटल अरेस्ट",
+      "गिरफ्तार",
+      "कोर्ट नोटिस",
+      "कस्टम्स पार्सल",
+      "साइबर क्राइम"
+    ],
+    "medium_risk": [
+      "aapka account band",
+      "turant verify kare",
+      "abhi update kare",
+      "aakhri mauka",
+      "free milega",
+      "aaj hi",
+      "ghar baithe kamao",
+      "reward",
+      "offer"
+    ]
+  }
+}

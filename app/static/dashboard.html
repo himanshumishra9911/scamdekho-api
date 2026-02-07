@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ScamDekho Dashboard</title>
+  <style>
+    body {
+      background:#111;
+      color:white;
+      font-family:Arial;
+      padding:30px;
+    }
+
+    table {
+      width:100%;
+      border-collapse:collapse;
+    }
+
+    th, td {
+      padding:10px;
+      border-bottom:1px solid #333;
+      text-align:left;
+    }
+
+    th {
+      color:#00ffd5;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>🚨 ScamDekho Dashboard</h1>
+
+<table>
+  <thead>
+    <tr>
+      <th>Type</th>
+      <th>Content</th>
+      <th>Verdict</th>
+      <th>Time</th>
+    </tr>
+  </thead>
+
+  <!-- 🔥 THIS WAS MISSING -->
+  <tbody id="rows"></tbody>
+
+</table>
+
+
+<script>
+async function loadData() {
+
+  const res = await fetch("http://127.0.0.1:8000/analytics/stats");
+  const data = await res.json();
+
+  const table = document.getElementById("rows");
+
+  table.innerHTML = "";
+
+  data.recent.forEach(row => {
+
+    const tr = document.createElement("tr");
+
+    tr.innerHTML = `
+      <td>${row[0]}</td>
+      <td style="max-width:400px;word-break:break-word">${row[1]}</td>
+      <td style="color:${row[2] === 'SCAM' ? 'red' : 'lightgreen'}">${row[2]}</td>
+      <td>${row[3]}</td>
+    `;
+
+    table.appendChild(tr);
+  });
+}
+
+loadData();
+setInterval(loadData, 3000);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "roman_hindi_markers": [
+    "aap","apka","aapka","kripya","turant","band","ho gaya",
+    "karo","kijiye","link par","click karo","verify karo"
+  ],
+  "english_markers": [
+    "your","account","is","has","please","click","update","verify"
+  ],
+  "urgency_words": {
+    "en": ["urgent","immediately","now","today","limited time","act fast"],
+    "hi": ["तुरंत","अभी","आज","सीमित समय","जल्दी करें","फौरन"]
+  },
+  "fear_words": {
+    "en": ["blocked","suspended","disabled","legal action","penalty"],
+    "hi": ["बंद","निलंबित","कार्रवाई","जुर्माना"]
+  }
+}
