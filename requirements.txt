@@ -5,5 +5,5 @@ pydantic
 python-dotenv
 requests
 pytesseract
-
-
+playwright
+Pillow
