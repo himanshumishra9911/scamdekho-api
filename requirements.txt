@@ -4,3 +4,6 @@ openai
 pydantic
 python-dotenv
 requests
+pytesseract
+
+
