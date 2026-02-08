@@ -4,6 +4,7 @@ openai
 pydantic
 python-dotenv
 requests
+python-multipart
 pytesseract
 playwright
 Pillow
