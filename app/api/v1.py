@@ -6,8 +6,12 @@ from app.services.ai_engine import call_ai_analysis, call_ai_vision_analysis
 from app.services.ocr_engine import extract_text_from_image
 from app.services.website_screenshot import capture_website_screenshot
 from app.core.database import save_scan
+from app.api.report import router as report_router
+
 
 router = APIRouter()
+
+router.include_router(report_router, prefix="/report", tags=["Report"])
 
 
 # ======================================================
