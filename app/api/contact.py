@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import smtplib
 from email.mime.text import MIMEText
+import ssl
 import os
 from dotenv import load_dotenv
 
@@ -43,14 +44,13 @@ Message:
     msg["To"] = EMAIL_USER
 
     try:
-        server = smtplib.SMTP("smtp.zoho.in", 465)
-        server.starttls()
-        server.login(EMAIL_USER, EMAIL_PASS)
-        server.send_message(msg)
-        server.quit()
+        context = ssl.create_default_context()
+
+        with smtplib.SMTP_SSL("smtp.zoho.in", 465, context=context, timeout=20) as server:
+            server.login(EMAIL_USER, EMAIL_PASS)
+            server.sendmail(EMAIL_USER, EMAIL_USER, msg.as_string())
 
         return {"message": "Email sent successfully"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
