@@ -25,9 +25,12 @@ def submit_contact(data: ContactRequest):
             "Content-Type": "application/json",
         },
         json={
-            "from": "ScamDekho <noreply@send.scamdekho.in>",
-            "to": ["contact@scamdekho.in"],
+            # 👇 IMPORTANT CHANGE HERE
+            "from": "ScamDekho <support@scamdekho.in>",
+            "to": ["support@scamdekho.in"],
+
             "subject": f"New Contact from {data.name}",
+
             "html": f"""
                 <h3>New Contact Message</h3>
                 <p><strong>Name:</strong> {data.name}</p>
