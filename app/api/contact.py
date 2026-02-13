@@ -43,7 +43,7 @@ Message:
     msg["To"] = EMAIL_USER
 
     try:
-        server = smtplib.SMTP("smtp.zoho.in", 587)
+        server = smtplib.SMTP("smtp.zoho.in", 465)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASS)
         server.send_message(msg)
@@ -53,3 +53,4 @@ Message:
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
