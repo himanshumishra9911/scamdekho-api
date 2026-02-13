@@ -1,56 +1,43 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import smtplib
-from email.mime.text import MIMEText
-import ssl
+import requests
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 router = APIRouter()
 
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
-
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 
 class ContactRequest(BaseModel):
     name: str
     email: str
     message: str
 
-
 @router.post("/")
 def submit_contact(data: ContactRequest):
 
-    if not EMAIL_USER or not EMAIL_PASS:
-        raise HTTPException(status_code=500, detail="Email credentials missing")
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=500, detail="Resend API key missing")
 
-    subject = f"New Contact from {data.name}"
+    response = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "from": "ScamDekho <noreply@send.scamdekho.in>",
+            "to": ["contact@scamdekho.in"],
+            "subject": f"New Contact from {data.name}",
+            "html": f"""
+                <h3>New Contact Message</h3>
+                <p><strong>Name:</strong> {data.name}</p>
+                <p><strong>Email:</strong> {data.email}</p>
+                <p><strong>Message:</strong><br>{data.message}</p>
+            """,
+        },
+    )
 
-    body = f"""
-New Contact Message from ScamDekho
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail=response.text)
 
-Name: {data.name}
-Email: {data.email}
-
-Message:
-{data.message}
-"""
-
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = EMAIL_USER
-    msg["To"] = EMAIL_USER
-
-    try:
-        context = ssl.create_default_context()
-
-        with smtplib.SMTP_SSL("smtp.zoho.in", 465, context=context, timeout=20) as server:
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.sendmail(EMAIL_USER, EMAIL_USER, msg.as_string())
-
-        return {"message": "Email sent successfully"}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"message": "Email sent successfully"}
