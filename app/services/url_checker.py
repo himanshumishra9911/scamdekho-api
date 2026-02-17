@@ -43,7 +43,7 @@ def rule_based_url_signals(url: str):
 
 
 # ===============================
-# WEBSITE LOAD CHECK
+# SMART WEBSITE LOAD CHECK (Memory Safe)
 # ===============================
 def check_website_status(url: str):
     try:
@@ -51,15 +51,41 @@ def check_website_status(url: str):
             "User-Agent": "Mozilla/5.0"
         }
 
+        # 🔹 Step 1: HEAD request first (lightweight)
+        head = requests.head(url, timeout=5, allow_redirects=True, headers=headers)
+
+        content_length = int(head.headers.get("Content-Length", 0))
+        content_type = head.headers.get("Content-Type", "")
+
+        # If not HTML → no need to download
+        if "text/html" not in content_type:
+            return True, ""
+
+        # If very large site (>800KB) skip full download
+        if content_length > 800000:
+            return True, ""
+
+        # 🔹 Step 2: Controlled GET (stream mode)
         r = requests.get(
             url,
-            timeout=8,
+            timeout=6,
             headers=headers,
+            stream=True,
             allow_redirects=True
         )
 
         if 200 <= r.status_code < 400:
-            return True, r.text[:5000]
+            text_chunks = []
+            total_read = 0
+
+            for chunk in r.iter_content(chunk_size=2048):
+                total_read += len(chunk)
+                text_chunks.append(chunk.decode(errors="ignore"))
+
+                if total_read > 5000:   # only read first 5KB
+                    break
+
+            return True, " ".join(text_chunks)
 
         return False, ""
 
@@ -123,7 +149,15 @@ def analyze_url(url: str):
     phishing_keywords = []
     if text:
         lower_text = text.lower()
-        keywords = ["verify your account", "update kyc", "urgent action", "login now", "otp required"]
+        keywords = [
+            "verify your account",
+            "update kyc",
+            "urgent action",
+            "login now",
+            "otp required",
+            "bank alert",
+            "account suspended"
+        ]
         for k in keywords:
             if k in lower_text:
                 phishing_keywords.append(k)
