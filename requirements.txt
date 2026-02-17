@@ -8,3 +8,5 @@ python-multipart
 pytesseract
 playwright
 Pillow
+python-whois
+
