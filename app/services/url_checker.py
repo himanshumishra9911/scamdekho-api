@@ -1,22 +1,20 @@
-import re
 import requests
+import socket
+import ssl
 from urllib.parse import urlparse
+from datetime import datetime
+import whois
 import os
-
-from app.services.ai_engine import call_ai_analysis
 
 GOOGLE_SAFE_API_KEY = os.getenv("GOOGLE_SAFE_API_KEY")
 
 
-# ===============================
-# RULE BASED SIGNALS
-# ===============================
-def rule_based_url_signals(url: str):
+# ======================================
+# DOMAIN BASIC SIGNALS
+# ======================================
+def rule_based_signals(domain):
     score = 0
     reasons = []
-
-    parsed = urlparse(url)
-    domain = parsed.netloc.lower()
 
     bad_tlds = [".xyz", ".top", ".club", ".click", ".info"]
 
@@ -25,91 +23,78 @@ def rule_based_url_signals(url: str):
         reasons.append("Suspicious domain extension")
 
     if domain.count("-") >= 3:
-        score += 20
+        score += 15
         reasons.append("Too many hyphens in domain")
 
     if sum(c.isdigit() for c in domain) > 4:
-        score += 15
+        score += 10
         reasons.append("Too many numbers in domain")
-
-    brand_words = ["paytm", "bank", "sbi", "amazon", "flipkart", "upi", "kyc"]
-
-    for b in brand_words:
-        if b in domain and not domain.endswith(".com"):
-            score += 20
-            reasons.append("Possible brand spoofing")
 
     return score, reasons
 
 
-# ===============================
-# SMART WEBSITE LOAD CHECK (Memory Safe)
-# ===============================
-def check_website_status(url: str):
+# ======================================
+# DOMAIN AGE
+# ======================================
+def check_domain_age(domain):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
+        domain_info = whois.whois(domain)
+        creation_date = domain_info.creation_date
 
-        # 🔹 Step 1: HEAD request first (lightweight)
-        head = requests.head(url, timeout=5, allow_redirects=True, headers=headers)
+        if isinstance(creation_date, list):
+            creation_date = creation_date[0]
 
-        content_length = int(head.headers.get("Content-Length", 0))
-        content_type = head.headers.get("Content-Type", "")
+        if creation_date:
+            age_days = (datetime.now() - creation_date).days
 
-        # If not HTML → no need to download
-        if "text/html" not in content_type:
-            return True, ""
+            if age_days < 180:
+                return 35, "Domain is very new (less than 6 months old)"
+            elif age_days < 365:
+                return 15, "Domain less than 1 year old"
 
-        # If very large site (>800KB) skip full download
-        if content_length > 800000:
-            return True, ""
-
-        # 🔹 Step 2: Controlled GET (stream mode)
-        r = requests.get(
-            url,
-            timeout=6,
-            headers=headers,
-            stream=True,
-            allow_redirects=True
-        )
-
-        if 200 <= r.status_code < 400:
-            text_chunks = []
-            total_read = 0
-
-            for chunk in r.iter_content(chunk_size=2048):
-                total_read += len(chunk)
-                text_chunks.append(chunk.decode(errors="ignore"))
-
-                if total_read > 5000:   # only read first 5KB
-                    break
-
-            return True, " ".join(text_chunks)
-
-        return False, ""
-
-    except requests.exceptions.Timeout:
-        return True, ""
+        return 0, None
 
     except Exception:
-        return False, ""
+        return 10, "Could not verify domain age"
 
 
-# ===============================
-# GOOGLE SAFE BROWSING CHECK
-# ===============================
-def check_google_safe_browsing(url: str):
+# ======================================
+# SSL CHECK
+# ======================================
+def check_ssl(domain):
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((domain, 443), timeout=4) as sock:
+            with context.wrap_socket(sock, server_hostname=domain):
+                return 0, None
+    except Exception:
+        return 20, "SSL certificate invalid or missing"
+
+
+# ======================================
+# WEBSITE STATUS CHECK (LIGHTWEIGHT)
+# ======================================
+def check_website_status(url):
+    try:
+        r = requests.head(url, timeout=4, allow_redirects=True)
+        if 200 <= r.status_code < 400:
+            return 0, None
+        return 20, "Website returned abnormal HTTP status"
+    except Exception:
+        return 25, "Website unreachable"
+
+
+# ======================================
+# GOOGLE SAFE BROWSING
+# ======================================
+def check_google_safe(url):
     if not GOOGLE_SAFE_API_KEY:
-        return False
+        return 0, None
 
     endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GOOGLE_SAFE_API_KEY}"
 
     body = {
-        "client": {
-            "clientId": "scamdekho",
-            "clientVersion": "1.0"
-        },
+        "client": {"clientId": "scamdekho", "clientVersion": "1.0"},
         "threatInfo": {
             "threatTypes": [
                 "MALWARE",
@@ -124,63 +109,106 @@ def check_google_safe_browsing(url: str):
     }
 
     try:
-        r = requests.post(endpoint, json=body, timeout=5)
-
+        r = requests.post(endpoint, json=body, timeout=4)
         if r.status_code == 200 and r.json().get("matches"):
-            return True
+            return 60, "Flagged by Google Safe Browsing"
+        return 0, None
+    except Exception:
+        return 0, None
 
-        return False
+
+# ======================================
+# IP + ASN + GEO CHECK
+# ======================================
+def check_ip_reputation(domain):
+    try:
+        ip = socket.gethostbyname(domain)
+
+        r = requests.get(f"http://ip-api.com/json/{ip}?fields=status,country,isp,org", timeout=4)
+        data = r.json()
+
+        score = 0
+        reasons = []
+
+        # Suspicious hosting providers (cheap hosting abused often)
+        risky_hosts = ["ovh", "digitalocean", "vultr", "linode", "contabo"]
+
+        if any(host in data.get("isp", "").lower() for host in risky_hosts):
+            score += 10
+            reasons.append("Hosted on commonly abused infrastructure")
+
+        # High risk geographies (optional risk signal)
+        high_risk_countries = ["RU", "CN", "KP"]
+
+        if data.get("countryCode") in high_risk_countries:
+            score += 15
+            reasons.append("Hosting country considered high risk")
+
+        return score, reasons
 
     except Exception:
-        return False
+        return 0, []
 
 
-# ===============================
-# MAIN ANALYSIS FUNCTION
-# ===============================
-def analyze_url(url: str):
+# ======================================
+# FINAL ANALYSIS ENGINE
+# ======================================
+def analyze_url(url):
 
-    rule_score, rule_reasons = rule_based_url_signals(url)
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
 
-    loaded, text = check_website_status(url)
+    total_score = 0
+    reasons = []
 
-    safe_flag = check_google_safe_browsing(url)
+    # Basic rules
+    score, rule_reasons = rule_based_signals(domain)
+    total_score += score
+    reasons.extend(rule_reasons)
 
-    phishing_keywords = []
-    if text:
-        lower_text = text.lower()
-        keywords = [
-            "verify your account",
-            "update kyc",
-            "urgent action",
-            "login now",
-            "otp required",
-            "bank alert",
-            "account suspended"
-        ]
-        for k in keywords:
-            if k in lower_text:
-                phishing_keywords.append(k)
+    # Domain age
+    age_score, age_reason = check_domain_age(domain)
+    total_score += age_score
+    if age_reason:
+        reasons.append(age_reason)
 
-    # ===============================
-    # PREPARE AI INPUT
-    # ===============================
-    structured_summary = f"""
-URL: {url}
+    # SSL
+    ssl_score, ssl_reason = check_ssl(domain)
+    total_score += ssl_score
+    if ssl_reason:
+        reasons.append(ssl_reason)
 
-Rule Score: {rule_score}
-Rule Reasons: {rule_reasons}
+    # HTTP status
+    status_score, status_reason = check_website_status(url)
+    total_score += status_score
+    if status_reason:
+        reasons.append(status_reason)
 
-Website Loaded: {loaded}
+    # Google Safe Browsing
+    safe_score, safe_reason = check_google_safe(url)
+    total_score += safe_score
+    if safe_reason:
+        reasons.append(safe_reason)
 
-Google Safe Browsing Flagged: {safe_flag}
+    # IP Reputation
+    ip_score, ip_reasons = check_ip_reputation(domain)
+    total_score += ip_score
+    reasons.extend(ip_reasons)
 
-Detected Page Keywords: {phishing_keywords}
-"""
+    total_score = min(total_score, 100)
 
-    # ===============================
-    # CALL GPT FOR FINAL VERDICT
-    # ===============================
-    ai_result = call_ai_analysis(structured_summary)
+    # ======================================
+    # FINAL VERDICT LOGIC
+    # ======================================
+    if total_score >= 75:
+        verdict = "SCAM DETECTED"
+    elif total_score >= 40:
+        verdict = "SUSPICIOUS"
+    else:
+        verdict = "SAFE"
 
-    return ai_result
+    return {
+        "risk_score": total_score,
+        "verdict": verdict,
+        "reasons": reasons
+    }
