@@ -55,7 +55,6 @@ def call_ai_analysis(content: str, language="auto", content_type="text"):
                 {"role": "user", "content": content}
             ],
             response_format={"type": "json_object"},
-              max_completion_tokens=450
         )
 
         data = json.loads(response.choices[0].message.content)
@@ -112,7 +111,6 @@ def call_ai_vision_analysis(image_bytes):
                 }
             ],
             response_format={"type": "json_object"},
-              max_completion_tokens=450
         )
 
         data = json.loads(response.choices[0].message.content)
