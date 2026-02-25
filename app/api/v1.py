@@ -110,7 +110,7 @@ async def check_image(file: UploadFile = File(...)):
 # URL CHECK
 # ======================================================
 @router.post("/check/url")
-async def check_url(data: UrlCheckRequest):
+def check_url(data: UrlCheckRequest):
 
     url = data.url.strip()
 
