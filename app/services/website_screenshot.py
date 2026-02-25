@@ -1,38 +1,38 @@
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 
 
-def capture_website_screenshot(url: str):
+async def capture_website_screenshot(url: str):
 
     try:
-        with sync_playwright() as p:
+        if not url.startswith("http"):
+            url = "https://" + url
 
-            browser = p.chromium.launch(
+        async with async_playwright() as p:
+
+            browser = await p.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
 
-            context = browser.new_context(
+            context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 viewport={"width": 1366, "height": 768}
             )
 
-            page = context.new_page()
+            page = await context.new_page()
 
-            if not url.startswith("http"):
-                url = "https://" + url
-
-            page.goto(
+            await page.goto(
                 url,
                 timeout=30000,
                 wait_until="domcontentloaded"
             )
 
-            page.wait_for_timeout(3000)  # allow JS to render
+            await page.wait_for_timeout(3000)
 
-            screenshot = page.screenshot(full_page=True)
+            screenshot = await page.screenshot(full_page=True)
 
-            browser.close()
+            await browser.close()
 
             return screenshot
 
