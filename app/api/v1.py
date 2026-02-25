@@ -114,7 +114,7 @@ async def check_url(data: UrlCheckRequest):
 
     url = data.url.strip()
 
-    screenshot = capture_website_screenshot(url)
+    screenshot = await capture_website_screenshot(url)
 
     # -------------------------
     # Website loaded → Vision AI
