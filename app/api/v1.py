@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from app.services.ai_engine import call_ai_analysis, call_ai_vision_analysis
 from app.services.ocr_engine import extract_text_from_image
 from app.services.website_screenshot import capture_website_screenshot
-from app.core.database import save_scan
+from app.services.db_service import save_scan
 from app.api.report import router as report_router
 from app.api.contact import router as contact_router
 
@@ -33,7 +33,7 @@ class UrlCheckRequest(BaseModel):
 # TEXT CHECK
 # ======================================================
 @router.post("/check/text")
-def check_text(data: TextCheckRequest):
+async def check_text(data: TextCheckRequest):
 
     text = data.text.strip()
 
@@ -41,7 +41,7 @@ def check_text(data: TextCheckRequest):
     verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
 
     # ✅ SAVE ONLY ONCE
-    save_scan("text", text, verdict, ai["risk_score"])
+    await save_scan("text", text, verdict, ai["risk_score"])
 
     return {
         "verdict": verdict,
@@ -70,7 +70,7 @@ async def check_image(file: UploadFile = File(...)):
         ai = call_ai_analysis(extracted_text)
         verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
 
-        save_scan("image", extracted_text, verdict, ai["risk_score"])
+        await save_scan("image", extracted_text, verdict, ai["risk_score"])
 
         return {
             "verdict": verdict,
@@ -90,7 +90,7 @@ async def check_image(file: UploadFile = File(...)):
 
         verdict = "SCAM" if vision_ai["risk_score"] >= 70 else "SAFE"
 
-        save_scan("image", "vision_image", verdict, vision_ai["risk_score"])
+        await save_scan("image", "vision_image", verdict, vision_ai["risk_score"])
 
         return {
             "verdict": verdict,
@@ -102,7 +102,7 @@ async def check_image(file: UploadFile = File(...)):
         }
 
     # fallback
-    save_scan("image", "unknown", "SAFE", 0)
+    await save_scan("image", "unknown", "SAFE", 0)
     return {"verdict": "SAFE"}
 
 
@@ -110,7 +110,7 @@ async def check_image(file: UploadFile = File(...)):
 # URL CHECK
 # ======================================================
 @router.post("/check/url")
-def check_url(data: UrlCheckRequest):
+async def check_url(data: UrlCheckRequest):
 
     url = data.url.strip()
 
@@ -124,7 +124,7 @@ def check_url(data: UrlCheckRequest):
         ai = call_ai_vision_analysis(screenshot)
         verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
 
-        save_scan("url", url, verdict, ai["risk_score"])
+        await save_scan("url", url, verdict, ai["risk_score"])
 
         return {
             "verdict": verdict,
@@ -140,7 +140,7 @@ def check_url(data: UrlCheckRequest):
     # -------------------------
     verdict = "SCAM"
 
-    save_scan("url", url, verdict, 95)
+    await save_scan("url", url, verdict, 95)
 
     return {
         "verdict": "SCAM",
