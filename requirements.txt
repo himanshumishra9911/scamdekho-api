@@ -9,4 +9,5 @@ pytesseract
 playwright
 Pillow
 python-whois
+motor
 
