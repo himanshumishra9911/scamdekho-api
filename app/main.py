@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
 from app.api.analytics import router as analytics_router
+from app.api.feedback import router as feedback_router
+
 
 app = FastAPI(title="ScamDekho API")
 
@@ -29,6 +31,8 @@ app.add_middleware(
 # API routes
 app.include_router(v1_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/analytics")
+app.include_router(feedback_router, prefix="/feedback")
+
 
 # Static dashboard (optional)
 app.mount("/dashboard", StaticFiles(directory="app/static", html=True), name="dashboard")
