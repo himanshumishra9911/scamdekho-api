@@ -213,13 +213,3 @@ Remember: Only mark SCAM if there is CLEAR fraud evidence. When in doubt → SAF
         print("VISION CONTEXT AI ERROR:", e)
         return None
 ```
-
----
-
-Commit karo → deploy hone do → test karo:
-```
-scamdekho.in     → SAFE ✅
-carinfo.app      → SAFE ✅
-angelone.in      → SAFE ✅
-Normal messages  → SAFE ✅
-OTP scam message → SCAM ✅
