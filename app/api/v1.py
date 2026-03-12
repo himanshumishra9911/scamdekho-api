@@ -173,7 +173,7 @@ Analyze this URL for scam risk and give full explanation."""
         vision_ai = call_ai_vision_analysis(screenshot)
         if vision_ai:
             combined = (intel["total_score"] * 0.4) + (vision_ai["risk_score"] * 0.6)
-            verdict = "SCAM" if combined >= 65 else "SAFE"
+            verdict = "SCAM" if vision_ai["risk_score"] >= 70 or combined >= 60 else "SAFE"
             await save_scan("url", url, verdict, combined)
             return {
                 "verdict": verdict,
