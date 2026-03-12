@@ -39,7 +39,7 @@ STRICT RULES — Follow exactly:
 2. If something looks like a scam, risk_score MUST be >= 70.
 3. Investment platforms promising high returns = SCAM (risk 85+)
 4. Fake KYC / OTP / bank links = SCAM (risk 90+)
-5. New domains with suspicious patterns = SCAM (risk 75+)
+5. Domain age alone is NEVER enough to call something a SCAM. Only flag domain age if it is clearly under 30 days AND other fraud signals also exist. If domain age is unknown or unverified, ignore it completely.
 6. "why" field must match the verdict — never list scam reasons under a SAFE verdict.
 7. Be decisive — do not say "research more" when clear scam signals exist.
 8. Focus on Indian fraud patterns: UPI scams, fake jobs, KYC fraud, investment fraud, lottery scams.
