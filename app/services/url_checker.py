@@ -15,6 +15,48 @@ GOOGLE_SAFE_API_KEY = os.getenv("GOOGLE_SAFE_BROWSING_KEY")
 # ======================================
 def check_domain_age(domain: str):
     try:
+        import subprocess
+        import re
+
+        # System whois command use karo — most reliable
+        result = subprocess.run(
+            ["whois", domain],
+            capture_output=True, text=True, timeout=10
+        )
+        output = result.stdout.lower()
+
+        # Multiple date patterns try karo
+        patterns = [
+            r"creation date[:\s]+([0-9]{4}-[0-9]{2}-[0-9]{2})",
+            r"created[:\s]+([0-9]{4}-[0-9]{2}-[0-9]{2})",
+            r"registered on[:\s]+([0-9]{4}-[0-9]{2}-[0-9]{2})",
+            r"domain registered[:\s]+([0-9]{4}-[0-9]{2}-[0-9]{2})",
+            r"created date[:\s]+([0-9]{4}-[0-9]{2}-[0-9]{2})",
+        ]
+
+        creation_date = None
+        for pattern in patterns:
+            match = re.search(pattern, output)
+            if match:
+                creation_date = datetime.strptime(match.group(1), "%Y-%m-%d")
+                break
+
+        if creation_date:
+            age_days = (datetime.now() - creation_date).days
+            if age_days < 30:
+                return 40, f"Very new domain — only {age_days} days old"
+            elif age_days < 90:
+                return 25, f"New domain — {age_days} days old"
+            elif age_days < 180:
+                return 15, f"Relatively new domain — {age_days} days old"
+            elif age_days < 365:
+                return 10, f"Domain less than 1 year old"
+            elif age_days > 730:
+                return -10, f"Established domain — {age_days} days old"
+            else:
+                return 0, f"Domain {age_days} days old"
+
+        # Fallback — python-whois try karo
         domain_info = whois.whois(domain)
         creation_date = domain_info.creation_date
         if isinstance(creation_date, list):
@@ -22,19 +64,23 @@ def check_domain_age(domain: str):
         if creation_date:
             age_days = (datetime.now() - creation_date).days
             if age_days < 30:
-                return 40, f"Domain only {age_days} days old"
+                return 40, f"Very new domain — only {age_days} days old"
             elif age_days < 90:
-                return 25, f"Domain {age_days} days old"
+                return 25, f"New domain — {age_days} days old"
             elif age_days < 180:
-                return 15, f"Domain {age_days} days old"
+                return 15, f"Relatively new domain — {age_days} days old"
             elif age_days < 365:
                 return 10, f"Domain less than 1 year old"
             elif age_days > 730:
                 return -10, f"Established domain — {age_days} days old"
-        return 0, "Domain age unknown"
-    except Exception:
-        return 5, "Could not verify domain age"
+            else:
+                return 0, f"Domain {age_days} days old"
 
+        # Dono fail — koi penalty nahi
+        return 0, None
+
+    except Exception:
+        return 0, None  # Fail hone pe koi penalty nahi
 
 # ======================================
 # SSL CHECK
