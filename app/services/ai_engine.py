@@ -132,3 +132,54 @@ def call_ai_vision_analysis(image_bytes):
     except Exception as e:
         print("VISION AI ERROR:", e)
         return None
+
+# ===============================
+# VISION AI + TECHNICAL CONTEXT
+# ===============================
+def call_ai_vision_analysis_with_context(image_bytes, technical_report: str):
+    try:
+        image_b64 = base64.b64encode(image_bytes).decode()
+
+        response = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"""Analyze this website screenshot for scam risk.
+
+TECHNICAL ANALYSIS REPORT:
+{technical_report}
+
+Use BOTH the screenshot AND the technical data above to determine if this is a scam."""
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_b64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            response_format={"type": "json_object"},
+        )
+
+        data = json.loads(response.choices[0].message.content)
+        return {
+            "risk_score": int(data.get("risk_score", 50)),
+            "confidence": data.get("confidence", {}),
+            "why": data.get("why", []),
+            "what_to_do": data.get("what_to_do", []),
+            "how_to_avoid": data.get("how_to_avoid", [])
+        }
+
+    except Exception as e:
+        print("VISION CONTEXT AI ERROR:", e)
+        return None
