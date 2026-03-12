@@ -32,10 +32,17 @@ def rule_based_signals(domain: str):
         reasons.append("Too many numbers in domain")
 
     scam_keywords = [
-        "kyc", "verify", "update", "secure", "login",
-        "refund", "prize", "reward", "lucky", "winner",
-        "helpdesk", "support", "care", "paytm", "sbi",
-        "hdfc", "icici", "npci", "upi", "free-gift"
+        # Bank/KYC scams
+    "kyc", "verify", "update", "secure", "login",
+    "helpdesk", "support", "care",
+    "paytm", "sbi", "hdfc", "icici", "npci", "upi",
+    # Prize/reward scams  
+    "refund", "prize", "reward", "lucky", "winner",
+    "free-gift", "cashback", "claim",
+    # Investment scams
+    "trading", "invest", "profit", "returns", "crypto",
+    "bitcoin", "forex", "doubling", "earning", "income",
+    "passive", "withdrawal", "scheme", "mlm", "referral"
     ]
     for kw in scam_keywords:
         if kw in domain:
