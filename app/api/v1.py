@@ -6,6 +6,7 @@ from app.services.ai_engine import call_ai_analysis, call_ai_vision_analysis
 from app.services.ocr_engine import extract_text_from_image
 from app.services.website_screenshot import capture_website_screenshot
 from app.services.db_service import save_scan
+from app.services.url_checker import analyze_url_full
 from app.api.report import router as report_router
 from app.api.contact import router as contact_router
 
@@ -107,53 +108,91 @@ async def check_image(file: UploadFile = File(...)):
 
 
 # ======================================================
-# URL CHECK
+# URL CHECK — Multi Signal + AI
 # ======================================================
 @router.post("/check/url")
 async def check_url(data: UrlCheckRequest):
-
     url = data.url.strip()
+    if not url.startswith("http"):
+        url = "https://" + url
 
-    screenshot = await capture_website_screenshot(url)
+    # STEP 1 — Run all checks parallel
+    intel = await analyze_url_full(url)
+    signals_text = ", ".join(intel["signals"]) if intel["signals"] else "None"
 
-    # -------------------------
-    # Website loaded → Vision AI
-    # -------------------------
-    if screenshot:
+    base_prompt = f"""URL: {url}
+Risk score from security checks: {intel["total_score"]}/100
+Security signals found: {signals_text}
+Blacklisted by security databases: {intel["blacklisted"]}
+Analyze this URL for scam risk and give full explanation."""
 
-        ai = call_ai_vision_analysis(screenshot)
-        verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
+    # STEP 2 — Blacklisted = instant SCAM
+    if intel["blacklisted"]:
+        ai = call_ai_analysis(base_prompt)
+        await save_scan("url", url, "SCAM", 95)
+        return {
+            "verdict": "SCAM",
+            "confidence": ai["confidence"],
+            "why": ai["why"],
+            "what_to_do": ai["what_to_do"],
+            "how_to_avoid": ai["how_to_avoid"],
+            "engine": "BLACKLIST + AI"
+        }
 
-        await save_scan("url", url, verdict, ai["risk_score"])
-
+    # STEP 3 — High score = SCAM, no screenshot needed
+    if intel["total_score"] >= 70:
+        ai = call_ai_analysis(base_prompt)
+        verdict = "SCAM" if ai["risk_score"] >= 60 else "SAFE"
+        await save_scan("url", url, verdict, max(intel["total_score"], ai["risk_score"]))
         return {
             "verdict": verdict,
             "confidence": ai["confidence"],
             "why": ai["why"],
             "what_to_do": ai["what_to_do"],
             "how_to_avoid": ai["how_to_avoid"],
-            "engine": "VISION WEBSITE"
+            "engine": "MULTI-SIGNAL AI"
         }
 
-    # -------------------------
-    # Website failed → SCAM
-    # -------------------------
-    verdict = "SCAM"
+    # STEP 4 — Low score = likely SAFE, no screenshot needed
+    if intel["total_score"] <= 15 and not intel["signals"]:
+        ai = call_ai_analysis(base_prompt)
+        verdict = "SCAM" if ai["risk_score"] >= 75 else "SAFE"
+        await save_scan("url", url, verdict, ai["risk_score"])
+        return {
+            "verdict": verdict,
+            "confidence": ai["confidence"],
+            "why": ai["why"],
+            "what_to_do": ai["what_to_do"],
+            "how_to_avoid": ai["how_to_avoid"],
+            "engine": "URL AI"
+        }
 
-    await save_scan("url", url, verdict, 95)
+    # STEP 5 — Inconclusive = Screenshot lo
+    screenshot = await capture_website_screenshot(url)
+    if screenshot:
+        vision_ai = call_ai_vision_analysis(screenshot)
+        if vision_ai:
+            combined = (intel["total_score"] * 0.4) + (vision_ai["risk_score"] * 0.6)
+            verdict = "SCAM" if combined >= 65 else "SAFE"
+            await save_scan("url", url, verdict, combined)
+            return {
+                "verdict": verdict,
+                "confidence": vision_ai["confidence"],
+                "why": vision_ai["why"],
+                "what_to_do": vision_ai["what_to_do"],
+                "how_to_avoid": vision_ai["how_to_avoid"],
+                "engine": "FULL ANALYSIS"
+            }
 
+    # STEP 6 — Screenshot fail — AI fallback
+    ai = call_ai_analysis(base_prompt)
+    verdict = "SCAM" if max(intel["total_score"], ai["risk_score"]) >= 65 else "SAFE"
+    await save_scan("url", url, verdict, max(intel["total_score"], ai["risk_score"]))
     return {
-        "verdict": "SCAM",
-        "confidence": {
-            "en": "Website could not be loaded. Domain looks suspicious or fake.",
-            "hi": "वेबसाइट खुल नहीं पाई। डोमेन संदिग्ध या नकली हो सकता है।"
-        },
-        "why": [
-            {"en": "Domain failed to load", "hi": "डोमेन खुल नहीं रहा"},
-            {"en": "Most phishing sites behave like this", "hi": "अधिकतर फिशिंग साइट्स ऐसे ही व्यवहार करती हैं"}
-        ],
-        "what_to_do": [
-            {"en": "Do not open or share this link", "hi": "इस लिंक को न खोलें और न शेयर करें"}
-        ],
-        "how_to_avoid": []
+        "verdict": verdict,
+        "confidence": ai["confidence"],
+        "why": ai["why"],
+        "what_to_do": ai["what_to_do"],
+        "how_to_avoid": ai["how_to_avoid"],
+        "engine": "AI FALLBACK"
     }
