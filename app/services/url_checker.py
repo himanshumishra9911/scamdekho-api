@@ -2,60 +2,12 @@ import asyncio
 import socket
 import ssl
 import os
-import re
 import httpx
 import whois
 from urllib.parse import urlparse
 from datetime import datetime
 
 GOOGLE_SAFE_API_KEY = os.getenv("GOOGLE_SAFE_BROWSING_KEY")
-
-
-# ======================================
-# DOMAIN BASIC SIGNALS
-# ======================================
-def rule_based_signals(domain: str):
-    score = 0
-    reasons = []
-
-    bad_tlds = [".xyz", ".top", ".club", ".click", ".info", ".tk", ".ml", ".ga", ".cf", ".gq"]
-    if any(domain.endswith(tld) for tld in bad_tlds):
-        score += 25
-        reasons.append("Suspicious domain extension")
-
-    if domain.count("-") >= 3:
-        score += 15
-        reasons.append("Too many hyphens in domain")
-
-    if sum(c.isdigit() for c in domain) > 4:
-        score += 10
-        reasons.append("Too many numbers in domain")
-
-    scam_keywords = [
-        # Bank/KYC scams
-    "kyc", "verify", "update", "secure", "login",
-    "helpdesk", "support", "care",
-    "paytm", "sbi", "hdfc", "icici", "npci", "upi",
-    # Prize/reward scams  
-    "refund", "prize", "reward", "lucky", "winner",
-    "free-gift", "cashback", "claim",
-    # Investment scams
-    "trading", "invest", "profit", "returns", "crypto",
-    "bitcoin", "forex", "doubling", "earning", "income",
-    "passive", "withdrawal", "scheme", "mlm", "referral"
-    ]
-    for kw in scam_keywords:
-        if kw in domain:
-            score += 20
-            reasons.append(f"Scam keyword in domain: '{kw}'")
-            break
-
-    url_shorteners = ["bit.ly", "tinyurl.com", "t.co", "goo.gl", "rb.gy", "short.ly"]
-    if any(s in domain for s in url_shorteners):
-        score += 15
-        reasons.append("URL shortener detected — hides real destination")
-
-    return min(score, 60), reasons
 
 
 # ======================================
@@ -70,18 +22,18 @@ def check_domain_age(domain: str):
         if creation_date:
             age_days = (datetime.now() - creation_date).days
             if age_days < 30:
-                return 40, f"Very new domain — only {age_days} days old"
+                return 40, f"Domain only {age_days} days old"
             elif age_days < 90:
-                return 25, f"New domain — {age_days} days old"
+                return 25, f"Domain {age_days} days old"
             elif age_days < 180:
-                return 15, f"Relatively new domain — {age_days} days old"
+                return 15, f"Domain {age_days} days old"
             elif age_days < 365:
                 return 10, f"Domain less than 1 year old"
             elif age_days > 730:
-                return -10, None  # Established — lower risk
-        return 0, None
+                return -10, f"Established domain — {age_days} days old"
+        return 0, "Domain age unknown"
     except Exception:
-        return 10, "Could not verify domain age"
+        return 5, "Could not verify domain age"
 
 
 # ======================================
@@ -90,19 +42,24 @@ def check_domain_age(domain: str):
 def check_ssl(domain: str):
     try:
         context = ssl.create_default_context()
-        with socket.create_connection((domain, 443), timeout=4) as sock:
-            with context.wrap_socket(sock, server_hostname=domain):
-                return 0, None
+        with socket.create_connection((domain, 443), timeout=5) as sock:
+            with context.wrap_socket(sock, server_hostname=domain) as ssock:
+                cert = ssock.getpeercert()
+                issuer = dict(x[0] for x in cert.get("issuer", []))
+                expiry = cert.get("notAfter", "")
+                return 0, f"SSL valid — issuer: {issuer.get('organizationName', 'Unknown')}, expires: {expiry}"
+    except ssl.SSLCertVerificationError:
+        return 30, "SSL certificate verification failed"
     except Exception:
-        return 20, "SSL certificate invalid or missing"
+        return 20, "SSL certificate missing or invalid"
 
 
 # ======================================
-# GOOGLE SAFE BROWSING — ASYNC
+# GOOGLE SAFE BROWSING
 # ======================================
 async def check_google_safe(url: str):
     if not GOOGLE_SAFE_API_KEY:
-        return 0, None
+        return 0, "Google Safe Browsing: API key not set"
     try:
         endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GOOGLE_SAFE_API_KEY}"
         payload = {
@@ -117,14 +74,14 @@ async def check_google_safe(url: str):
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.post(endpoint, json=payload)
             if r.status_code == 200 and r.json().get("matches"):
-                return 85, "Flagged by Google Safe Browsing"
-        return 0, None
+                return 85, "DANGER: Listed in Google Safe Browsing database"
+        return 0, "Google Safe Browsing: Clean"
     except Exception:
-        return 0, None
+        return 0, "Google Safe Browsing: Check failed"
 
 
 # ======================================
-# OPENPHISH — No key needed
+# OPENPHISH
 # ======================================
 async def check_openphish(url: str):
     try:
@@ -133,14 +90,14 @@ async def check_openphish(url: str):
             feed_urls = [line.strip() for line in r.text.splitlines() if line.strip()]
             for feed_url in feed_urls:
                 if url.startswith(feed_url) or feed_url.startswith(url):
-                    return 80, "Listed in OpenPhish phishing database"
-        return 0, None
+                    return 80, "DANGER: Listed in OpenPhish phishing database"
+        return 0, "OpenPhish: Clean"
     except Exception:
-        return 0, None
+        return 0, "OpenPhish: Check failed"
 
 
 # ======================================
-# URLHAUS — No key needed
+# URLHAUS
 # ======================================
 async def check_urlhaus(url: str):
     try:
@@ -151,78 +108,92 @@ async def check_urlhaus(url: str):
             )
             data = r.json()
             if data.get("query_status") == "is_listed":
-                return 80, "Listed in URLhaus malware database"
-        return 0, None
+                return 80, "DANGER: Listed in URLhaus malware database"
+        return 0, "URLhaus: Clean"
     except Exception:
-        return 0, None
+        return 0, "URLhaus: Check failed"
 
 
 # ======================================
-# HTTP HEADERS — ASYNC
+# HTTP HEADERS + REDIRECT CHECK
 # ======================================
 async def check_http_headers(url: str):
     score = 0
-    reasons = []
+    notes = []
     try:
         async with httpx.AsyncClient(
-            timeout=7.0,
+            timeout=8.0,
             follow_redirects=True,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
         ) as client:
             response = await client.get(url)
 
+            # Redirect count
+            notes.append(f"Redirects: {len(response.history)}")
             if len(response.history) > 3:
                 score += 20
-                reasons.append(f"Too many redirects ({len(response.history)})")
+                notes.append("WARNING: Too many redirects")
 
+            # Domain changed after redirect
             if response.history:
                 final_domain = str(response.url).split("/")[2]
                 orig_domain = url.split("/")[2]
                 if final_domain != orig_domain:
                     score += 25
-                    reasons.append(f"Redirects to different domain: {final_domain}")
+                    notes.append(f"WARNING: Redirects to different domain: {final_domain}")
+                else:
+                    notes.append(f"Final domain: {final_domain}")
 
-            if len(response.text) < 300:
-                score += 10
-                reasons.append("Very thin page content — possible fake page")
+            # HTTP status
+            notes.append(f"HTTP Status: {response.status_code}")
+
+            # Content size
+            content_len = len(response.text)
+            notes.append(f"Page content size: {content_len} chars")
+            if content_len < 300:
+                score += 15
+                notes.append("WARNING: Very thin page content")
 
     except Exception as e:
         score += 15
-        reasons.append("Site unreachable or blocked")
+        notes.append(f"Site unreachable: {str(e)[:80]}")
 
-    return min(score, 50), reasons
+    return min(score, 50), notes
 
 
 # ======================================
-# IP REPUTATION
+# IP + HOSTING CHECK
 # ======================================
-async def check_ip_reputation(domain: str):
+async def check_ip_info(domain: str):
+    notes = []
+    score = 0
     try:
         ip = socket.gethostbyname(domain)
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            r = await client.get(f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,isp,org")
+        notes.append(f"IP: {ip}")
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(
+                f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,isp,org,hosting"
+            )
             data = r.json()
 
-        score = 0
-        reasons = []
-
-        risky_hosts = ["ovh", "digitalocean", "vultr", "linode", "contabo", "hostinger"]
-        if any(host in data.get("isp", "").lower() for host in risky_hosts):
-            score += 10
-            reasons.append("Hosted on commonly abused infrastructure")
+        notes.append(f"Hosting country: {data.get('country', 'Unknown')}")
+        notes.append(f"ISP: {data.get('isp', 'Unknown')}")
+        notes.append(f"Is hosting provider: {data.get('hosting', False)}")
 
         high_risk_countries = ["RU", "CN", "KP", "NG"]
         if data.get("countryCode") in high_risk_countries:
             score += 15
-            reasons.append(f"Hosted in high-risk country: {data.get('country')}")
+            notes.append(f"WARNING: Hosted in high-risk country")
 
-        return score, reasons
-    except Exception:
-        return 0, []
+    except Exception as e:
+        notes.append(f"IP info unavailable: {str(e)[:50]}")
+
+    return score, notes
 
 
 # ======================================
-# MASTER FUNCTION — ALL PARALLEL
+# MASTER FUNCTION
 # ======================================
 async def analyze_url_full(url: str) -> dict:
     if not url.startswith("http"):
@@ -232,55 +203,63 @@ async def analyze_url_full(url: str) -> dict:
     domain = parsed.netloc.lower().replace("www.", "")
 
     # Sync checks
-    rule_score, rule_reasons = rule_based_signals(domain)
-    age_score, age_reason = check_domain_age(domain)
-    ssl_score, ssl_reason = check_ssl(domain)
+    age_score, age_note = check_domain_age(domain)
+    ssl_score, ssl_note = check_ssl(domain)
 
-    # Async checks — sab parallel mein
+    # Async checks — all parallel
     google_result, openphish_result, urlhaus_result, headers_result, ip_result = await asyncio.gather(
         check_google_safe(url),
         check_openphish(url),
         check_urlhaus(url),
         check_http_headers(url),
-        check_ip_reputation(domain),
+        check_ip_info(domain),
         return_exceptions=True
     )
 
-    # Handle exceptions
-    def safe(result, default): return default if isinstance(result, Exception) else result
+    def safe(result, default):
+        return default if isinstance(result, Exception) else result
 
-    google_score, google_reason = safe(google_result, (0, None))
-    openphish_score, openphish_reason = safe(openphish_result, (0, None))
-    urlhaus_score, urlhaus_reason = safe(urlhaus_result, (0, None))
-    headers_score, headers_reasons = safe(headers_result, (0, []))
-    ip_score, ip_reasons = safe(ip_result, (0, []))
+    google_score, google_note = safe(google_result, (0, "Google SB: Failed"))
+    openphish_score, openphish_note = safe(openphish_result, (0, "OpenPhish: Failed"))
+    urlhaus_score, urlhaus_note = safe(urlhaus_result, (0, "URLhaus: Failed"))
+    headers_score, headers_notes = safe(headers_result, (0, []))
+    ip_score, ip_notes = safe(ip_result, (0, []))
 
-    # Collect all signals
-    signals = []
-    for reason in [google_reason, openphish_reason, urlhaus_reason, age_reason, ssl_reason]:
-        if reason:
-            signals.append(reason)
-    signals.extend(rule_reasons)
-    signals.extend(headers_reasons)
-    signals.extend(ip_reasons)
+    # Build complete technical report for AI
+    technical_report = f"""
+DOMAIN: {domain}
+URL: {url}
 
-    # Total score
-    total = (
-        rule_score + age_score + ssl_score +
-        google_score + openphish_score + urlhaus_score +
-        headers_score + ip_score
+BLACKLIST CHECKS:
+- {google_note}
+- {openphish_note}
+- {urlhaus_note}
+
+DOMAIN AGE:
+- {age_note}
+
+SSL CERTIFICATE:
+- {ssl_note}
+
+HTTP / REDIRECT ANALYSIS:
+{chr(10).join(f'- {n}' for n in headers_notes)}
+
+IP / HOSTING INFO:
+{chr(10).join(f'- {n}' for n in ip_notes)}
+""".strip()
+
+    total = min(
+        age_score + ssl_score + google_score +
+        openphish_score + urlhaus_score +
+        headers_score + ip_score,
+        100
     )
-    total = min(total, 100)
 
-    blacklisted = any([
-        google_score >= 80,
-        openphish_score >= 80,
-        urlhaus_score >= 80
-    ])
+    blacklisted = google_score >= 80 or openphish_score >= 80 or urlhaus_score >= 80
 
     return {
         "total_score": total,
-        "signals": signals,
+        "technical_report": technical_report,
         "blacklisted": blacklisted,
         "domain": domain
     }
