@@ -10,4 +10,6 @@ playwright
 Pillow
 python-whois
 motor
+httpx
+
 
