@@ -154,7 +154,7 @@ Analyze this URL for scam risk and give full explanation."""
         }
 
     # STEP 4 — Low score = likely SAFE, no screenshot needed
-    if intel["total_score"] <= 15 and not intel["signals"]:
+    if intel["total_score"] <= 10 and not intel["signals"]:
         ai = call_ai_analysis(base_prompt)
         verdict = "SCAM" if ai["risk_score"] >= 75 else "SAFE"
         await save_scan("url", url, verdict, ai["risk_score"])
