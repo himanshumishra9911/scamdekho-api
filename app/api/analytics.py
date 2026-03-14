@@ -1,48 +1,41 @@
 from fastapi import APIRouter
-import sqlite3
+from app.core.database import db
 
 router = APIRouter()
 
-DB_PATH = "scamdekho.db"
-
-
-def query(sql):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(sql)
-    data = cur.fetchall()
-    conn.close()
-    return data
-
-
 @router.get("/stats")
-def stats():
+async def stats():
+    try:
+        total = await db.scam_checks.count_documents({})
+        scam_count = await db.scam_checks.count_documents({"verdict": "SCAM"})
+        safe_count = await db.scam_checks.count_documents({"verdict": "SAFE"})
 
-    total = query("SELECT COUNT(*) FROM scans")[0][0]
+        recent_cursor = db.scam_checks.find(
+            {},
+            {"type": 1, "content": 1, "verdict": 1, "created_at": 1, "_id": 0}
+        ).sort("created_at", -1).limit(20)
 
-    scam = query("SELECT COUNT(*) FROM scans WHERE verdict='SCAM'")[0][0]
+        recent = []
+        async for doc in recent_cursor:
+            recent.append([
+                doc.get("type", ""),
+                doc.get("content", "")[:100],
+                doc.get("verdict", ""),
+                str(doc.get("created_at", ""))
+            ])
 
-    safe = query("SELECT COUNT(*) FROM scans WHERE verdict='SAFE'")[0][0]
+        return {
+            "total": total,
+            "scam_count": scam_count,
+            "safe_count": safe_count,
+            "recent": recent
+        }
 
-    text = query("SELECT COUNT(*) FROM scans WHERE type='text'")[0][0]
-
-    image = query("SELECT COUNT(*) FROM scans WHERE type='image'")[0][0]
-
-    url = query("SELECT COUNT(*) FROM scans WHERE type='url'")[0][0]
-
-    recent = query("""
-        SELECT type, content, verdict, created_at
-        FROM scans
-        ORDER BY id DESC
-        LIMIT 10
-    """)
-
-    return {
-        "total": total,
-        "scam": scam,
-        "safe": safe,
-        "text": text,
-        "image": image,
-        "url": url,
-        "recent": recent
-    }
+    except Exception as e:
+        return {
+            "total": 0,
+            "scam_count": 0,
+            "safe_count": 0,
+            "recent": [],
+            "error": str(e)
+        }
