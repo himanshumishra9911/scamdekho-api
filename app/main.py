@@ -13,6 +13,7 @@ app = FastAPI(title="ScamDekho API")
 origins = [
     "https://scamdekho.in",
     "https://www.scamdekho.in",
+    "https://scamdekho-api.onrender.com",
     "http://localhost:5500",
     "http://127.0.0.1:5500",
     "http://localhost:8000",
