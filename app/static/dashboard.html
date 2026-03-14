@@ -1,80 +1,336 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>ScamDekho Dashboard</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScamDekho Admin Dashboard</title>
   <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
     body {
-      background:#111;
-      color:white;
-      font-family:Arial;
-      padding:30px;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      padding: 24px;
+      min-height: 100vh;
     }
+
+    /* HEADER */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 32px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #1e1e2e;
+    }
+    .header h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .header span {
+      font-size: 13px;
+      color: #666;
+      margin-left: auto;
+    }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      background: #00ff88;
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+      display: inline-block;
+      margin-right: 6px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* STATS CARDS */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .card {
+      background: #13131f;
+      border: 1px solid #1e1e2e;
+      border-radius: 12px;
+      padding: 20px 24px;
+    }
+    .card-label {
+      font-size: 12px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .card-value {
+      font-size: 36px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .card-value.scam { color: #ff4d4d; }
+    .card-value.safe { color: #00ff88; }
+    .card-value.total { color: #f97316; }
+    .card-sub {
+      font-size: 12px;
+      color: #555;
+      margin-top: 4px;
+    }
+
+    /* SCAM RATE BAR */
+    .rate-bar-wrapper {
+      margin-top: 10px;
+    }
+    .rate-bar {
+      height: 4px;
+      background: #1e1e2e;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .rate-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #ff4d4d, #ff8c00);
+      border-radius: 4px;
+      transition: width 0.5s ease;
+    }
+
+    /* TABLE */
+    .table-section {
+      background: #13131f;
+      border: 1px solid #1e1e2e;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .table-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid #1e1e2e;
+    }
+    .table-header h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .refresh-btn {
+      background: #1e1e2e;
+      border: none;
+      color: #888;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .refresh-btn:hover { background: #2a2a3e; color: #fff; }
 
     table {
-      width:100%;
-      border-collapse:collapse;
+      width: 100%;
+      border-collapse: collapse;
     }
-
-    th, td {
-      padding:10px;
-      border-bottom:1px solid #333;
-      text-align:left;
+    thead tr {
+      background: #0f0f1a;
     }
-
     th {
-      color:#00ffd5;
+      padding: 12px 24px;
+      text-align: left;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #555;
+      font-weight: 600;
+    }
+    td {
+      padding: 14px 24px;
+      font-size: 13px;
+      border-bottom: 1px solid #1a1a2a;
+      vertical-align: middle;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #16162a; }
+
+    .content-cell {
+      max-width: 380px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #aaa;
+      font-size: 12px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .badge-scam {
+      background: rgba(255, 77, 77, 0.15);
+      color: #ff4d4d;
+      border: 1px solid rgba(255, 77, 77, 0.3);
+    }
+    .badge-safe {
+      background: rgba(0, 255, 136, 0.1);
+      color: #00ff88;
+      border: 1px solid rgba(0, 255, 136, 0.2);
+    }
+
+    .type-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      background: #1e1e2e;
+      color: #888;
+    }
+
+    .time-cell { color: #555; font-size: 11px; }
+
+    /* LOADING */
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #444;
+      font-size: 14px;
+    }
+
+    /* ERROR */
+    .error-msg {
+      text-align: center;
+      padding: 40px;
+      color: #ff4d4d;
+      font-size: 13px;
     }
   </style>
 </head>
-
 <body>
 
-<h1>🚨 ScamDekho Dashboard</h1>
+  <div class="header">
+    <span>🔍</span>
+    <h1>ScamDekho Dashboard</h1>
+    <span><span class="live-dot"></span>Live — auto refresh every 10s</span>
+  </div>
 
-<table>
-  <thead>
-    <tr>
-      <th>Type</th>
-      <th>Content</th>
-      <th>Verdict</th>
-      <th>Time</th>
-    </tr>
-  </thead>
+  <!-- STATS -->
+  <div class="stats">
+    <div class="card">
+      <div class="card-label">Total Scans</div>
+      <div class="card-value total" id="total">—</div>
+      <div class="card-sub">All time</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Scams Detected</div>
+      <div class="card-value scam" id="scam-count">—</div>
+      <div class="card-sub" id="scam-pct">—% of total</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Safe Results</div>
+      <div class="card-value safe" id="safe-count">—</div>
+      <div class="card-sub" id="safe-pct">—% of total</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Scam Rate</div>
+      <div class="card-value" id="scam-rate" style="color:#f97316">—%</div>
+      <div class="rate-bar-wrapper">
+        <div class="rate-bar">
+          <div class="rate-bar-fill" id="rate-bar-fill" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  <!-- 🔥 THIS WAS MISSING -->
-  <tbody id="rows"></tbody>
-
-</table>
-
+  <!-- TABLE -->
+  <div class="table-section">
+    <div class="table-header">
+      <h2>Recent Scans</h2>
+      <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Content</th>
+          <th>Verdict</th>
+          <th>Time</th>
+        </tr>
+      </thead>
+      <tbody id="rows">
+        <tr><td colspan="4" class="loading">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
 
 <script>
-async function loadData() {
+  const API = "https://scamdekho-api.onrender.com";
 
-  const res = await fetch("http://127.0.0.1:8000/analytics/stats");
-  const data = await res.json();
+  function timeAgo(dateStr) {
+    const now = new Date();
+    const then = new Date(dateStr);
+    const diff = Math.floor((now - then) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+    return `${Math.floor(diff/86400)}d ago`;
+  }
 
-  const table = document.getElementById("rows");
+  async function loadData() {
+    try {
+      const res = await fetch(`${API}/analytics/stats`);
+      const data = await res.json();
 
-  table.innerHTML = "";
+      // Stats
+      const total = data.total || 0;
+      const scams = data.scam_count || 0;
+      const safes = data.safe_count || 0;
+      const rate = total > 0 ? Math.round((scams / total) * 100) : 0;
 
-  data.recent.forEach(row => {
+      document.getElementById("total").textContent = total.toLocaleString();
+      document.getElementById("scam-count").textContent = scams.toLocaleString();
+      document.getElementById("safe-count").textContent = safes.toLocaleString();
+      document.getElementById("scam-rate").textContent = `${rate}%`;
+      document.getElementById("scam-pct").textContent = `${rate}% of total`;
+      document.getElementById("safe-pct").textContent = `${100 - rate}% of total`;
+      document.getElementById("rate-bar-fill").style.width = `${rate}%`;
 
-    const tr = document.createElement("tr");
+      // Table
+      const tbody = document.getElementById("rows");
+      if (!data.recent || data.recent.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" class="loading">No data yet</td></tr>`;
+        return;
+      }
 
-    tr.innerHTML = `
-      <td>${row[0]}</td>
-      <td style="max-width:400px;word-break:break-word">${row[1]}</td>
-      <td style="color:${row[2] === 'SCAM' ? 'red' : 'lightgreen'}">${row[2]}</td>
-      <td>${row[3]}</td>
-    `;
+      tbody.innerHTML = data.recent.map(row => `
+        <tr>
+          <td><span class="type-badge">${row[0]}</span></td>
+          <td class="content-cell" title="${row[1]}">${row[1]}</td>
+          <td>
+            <span class="badge ${row[2] === 'SCAM' ? 'badge-scam' : 'badge-safe'}">
+              ${row[2] === 'SCAM' ? '⚠ SCAM' : '✓ SAFE'}
+            </span>
+          </td>
+          <td class="time-cell">${timeAgo(row[3])}</td>
+        </tr>
+      `).join("");
 
-    table.appendChild(tr);
-  });
-}
+    } catch (err) {
+      document.getElementById("rows").innerHTML =
+        `<tr><td colspan="4" class="error-msg">Failed to load — ${err.message}</td></tr>`;
+    }
+  }
 
-loadData();
-setInterval(loadData, 3000);
+  loadData();
+  setInterval(loadData, 10000);
 </script>
-
 </body>
 </html>
