@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
@@ -35,8 +35,11 @@ app.include_router(analytics_router, prefix="/analytics")
 app.include_router(feedback_router, prefix="/feedback")
 
 
-# Static dashboard (optional)
-app.mount("/dashboard", StaticFiles(directory="app/static", html=True), name="dashboard")
+# Dashboard
+@app.get("/dashboard")
+@app.get("/dashboard/")
+def dashboard():
+    return FileResponse("app/static/dashboard.html")
 
 @app.get("/")
 def root():
