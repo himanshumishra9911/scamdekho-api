@@ -17,15 +17,6 @@ async def capture_website_screenshot(url: str):
                     "--disable-gpu",
                     "--disable-software-rasterizer",
                     "--disable-extensions",
-                    "--disable-background-networking",
-                    "--disable-default-apps",
-                    "--disable-sync",
-                    "--disable-translate",
-                    "--hide-scrollbars",
-                    "--metrics-recording-only",
-                    "--mute-audio",
-                    "--no-first-run",
-                    "--safebrowsing-disable-auto-update",
                     "--single-process",
                     "--memory-pressure-off",
                     "--disable-features=VizDisplayCompositor",
@@ -36,44 +27,39 @@ async def capture_website_screenshot(url: str):
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 720},
+                viewport={"width": 1280, "height": 900},
                 java_script_enabled=True,
             )
-
-            await context.route("**/*", lambda route: (
-                route.abort()
-                if route.request.resource_type in ["image", "media", "font", "stylesheet"]
-                else route.continue_()
-            ))
 
             page = await context.new_page()
 
             try:
                 await page.goto(
                     url,
-                    timeout=15000,
+                    timeout=20000,
                     wait_until="domcontentloaded"
                 )
                 print(f"[SCREENSHOT] Page loaded successfully")
             except Exception as e:
                 print(f"[SCREENSHOT] Page load error (continuing anyway): {e}")
 
-            await asyncio.sleep(1)
+            # 2 sec wait — page settle hone do
+            await asyncio.sleep(2)
 
             screenshot = await page.screenshot(
                 full_page=False,
                 type="jpeg",
-                quality=70
+                quality=80
             )
 
             await browser.close()
 
-            if screenshot:
+            if screenshot and len(screenshot) > 10000:
                 print(f"[SCREENSHOT] Success — size: {len(screenshot)} bytes")
+                return screenshot
             else:
-                print(f"[SCREENSHOT] Failed — empty screenshot")
-
-            return screenshot
+                print(f"[SCREENSHOT] Too small — likely blank page: {len(screenshot) if screenshot else 0} bytes")
+                return None
 
     except Exception as e:
         print(f"[SCREENSHOT] FATAL ERROR: {e}")
