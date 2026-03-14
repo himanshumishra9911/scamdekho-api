@@ -6,12 +6,16 @@ import httpx
 import whois
 from urllib.parse import urlparse
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 GOOGLE_SAFE_API_KEY = os.getenv("GOOGLE_SAFE_BROWSING_KEY")
 
+# Thread pool for sync operations
+executor = ThreadPoolExecutor(max_workers=4)
+
 
 # ======================================
-# DOMAIN AGE — WHOIS
+# DOMAIN AGE — WHOIS (SYNC)
 # ======================================
 def check_domain_age(domain: str):
     try:
@@ -37,8 +41,9 @@ def check_domain_age(domain: str):
     except Exception:
         return 0, None
 
+
 # ======================================
-# SSL CHECK
+# SSL CHECK (SYNC)
 # ======================================
 def check_ssl(domain: str):
     try:
@@ -129,13 +134,11 @@ async def check_http_headers(url: str):
         ) as client:
             response = await client.get(url)
 
-            # Redirect count
             notes.append(f"Redirects: {len(response.history)}")
             if len(response.history) > 3:
                 score += 20
                 notes.append("WARNING: Too many redirects")
 
-            # Domain changed after redirect
             if response.history:
                 final_domain = str(response.url).split("/")[2]
                 orig_domain = url.split("/")[2]
@@ -145,10 +148,8 @@ async def check_http_headers(url: str):
                 else:
                     notes.append(f"Final domain: {final_domain}")
 
-            # HTTP status
             notes.append(f"HTTP Status: {response.status_code}")
 
-            # Content size
             content_len = len(response.text)
             notes.append(f"Page content size: {content_len} chars")
             if content_len < 300:
@@ -194,7 +195,7 @@ async def check_ip_info(domain: str):
 
 
 # ======================================
-# MASTER FUNCTION
+# MASTER FUNCTION — ALL PARALLEL
 # ======================================
 async def analyze_url_full(url: str) -> dict:
     if not url.startswith("http"):
@@ -203,12 +204,20 @@ async def analyze_url_full(url: str) -> dict:
     parsed = urlparse(url)
     domain = parsed.netloc.lower().replace("www.", "")
 
-    # Sync checks
-    age_score, age_note = check_domain_age(domain)
-    ssl_score, ssl_note = check_ssl(domain)
+    loop = asyncio.get_event_loop()
 
-    # Async checks — all parallel
-    google_result, openphish_result, urlhaus_result, headers_result, ip_result = await asyncio.gather(
+    # Sab kuch ek saath parallel — WHOIS + SSL bhi async!
+    (
+        age_result,
+        ssl_result,
+        google_result,
+        openphish_result,
+        urlhaus_result,
+        headers_result,
+        ip_result
+    ) = await asyncio.gather(
+        loop.run_in_executor(executor, check_domain_age, domain),
+        loop.run_in_executor(executor, check_ssl, domain),
         check_google_safe(url),
         check_openphish(url),
         check_urlhaus(url),
@@ -220,13 +229,15 @@ async def analyze_url_full(url: str) -> dict:
     def safe(result, default):
         return default if isinstance(result, Exception) else result
 
+    age_score, age_note = safe(age_result, (0, None))
+    ssl_score, ssl_note = safe(ssl_result, (0, "SSL check failed"))
     google_score, google_note = safe(google_result, (0, "Google SB: Failed"))
     openphish_score, openphish_note = safe(openphish_result, (0, "OpenPhish: Failed"))
     urlhaus_score, urlhaus_note = safe(urlhaus_result, (0, "URLhaus: Failed"))
     headers_score, headers_notes = safe(headers_result, (0, []))
     ip_score, ip_notes = safe(ip_result, (0, []))
 
-    # Build complete technical report for AI
+    # Build technical report for AI
     technical_report = f"""
 DOMAIN: {domain}
 URL: {url}
@@ -237,7 +248,7 @@ BLACKLIST CHECKS:
 - {urlhaus_note}
 
 DOMAIN AGE:
-- {age_note}
+- {age_note if age_note else "Domain age not available"}
 
 SSL CERTIFICATE:
 - {ssl_note}
