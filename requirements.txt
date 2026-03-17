@@ -11,7 +11,8 @@ Pillow
 python-whois
 motor
 httpx
-pyzbar
+opencv-python-headless
+numpy
 
 
 
