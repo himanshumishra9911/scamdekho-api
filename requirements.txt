@@ -11,5 +11,7 @@ Pillow
 python-whois
 motor
 httpx
+pyzbar
+
 
 
