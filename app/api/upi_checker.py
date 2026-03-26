@@ -163,6 +163,20 @@ VALID_BANK_HANDLES = {
     "apgvbank": "AP Grameena Vikas Bank",
     "mahagramin": "Maharashtra Gramin Bank",
     "baroda": "Baroda UP Bank",
+    "unitype": "BharatPe Merchant",
+    "pz": "PhonePe Business",
+    "pingpay": "Samsung Pay",
+    "abfspay": "Aditya Birla Finance",
+    "idfcbank": "IDFC Bank",
+    "idfcfirst": "IDFC First Bank",
+    "idfc": "IDFC First Bank",
+    "utbi": "United Bank of India",
+    "okbizaxis": "Google Pay Business",
+    "okhdfcbankjd": "Google Pay Business",
+    "hdfcbankjd": "HDFC Bank Merchant",
+    "timecosmos": "Merchant PSP",
+    "bpcl": "BPCL Merchant",
+    "hpcl": "HPCL Merchant",
 }
 
 # ======================================
