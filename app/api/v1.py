@@ -9,6 +9,7 @@ from app.services.db_service import save_scan
 from app.services.url_checker import analyze_url_full
 from app.api.report import router as report_router
 from app.api.contact import router as contact_router
+from app.api.offer_letter import router as offer_letter_router
 from app.api.upi_checker import analyze_upi_full
 from app.api.qr_checker import decode_qr_image
 
@@ -16,6 +17,7 @@ router = APIRouter()
 
 router.include_router(report_router, prefix="/report", tags=["Report"])
 router.include_router(contact_router, prefix="/contact", tags=["Contact"])
+router.include_router(offer_letter_router, tags=["Offer Letter"])
 
 
 # ======================================================
