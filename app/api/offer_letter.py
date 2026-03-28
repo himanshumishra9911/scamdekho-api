@@ -2,7 +2,8 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.services.offer_letter_engine import (
     extract_text_from_pdf,
     extract_text_from_doc,
-    analyze_offer_letter_ai
+    analyze_offer_letter_ai,
+    analyze_offer_letter_pdf_vision
 )
 from app.services.db_service import save_scan
 
@@ -47,25 +48,20 @@ async def check_offer_letter(file: UploadFile = File(...)):
     else:
         extracted_text = extract_text_from_doc(file_bytes)
 
-    # If text extraction failed — try OCR via PyMuPDF
+    # If text extraction failed — Vision AI fallback
     if not extracted_text or len(extracted_text.strip()) < 50:
-        try:
-            import fitz
-            from app.services.ocr_engine import extract_text_from_image
-            doc = fitz.open(stream=file_bytes, filetype="pdf")
-            ocr_text = ""
-            for page in doc:
-                pix = page.get_pixmap(dpi=200)
-                img_bytes = pix.tobytes("png")
-                page_text = extract_text_from_image(img_bytes)
-                if page_text:
-                    ocr_text += page_text + "\n"
-            extracted_text = ocr_text.strip()
-        except Exception as e:
-            print("OCR FALLBACK ERROR:", e)
-
-    # Agar ab bhi text nahi mila
-    if not extracted_text or len(extracted_text.strip()) < 50:
+        if file_type == "pdf":
+            ai = analyze_offer_letter_pdf_vision(file_bytes)
+            verdict = "SCAM" if ai["risk_score"] >= 70 else "SUSPICIOUS" if ai["risk_score"] >= 31 else "SAFE"
+            await save_scan("offer_letter", file.filename or "offer_letter", verdict, ai["risk_score"])
+            return {
+                "verdict": verdict,
+                "confidence": ai["confidence"],
+                "why": ai["why"],
+                "what_to_do": ai["what_to_do"],
+                "how_to_avoid": ai["how_to_avoid"],
+                "engine": "OFFER LETTER VISION AI"
+            }
         return {
             "verdict": "UNKNOWN",
             "confidence": {
