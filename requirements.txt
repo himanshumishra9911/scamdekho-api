@@ -13,6 +13,8 @@ motor
 httpx
 opencv-python-headless
 numpy
+pypdf
+python-docx
 
 
 
