@@ -140,3 +140,43 @@ Be thorough. Check for all fraud signals mentioned in your instructions."""
             "what_to_do": [],
             "how_to_avoid": []
         }
+def analyze_offer_letter_pdf_vision(file_bytes: bytes) -> dict:
+    try:
+        import fitz
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        all_results = []
+        for page_num, page in enumerate(doc):
+            if page_num >= 3:
+                break
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            img_b64 = base64.b64encode(img_bytes).decode()
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": OFFER_LETTER_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"Analyze page {page_num+1} of this offer letter. Is it GENUINE or FAKE/SCAM?"},
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
+                        ]
+                    }
+                ],
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(response.choices[0].message.content)
+            all_results.append(data)
+        if not all_results:
+            return {"risk_score": 50, "confidence": {"en": "Could not analyze", "hi": "विश्लेषण विफल"}, "why": [], "what_to_do": [], "how_to_avoid": []}
+        best = max(all_results, key=lambda x: x.get("risk_score", 0))
+        return {
+            "risk_score": int(best.get("risk_score", 50)),
+            "confidence": best.get("confidence", {}),
+            "why": best.get("why", []),
+            "what_to_do": best.get("what_to_do", []),
+            "how_to_avoid": best.get("how_to_avoid", [])
+        }
+    except Exception as e:
+        print("PDF VISION ERROR:", e)
+        return {"risk_score": 50, "confidence": {"en": "Analysis failed", "hi": "विश्लेषण विफल"}, "why": [], "what_to_do": [], "how_to_avoid": []}
