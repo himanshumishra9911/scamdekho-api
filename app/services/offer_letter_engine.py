@@ -1,19 +1,3 @@
-"""
-ScamDekho — Offer Letter Trust Score Engine v3.0
-
-CHANGES FROM v2:
-  1. Hard rules removed → Soft weighted scoring (no more hard caps)
-  2. Salary logic is context-based (role + experience aware)
-  3. Email/Gmail logic is context-aware (startup vs big company)
-  4. Confidence score added (low/medium/high)
-  5. External domain age validation via WHOIS
-
-Trust Score (0-100):
-  70+  = Likely Genuine
-  50-70 = Needs Verification
-  <50  = High Risk Scam
-"""
-
 import os
 import json
 import base64
@@ -97,6 +81,29 @@ SCAM_FEE_PATTERNS = [
     (r"fees?\s*payment", 0.7, "Fee payment mentioned"),
     (r"bank\s*transfer\s*required", 0.7, "Bank transfer required"),
     (r"(?:upi|google\s*pay|phonepe|paytm)\s*(?:id|payment|transfer)?", 0.6, "UPI/payment app mentioned"),
+    # Visa/foreign job scam patterns
+    (r"bear\s*(?:your\s*)?(?:visa|work\s*permit)\s*(?:expenses?|cost|charges?|fees?)", 0.7, "Visa/work permit expense demand"),
+    (r"visa\s*(?:processing\s*)?(?:fee|charges?|cost|expenses?)", 0.7, "Visa fee/charges mentioned"),
+    (r"pay\s*(?:for\s*)?(?:visa|work\s*permit)", 0.7, "Pay for visa/permit demand"),
+    (r"visa\s*deposit", 0.75, "Visa deposit demand"),
+    (r"embassy\s*(?:fee|charges?)", 0.65, "Embassy fee mentioned"),
+    (r"immigration\s*(?:fee|charges?|cost)", 0.65, "Immigration fee mentioned"),
+    (r"work\s*permit\s*(?:fee|charges?|cost|expenses?)", 0.7, "Work permit fee demand"),
+    (r"stamping\s*(?:fee|charges?)", 0.6, "Stamping fee demand"),
+]
+
+# Foreign job scam patterns (separate from fee — structural red flags)
+FOREIGN_JOB_SCAM_PATTERNS = [
+    (r"bear\s*(?:your\s*)?(?:visa|work\s*permit)\s*(?:expenses?|cost)", 0.7, "Candidate asked to bear visa expenses"),
+    (r"passport\s*(?:number|no\.?|#)[\s:]+[A-Z0-9]", 0.5, "Passport number in offer letter (unusual)"),
+    (r"(?:work\s*permit|visa)\s*(?:will\s*be\s*)?(?:sent|provided|arranged)\s*(?:to|by)\s*(?:your\s*)?(?:embassy|country)", 0.6, "Visa sent to embassy claim"),
+    (r"(?:food\s*packing|fruit\s*picking|farm\s*work|warehouse\s*helper|cleaner|dishwasher|caregiver)\s*(?:job|role|position|designation)?", 0.5, "Low-skill foreign job role"),
+    (r"(?:new\s*zealand|australia|canada|uk|dubai|qatar|saudi|oman|bahrain|kuwait|malaysia|singapore)\s*(?:job|work|employment|company|offer)", 0.4, "Foreign country job offer"),
+    (r"(?:shortlisted|selected)\s*(?:for|in)\s*(?:our\s*)?(?:company|organization)(?:\s*in\s*(?:new\s*zealand|australia|canada|uk|dubai|abroad))?", 0.35, "Shortlisted without proper process"),
+    (r"(?:work\s*permit|employment\s*visa|labor\s*card)", 0.3, "Work permit/employment visa mentioned"),
+    (r"(?:accommodation|food|medical)\s*(?:will\s*be\s*)?(?:provided|arranged|free)", 0.25, "Too-good benefits for low-skill job"),
+    (r"(?:labor\s*authority|labour\s*authority|labor\s*rules?\s*act)", 0.3, "Fake labor authority reference"),
+    (r"(?:apply(?:ing)?\s*visa\s*in|visa\s*application\s*for)\s*(?:new\s*zealand|australia|canada|uk|dubai)", 0.5, "Applying visa in foreign country"),
 ]
 
 URGENCY_PATTERNS = [
@@ -490,7 +497,10 @@ def analyze_domains_in_text(text: str) -> dict:
 
     # URLs
     urls = list(set(re.findall(r'https?://[\w./\-?=&]+', text_lower)))
+    # Also catch www.xyz.com without http
+    www_urls = list(set(re.findall(r'(?:www\.)([\w.\-]+\.\w{2,})', text_lower)))
     result["urls_found"] = urls
+
     for url in urls:
         if any(s in url for s in ["bit.ly", "tinyurl", "goo.gl", "t.co", "shorturl", "rebrand.ly"]):
             result["domain_signals"].append({
@@ -498,6 +508,30 @@ def analyze_domains_in_text(text: str) -> dict:
                 "detail_en": f"Shortened URL: {url}",
                 "detail_hi": f"छोटा URL: {url}",
             })
+
+    # Extract domains from URLs and www references for WHOIS check
+    url_domains = set()
+    for url in urls:
+        match = re.search(r'https?://(?:www\.)?([\w.\-]+\.\w{2,})', url)
+        if match:
+            url_domains.add(match.group(1))
+    for wd in www_urls:
+        url_domains.add(wd)
+
+    # Run WHOIS on URL domains (if not already checked via email)
+    checked_domains = set(result["domains_found"])
+    for ud in url_domains:
+        if ud not in checked_domains and ud not in GENERIC_EMAIL_DOMAINS:
+            age_result = check_domain_age(ud)
+            result["domain_age_results"].append(age_result)
+            if age_result["signal"]:
+                sig_type, sig_text, sig_weight = age_result["signal"]
+                result["domain_signals"].append({
+                    "type": sig_type, "weight": sig_weight,
+                    "detail_en": sig_text,
+                    "detail_hi": sig_text,
+                })
+            result["domains_found"].append(ud)
 
     if not emails:
         result["domain_signals"].append({
@@ -525,26 +559,45 @@ def extract_company_name(text: str) -> str:
     """
     text_clean = text.strip()
 
-    # Company suffix pattern (reusable)
+    # Company suffix pattern (reusable) — covers Indian + international formats
     suffix = (r'(?:Ltd\.?|Limited|Pvt\.?\s*Ltd\.?|Private\s+Limited|'
               r'Inc\.?|Corporation|LLP|Solutions|Technologies|'
-              r'Services|Consulting|Systems|Infra|Group|India)')
+              r'Services|Consulting|Systems|Infra|Group|India|'
+              r'Foods?|Industries|Enterprises?|International|'
+              r'Pharma|Chemicals|Motors|Auto|Textiles|'
+              r'Communications|Logistics|Construction|Builders|'
+              r'Healthcare|Hospital|Labs|Academy|Institute|'
+              r'Foundation|Trust|Associates|Partners|Co\.?\s*Ltd\.?|'
+              r'Company|Ventures|Capital|Studios?|Digital|'
+              r'Global|Worldwide|Overseas|Export|Import)')
 
-    # Pattern 1: "at/in/with <Company Name ending with suffix>"
-    # The company name MUST start with a Capital letter right after the preposition
+    # Pattern 1: "at/in/with/for <Company Name ending with suffix>"
     match = re.search(
-        r'\b(?:at|in|with|from|to)\s+'
+        r'\b(?:at|in|with|from|to|for|into)\s+'
+        r'(?:the\s+)?'
         r'([A-Z][A-Za-z0-9\s&\'-]{2,50}' + suffix + r')',
         text_clean
     )
     if match:
         name = match.group(1).strip().rstrip('.,')
-        # Remove any leading role-like words that got captured
         name = re.sub(r'^(?:position|role|post|designation|offer|job)\s+(?:of|at|in|with|for)\s+', '', name, flags=re.IGNORECASE).strip()
         if len(name) > 3:
             return name
 
-    # Pattern 2: Standalone company name in first 500 chars (must start with capital)
+    # Pattern 1B: ALL CAPS company name like "CEDENCO FOOD" or "CEDENCO FOODS New Zealand"
+    caps_match = re.search(
+        r'\b([A-Z]{3,}(?:\s+[A-Z]{2,})*(?:\s+' + suffix + r')?(?:\s+(?:New\s+Zealand|India|Australia|UK|USA|Dubai|Singapore|Canada|Global))?)\b',
+        text_clean
+    )
+    if caps_match:
+        name = caps_match.group(1).strip()
+        # Filter out common non-company all-caps words
+        skip_words = {'OFFER', 'LETTER', 'DEAR', 'ACCEPTANCE', 'WORK', 'PERMIT', 'DATE', 'THE', 'MR', 'MRS', 'MS', 'PASSPORT', 'EDUCATION', 'TERMINATION'}
+        words = name.split()
+        if len(words) >= 2 and words[0] not in skip_words:
+            return name
+
+    # Pattern 2: Standalone company name in first 500 chars
     header = text_clean[:500]
     match2 = re.search(
         r'([A-Z][A-Za-z0-9\s&\'-]{2,40}' + suffix + r')',
@@ -553,13 +606,19 @@ def extract_company_name(text: str) -> str:
     if match2:
         return match2.group(1).strip().rstrip('.,')
 
-    # Pattern 3: CIN line often has company name before it
+    # Pattern 3: CIN line
     cin_match = re.search(r'([A-Z][\w\s&\'-]{3,40}?)[\s]*CIN[\s:]+[A-Z0-9]', text_clean)
     if cin_match:
         name = cin_match.group(1).strip()
         if len(name) > 3:
             return name.rstrip('.,')
 
+    # Pattern 4: Website domain as fallback company name (e.g. www.cedenco.co.nz → Cedenco)
+    website_match = re.search(r'(?:website|www)\s*[:\s]*(?:www\.)?([a-zA-Z0-9-]+)\.', text_clean, re.IGNORECASE)
+    if website_match:
+        domain_name = website_match.group(1).strip()
+        if len(domain_name) > 2 and domain_name.lower() not in {'com', 'org', 'net', 'co', 'in'}:
+            return domain_name.capitalize()
     return ""
 
 
@@ -922,6 +981,18 @@ def detect_all_signals(text: str, pdf_meta: dict = None) -> dict:
     if re.search(r'(sarkari|government\s*job|govt\s*job|psu.*recruitment|central\s*govt)', text_lower):
         if not re.search(r'(upsc|ssc|ibps|rrb|nta|staff\s*selection|public\s*service)', text_lower):
             add_negative("company_legitimacy", 0.6, "Govt job claim without exam/board", "सरकारी नौकरी बिना परीक्षा/बोर्ड")
+
+    # --- FOREIGN JOB SCAM PATTERNS ---
+    foreign_scam_total = 0
+    for pattern, weight, label in FOREIGN_JOB_SCAM_PATTERNS:
+        if re.search(pattern, text_lower):
+            foreign_scam_total += weight
+            add_negative("hiring_process", weight, f"Foreign job scam signal: {label}", f"विदेशी नौकरी धोखाधड़ी संकेत: {label}")
+
+    # If multiple foreign scam signals found, compound the effect
+    if foreign_scam_total >= 1.5:
+        add_negative("company_legitimacy", 0.5, "Multiple foreign job scam indicators detected", "कई विदेशी नौकरी धोखाधड़ी संकेत मिले")
+        add_negative("payment_demands", 0.4, "Foreign job with expense demands pattern", "विदेशी नौकरी खर्च मांग पैटर्न")
 
     # --- PDF METADATA ---
     if pdf_meta:
