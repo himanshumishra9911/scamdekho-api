@@ -1,3 +1,19 @@
+"""
+ScamDekho — Offer Letter Trust Score Engine v3.0
+
+CHANGES FROM v2:
+  1. Hard rules removed → Soft weighted scoring (no more hard caps)
+  2. Salary logic is context-based (role + experience aware)
+  3. Email/Gmail logic is context-aware (startup vs big company)
+  4. Confidence score added (low/medium/high)
+  5. External domain age validation via WHOIS
+
+Trust Score (0-100):
+  70+  = Likely Genuine
+  50-70 = Needs Verification
+  <50  = High Risk Scam
+"""
+
 import os
 import json
 import base64
@@ -300,20 +316,26 @@ def extract_pdf_metadata(file_bytes: bytes) -> dict:
 # 4. EXTERNAL DOMAIN AGE CHECK (FIX #5)
 # =====================================================
 
+# In-memory cache: domain -> (result_dict, timestamp)
+_whois_cache = {}
+WHOIS_CACHE_TTL = 3600  # Cache for 1 hour (seconds)
+WHOIS_TIMEOUT = 5  # Max seconds to wait for WHOIS
+
+
 def check_domain_age(domain: str) -> dict:
     """
-    Check domain age via python-whois.
-    Returns domain age info and trust signal.
-
-    On Render.com this will work fine (full network).
-    Fails gracefully if WHOIS is unreachable.
+    Check domain age via python-whois with caching.
+    WHOIS fail = completely neutral (zero weight, no penalty).
+    Results cached for 1 hour to avoid repeated lookups.
     """
+    import time
+
     result = {
         "domain": domain,
         "age_days": None,
         "creation_date": None,
         "registrar": None,
-        "is_new_domain": None,  # True if < 180 days old
+        "is_new_domain": None,
         "check_success": False,
         "signal": None,
         "weight": 0,
@@ -329,6 +351,13 @@ def check_domain_age(domain: str) -> dict:
     # Skip for generic email domains
     if domain in GENERIC_EMAIL_DOMAINS:
         return result
+
+    # Check cache first
+    now = time.time()
+    if domain in _whois_cache:
+        cached_result, cached_time = _whois_cache[domain]
+        if now - cached_time < WHOIS_CACHE_TTL:
+            return cached_result
 
     try:
         import whois
@@ -359,11 +388,16 @@ def check_domain_age(domain: str) -> dict:
                     result["is_new_domain"] = False
                     result["signal"] = ("positive", f"Domain '{domain}' is {years} years old (established)", 0.4)
         else:
-            result["signal"] = ("info", f"Could not determine age of '{domain}'", 0.05)
+            # Could not determine age — neutral, zero weight
+            result["signal"] = None  # No signal at all
 
     except Exception as e:
-        print(f"WHOIS ERROR for {domain}: {e}")
-        result["signal"] = ("info", f"Domain age check failed for '{domain}'", 0.0)
+        # WHOIS failed — completely ignore, no signal, no penalty
+        print(f"WHOIS FAILED for {domain} (ignored): {e}")
+        result["signal"] = None  # No signal — neutral
+
+    # Cache the result
+    _whois_cache[domain] = (result, now)
 
     return result
 
@@ -472,6 +506,189 @@ def analyze_domains_in_text(text: str) -> dict:
             "detail_hi": "ऑफ़र लेटर में कोई ईमेल नहीं",
         })
 
+    return result
+
+
+# =====================================================
+# 5B. COMPANY ONLINE PRESENCE CHECK (LinkedIn + Google)
+# =====================================================
+
+# Cache for company presence checks
+_company_presence_cache = {}
+COMPANY_PRESENCE_CACHE_TTL = 3600  # 1 hour
+
+
+def extract_company_name(text: str) -> str:
+    """
+    Try to extract company name from offer letter text.
+    Looks for common patterns in Indian offer letters.
+    """
+    text_clean = text.strip()
+
+    # Company suffix pattern (reusable)
+    suffix = (r'(?:Ltd\.?|Limited|Pvt\.?\s*Ltd\.?|Private\s+Limited|'
+              r'Inc\.?|Corporation|LLP|Solutions|Technologies|'
+              r'Services|Consulting|Systems|Infra|Group|India)')
+
+    # Pattern 1: "at/in/with <Company Name ending with suffix>"
+    # The company name MUST start with a Capital letter right after the preposition
+    match = re.search(
+        r'\b(?:at|in|with|from|to)\s+'
+        r'([A-Z][A-Za-z0-9\s&\'-]{2,50}' + suffix + r')',
+        text_clean
+    )
+    if match:
+        name = match.group(1).strip().rstrip('.,')
+        # Remove any leading role-like words that got captured
+        name = re.sub(r'^(?:position|role|post|designation|offer|job)\s+(?:of|at|in|with|for)\s+', '', name, flags=re.IGNORECASE).strip()
+        if len(name) > 3:
+            return name
+
+    # Pattern 2: Standalone company name in first 500 chars (must start with capital)
+    header = text_clean[:500]
+    match2 = re.search(
+        r'([A-Z][A-Za-z0-9\s&\'-]{2,40}' + suffix + r')',
+        header
+    )
+    if match2:
+        return match2.group(1).strip().rstrip('.,')
+
+    # Pattern 3: CIN line often has company name before it
+    cin_match = re.search(r'([A-Z][\w\s&\'-]{3,40}?)[\s]*CIN[\s:]+[A-Z0-9]', text_clean)
+    if cin_match:
+        name = cin_match.group(1).strip()
+        if len(name) > 3:
+            return name.rstrip('.,')
+
+    return ""
+
+
+def check_company_online_presence(company_name: str) -> dict:
+    """
+    Check if company has LinkedIn presence via Google Custom Search API.
+    Falls back to requests-based Google search if API key not configured.
+
+    Env vars needed (optional):
+      GOOGLE_CSE_API_KEY — Google Custom Search API key
+      GOOGLE_CSE_CX — Custom Search Engine ID
+
+    If not configured, uses requests to do a basic Google search (less reliable).
+    Fails gracefully — if check fails, returns neutral (no signal).
+    """
+    import time
+
+    result = {
+        "company_name": company_name,
+        "linkedin_found": False,
+        "linkedin_url": None,
+        "google_results_found": False,
+        "check_success": False,
+        "signal": None,
+    }
+
+    if not company_name or len(company_name) < 3:
+        return result
+
+    # Normalize company name for search
+    search_name = company_name.strip()
+
+    # Check cache
+    cache_key = search_name.lower()
+    now = time.time()
+    if cache_key in _company_presence_cache:
+        cached, cached_time = _company_presence_cache[cache_key]
+        if now - cached_time < COMPANY_PRESENCE_CACHE_TTL:
+            return cached
+
+    # Known companies — skip search
+    known_names = {
+        "tata consultancy services", "tcs", "infosys", "wipro", "hcl",
+        "tech mahindra", "cognizant", "accenture", "deloitte", "ibm",
+        "google", "microsoft", "amazon", "flipkart", "zomato", "swiggy",
+        "paytm", "razorpay", "phonepe", "reliance", "adani", "godrej",
+        "mahindra", "bajaj", "hdfc", "icici", "axis bank", "sbi",
+        "capgemini", "oracle", "zoho", "freshworks", "byju",
+    }
+    if any(kn in search_name.lower() for kn in known_names):
+        result["linkedin_found"] = True
+        result["check_success"] = True
+        result["signal"] = ("positive", f"'{search_name}' is a well-known company with verified online presence", 0.5)
+        _company_presence_cache[cache_key] = (result, now)
+        return result
+
+    # Try Google Custom Search API first
+    api_key = os.getenv("GOOGLE_CSE_API_KEY")
+    cse_cx = os.getenv("GOOGLE_CSE_CX")
+
+    if api_key and cse_cx:
+        try:
+            import httpx
+            query = f"{search_name} linkedin company"
+            url = "https://www.googleapis.com/customsearch/v1"
+            params = {"key": api_key, "cx": cse_cx, "q": query, "num": 5}
+
+            with httpx.Client(timeout=5) as http_client:
+                resp = http_client.get(url, params=params)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data.get("items", [])
+                result["google_results_found"] = len(items) > 0
+                result["check_success"] = True
+
+                for item in items:
+                    link = item.get("link", "")
+                    if "linkedin.com/company/" in link:
+                        result["linkedin_found"] = True
+                        result["linkedin_url"] = link
+                        break
+
+                if result["linkedin_found"]:
+                    result["signal"] = ("positive", f"'{search_name}' has a LinkedIn company page", 0.4)
+                else:
+                    # No LinkedIn but Google results exist
+                    if result["google_results_found"]:
+                        result["signal"] = ("info", f"'{search_name}' found on Google but no LinkedIn page", 0.0)
+                    else:
+                        result["signal"] = ("warning", f"'{search_name}' has very low online presence", 0.2)
+
+        except Exception as e:
+            print(f"GOOGLE CSE ERROR for '{search_name}': {e}")
+            result["signal"] = None  # Fail = neutral
+    else:
+        # Fallback: basic Google search via requests
+        try:
+            import httpx
+            query = f"{search_name} site:linkedin.com/company"
+            search_url = f"https://www.google.com/search?q={query}&num=3"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+
+            with httpx.Client(timeout=5, follow_redirects=True) as http_client:
+                resp = http_client.get(search_url, headers=headers)
+
+            if resp.status_code == 200:
+                body = resp.text
+                result["check_success"] = True
+
+                # Check if LinkedIn company URL appears in results
+                linkedin_matches = re.findall(r'linkedin\.com/company/[\w-]+', body)
+                if linkedin_matches:
+                    result["linkedin_found"] = True
+                    result["linkedin_url"] = f"https://www.{linkedin_matches[0]}"
+                    result["signal"] = ("positive", f"'{search_name}' has a LinkedIn company page", 0.4)
+                else:
+                    result["signal"] = ("warning", f"No LinkedIn company page found for '{search_name}'", 0.2)
+            else:
+                result["signal"] = None  # Fail = neutral
+
+        except Exception as e:
+            print(f"GOOGLE SEARCH ERROR for '{search_name}': {e}")
+            result["signal"] = None  # Fail = neutral
+
+    # Cache result
+    _company_presence_cache[cache_key] = (result, now)
     return result
 
 
@@ -1015,16 +1232,31 @@ def run_full_analysis(extracted_text: str, file_bytes: bytes = None, file_type: 
     # Layer 2: Domain & email analysis (with external WHOIS)
     domain_analysis = analyze_domains_in_text(extracted_text)
 
-    # Layer 3: Context-based salary check
+    # Layer 3: Company online presence (LinkedIn + Google)
+    company_name = extract_company_name(extracted_text)
+    company_presence = check_company_online_presence(company_name) if company_name else {
+        "company_name": "", "linkedin_found": False, "check_success": False, "signal": None
+    }
+
+    # Inject company presence signal into domain analysis
+    if company_presence.get("signal"):
+        sig_type, sig_text, sig_weight = company_presence["signal"]
+        domain_analysis["domain_signals"].append({
+            "type": sig_type, "weight": sig_weight,
+            "detail_en": sig_text,
+            "detail_hi": sig_text,
+        })
+
+    # Layer 4: Context-based salary check
     salary_analysis = analyze_salary_context(extracted_text)
 
-    # Layer 4: Rule-based signals
+    # Layer 5: Rule-based signals
     rule_signals = detect_all_signals(extracted_text, pdf_meta)
 
-    # Layer 5: AI analysis (gets all context)
+    # Layer 6: AI analysis (gets all context)
     ai_result = analyze_offer_letter_ai(extracted_text, rule_signals, domain_analysis, salary_analysis, pdf_meta)
 
-    # Layer 6: Calculate soft trust score
+    # Layer 7: Calculate soft trust score
     score_result = calculate_trust_score(ai_result, rule_signals, domain_analysis, salary_analysis, pdf_meta)
 
     trust_score = score_result["trust_score"]
@@ -1081,7 +1313,7 @@ def run_full_analysis(extracted_text: str, file_bytes: bytes = None, file_type: 
             "file_type": file_type.upper(),
             "confidence": confidence,
             "total_signals": score_result["total_signals_analyzed"],
-            "layers": ["pdf_metadata", "domain_whois", "salary_context", "rule_engine", "ai_analysis", "soft_scoring"],
+            "layers": ["pdf_metadata", "domain_whois", "company_presence", "salary_context", "rule_engine", "ai_analysis", "soft_scoring"],
             "signals_summary": {
                 "red_flags": len(rule_signals["red_flags"]),
                 "warnings": len(rule_signals["warnings"]),
@@ -1092,6 +1324,9 @@ def run_full_analysis(extracted_text: str, file_bytes: bytes = None, file_type: 
                 "detected_roles": [r["role"] for r in salary_analysis.get("detected_roles", [])],
                 "detected_salaries": salary_analysis.get("detected_salaries", []),
                 "domain_age_checked": any(d.get("check_success") for d in domain_analysis.get("domain_age_results", [])),
+                "company_name_detected": company_name or None,
+                "linkedin_found": company_presence.get("linkedin_found", False),
+                "linkedin_url": company_presence.get("linkedin_url"),
             },
             "pdf_meta": {
                 "creator": pdf_meta.get("creator"),
