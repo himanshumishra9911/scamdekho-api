@@ -2,8 +2,8 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.services.offer_letter_engine import (
     extract_text_from_pdf,
     extract_text_from_doc,
-    analyze_offer_letter_ai,
-    analyze_offer_letter_pdf_vision
+    run_full_analysis,
+    run_vision_analysis,
 )
 from app.services.db_service import save_scan
 
@@ -18,82 +18,71 @@ ALLOWED_TYPES = {
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
-# ======================================================
-# OFFER LETTER CHECK
-# ======================================================
 @router.post("/check/offer-letter")
 async def check_offer_letter(file: UploadFile = File(...)):
+    """
+    Offer Letter Trust Score API v3.0
 
-    # Validate file type
+    Trust Score (0-100):
+      70+  = Likely Genuine
+      50-70 = Needs Verification
+      <50  = High Risk Scam
+
+    Confidence: low / medium / high
+
+    6 analysis layers:
+      1. PDF metadata forensics
+      2. Domain + WHOIS age check
+      3. Context-based salary analysis
+      4. Rule-based signal detection
+      5. AI analysis (GPT-4o-mini)
+      6. Soft weighted trust score calculator
+    """
+
     if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF, DOC, or DOCX files are allowed."
-        )
+        raise HTTPException(status_code=400, detail="Only PDF, DOC, or DOCX files are allowed.")
 
     file_bytes = await file.read()
 
-    # Validate file size
     if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail="File size must be under 10MB."
-        )
+        raise HTTPException(status_code=400, detail="File size must be under 10MB.")
 
-    # Extract text based on file type
     file_type = ALLOWED_TYPES[file.content_type]
 
+    # Extract text
     if file_type == "pdf":
         extracted_text = extract_text_from_pdf(file_bytes)
     else:
         extracted_text = extract_text_from_doc(file_bytes)
 
-    # If text extraction failed — Vision AI fallback
+    # Vision fallback for scanned PDFs
     if not extracted_text or len(extracted_text.strip()) < 50:
         if file_type == "pdf":
-            ai = analyze_offer_letter_pdf_vision(file_bytes)
-            verdict = "SCAM" if ai["risk_score"] >= 70 else "SUSPICIOUS" if ai["risk_score"] >= 31 else "SAFE"
-            await save_scan("offer_letter", file.filename or "offer_letter", verdict, ai["risk_score"])
-            return {
-                "verdict": verdict,
-                "confidence": ai["confidence"],
-                "why": ai["why"],
-                "what_to_do": ai["what_to_do"],
-                "how_to_avoid": ai["how_to_avoid"],
-                "engine": "OFFER LETTER VISION AI"
-            }
+            result = run_vision_analysis(file_bytes)
+            await save_scan("offer_letter", file.filename or "unknown", result["verdict"], result["trust_score"])
+            return result
+
         return {
+            "trust_score": 50,
+            "confidence": "low",
             "verdict": "UNKNOWN",
-            "confidence": {
-                "en": "Could not extract enough text from the document. Please try a different file.",
-                "hi": "दस्तावेज़ से पर्याप्त टेक्स्ट नहीं निकाला जा सका। कृपया दूसरी फ़ाइल आज़माएं।"
+            "verdict_detail": {
+                "en": "Could not extract text. Please try a clearer file.",
+                "hi": "टेक्स्ट नहीं निकाला जा सका। स्पष्ट फ़ाइल अपलोड करें।"
             },
-            "why": [],
+            "categories": {},
+            "red_flags": [],
+            "safe_signals": [],
+            "info_flags": [],
             "what_to_do": [
-                {"en": "Make sure the PDF is not scanned/image-based", "hi": "सुनिश्चित करें कि PDF स्कैन की हुई न हो"}
+                {"en": "Upload a clearer PDF or DOCX file", "hi": "स्पष्ट PDF या DOCX फ़ाइल अपलोड करें"}
             ],
-            "how_to_avoid": [],
-            "engine": "TEXT EXTRACT FAILED"
+            "analysis_info": {"engine": "TEXT EXTRACT FAILED", "confidence": "low"}
         }
 
-    # AI Analysis
-    ai = analyze_offer_letter_ai(extracted_text)
+    # Full 6-layer analysis
+    result = run_full_analysis(extracted_text, file_bytes, file_type)
 
-    # Verdict
-    if ai["risk_score"] >= 70:
-        verdict = "SCAM"
-    elif ai["risk_score"] >= 31:
-        verdict = "SUSPICIOUS"
-    else:
-        verdict = "SAFE"
+    await save_scan("offer_letter", file.filename or "unknown", result["verdict"], result["trust_score"])
 
-    await save_scan("offer_letter", file.filename or "offer_letter", verdict, ai["risk_score"])
-
-    return {
-        "verdict": verdict,
-        "confidence": ai["confidence"],
-        "why": ai["why"],
-        "what_to_do": ai["what_to_do"],
-        "how_to_avoid": ai["how_to_avoid"],
-        "engine": f"OFFER LETTER AI ({file_type.upper()})"
-    }
+    return result
