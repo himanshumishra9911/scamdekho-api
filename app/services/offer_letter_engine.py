@@ -211,6 +211,28 @@ ROLE_SALARY_RANGES = {
     "devops": (5, 40),
     "cloud": (5, 45),
     "product manager": (10, 50),
+    # Marketing / Content
+    "digital marketer": (1.5, 8),
+    "digital marketing": (1.5, 10),
+    "social media": (1.5, 8),
+    "content writer": (1.5, 6),
+    "seo executive": (2, 8),
+    "graphic designer": (1.5, 8),
+    "marketing executive": (2, 10),
+    "marketing manager": (5, 25),
+    "brand manager": (5, 20),
+    # Sales
+    "sales executive": (2, 8),
+    "business development": (2, 15),
+    "telecaller": (1, 4),
+    "tele caller": (1, 4),
+    # HR / Admin
+    "hr executive": (2, 8),
+    "hr manager": (4, 18),
+    "office assistant": (1.5, 4),
+    "back office": (1.5, 5),
+    "accountant": (2, 10),
+    "accounts executive": (2, 8),
 }
 
 SUSPICIOUS_CREATION_TOOLS = ["canva", "google docs", "libreoffice", "wps office", "smallpdf", "ilovepdf"]
@@ -429,6 +451,23 @@ def analyze_domains_in_text(text: str) -> dict:
     }
 
     emails = list(set(re.findall(r'[\w.-]+@[\w.-]+\.\w{2,}', text_lower)))
+    # FIX: If no emails found, try multiple strategies for PDF text issues
+    if not emails:
+        # Strategy 1: Collapse ALL whitespace and try again
+        collapsed = re.sub(r'\s+', '', text_lower)
+        emails = list(set(re.findall(r'[\w.-]+@[\w.-]+\.\w{2,}', collapsed)))
+    if not emails:
+        # Strategy 2: Look for "email" label nearby and extract with space tolerance
+        # Handles: "Email: care @ kushdigitech . com" or "Email:care@kushdigitech.com"
+        email_label = re.search(r'e[\s-]*m[\s-]*a[\s-]*i[\s-]*l\s*[:\s]\s*([\w.\s@-]+\.\s*\w{2,})', text_lower)
+        if email_label:
+            raw = re.sub(r'\s+', '', email_label.group(1))  # collapse spaces
+            found = re.findall(r'[\w.-]+@[\w.-]+\.\w{2,}', raw)
+            emails = list(set(found))
+    if not emails:
+        # Strategy 3: Look for word@word.word pattern with optional spaces around @
+        spaced = re.findall(r'([\w.-]+)\s*@\s*([\w.-]+\.\w{2,})', text_lower)
+        emails = list(set(f"{u}@{d}" for u, d in spaced))
     result["emails_found"] = emails
 
     # Detect if this looks like a big company or startup
@@ -555,9 +594,34 @@ COMPANY_PRESENCE_CACHE_TTL = 3600  # 1 hour
 def extract_company_name(text: str) -> str:
     """
     Try to extract company name from offer letter text.
-    Looks for common patterns in Indian offer letters.
+    Uses multiple strategies with frequency-based as highest priority.
     """
     text_clean = text.strip()
+
+    # ===== PATTERN 0: FREQUENCY-BASED (STRONGEST SIGNAL) =====
+    # Find 2+ capitalized word sequences that repeat 3+ times in the text
+    # "Kush DigiTech" appearing 5 times = very strong company name signal
+    cap_phrases = re.findall(r'\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)\b', text_clean)
+    if cap_phrases:
+        from collections import Counter
+        phrase_counts = Counter(cap_phrases)
+        # Filter: must appear 3+ times, not be common false positives
+        false_positives_freq = {
+            'New Delhi', 'West Delhi', 'South Delhi', 'North Delhi', 'East Delhi',
+            'Dear Sir', 'Dear Madam', 'Dear Candidate', 'Company Policies',
+            'Uttam Nagar', 'Om Vihar', 'Nihal Vihar', 'Daily Targets',
+            'Half Day', 'Performance Check Period', 'HR Head',
+        }
+        candidates = [
+            (phrase, count) for phrase, count in phrase_counts.items()
+            if count >= 3 and phrase not in false_positives_freq
+            and len(phrase) > 3
+            and not re.match(r'^(The|This|That|Your|Dear|Date|Name|Mobile)\b', phrase)
+        ]
+        if candidates:
+            # Pick the most frequent one
+            best = max(candidates, key=lambda x: x[1])
+            return best[0]
 
     # Company suffix pattern (reusable) — covers Indian + international formats
     suffix = (r'(?:Ltd\.?|Limited|Pvt\.?\s*Ltd\.?|Private\s+Limited|'
@@ -569,7 +633,9 @@ def extract_company_name(text: str) -> str:
               r'Healthcare|Hospital|Labs|Academy|Institute|'
               r'Foundation|Trust|Associates|Partners|Co\.?\s*Ltd\.?|'
               r'Company|Ventures|Capital|Studios?|Digital|'
-              r'Global|Worldwide|Overseas|Export|Import)')
+              r'Global|Worldwide|Overseas|Export|Import|'
+              r'Tech|DigiTech|Infotech|Softech|Techno|Softtech|'
+              r'Media|Agency|Hub|Works|Network|Mart|Zone|Store)')
 
     # Pattern 1: "at/in/with/for <Company Name ending with suffix>"
     match = re.search(
@@ -613,6 +679,22 @@ def extract_company_name(text: str) -> str:
         if len(name) > 3:
             return name.rstrip('.,')
 
+    # Pattern 3B: Fallback — "with/at <TwoOrMoreCapWords>" without requiring suffix
+    # Handles "with Kush DigiTech" where company name has no standard suffix
+    cap_match = re.search(
+        r'\b(?:with|at|from|join(?:ing)?)\s+'
+        r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)',
+        text_clean
+    )
+    if cap_match:
+        name = cap_match.group(1).strip().rstrip('.,')
+        false_positives = {
+            'New Delhi', 'West Delhi', 'South Delhi', 'North Delhi', 'East Delhi',
+            'Dear Sir', 'Dear Madam', 'Dear Candidate', 'Company Policies',
+            'Daily Targets Given By', 'Om Vihar', 'Uttam Nagar',
+        }
+        if name not in false_positives and len(name) > 3:
+            return name
     # Pattern 4: Website domain as fallback company name (e.g. www.cedenco.co.nz → Cedenco)
     website_match = re.search(r'(?:website|www)\s*[:\s]*(?:www\.)?([a-zA-Z0-9-]+)\.', text_clean, re.IGNORECASE)
     if website_match:
@@ -776,13 +858,45 @@ def analyze_salary_context(text: str) -> dict:
                 "expected_range": f"{min_lpa}-{max_lpa} LPA"
             })
 
+    # FIX: Detect role from appointment context and prioritize it
+    # "appoint you as a Digital Marketer" should override incidental "HR Head"
+    # Handles smart quotes ("...") and typos like "a as a"
+    appt_match = re.search(
+        r'(?:appoint(?:ed)?\s+(?:you\s+)?(?:a\s+)?as\s+(?:a\s+)?|'
+        r'hired\s+as\s+(?:a\s+)?|position\s+of\s+|role\s+of\s+|'
+        r'designation[:\s]+)'
+        r'["\'\u201c\u201d]*\s*'
+        r'([a-zA-Z][a-zA-Z\s]{2,30}?)'
+        r'\s*["\'\u201c\u201d]*'
+        r'(?:\s*[.,\n])',
+        text_lower, re.MULTILINE
+    )
+    if appt_match:
+        appointed_role = appt_match.group(1).strip()
+        # Find matching role key and move it to front
+        for i, role_info in enumerate(result["detected_roles"]):
+            if role_info["role"] in appointed_role or appointed_role in role_info["role"]:
+                # Move to front as primary role
+                result["detected_roles"].insert(0, result["detected_roles"].pop(i))
+                break
+        else:
+            # Role text found but no exact match in ROLE_SALARY_RANGES
+            # Try partial match
+            for role_key in ROLE_SALARY_RANGES:
+                if role_key in appointed_role:
+                    result["detected_roles"].insert(0, {
+                        "role": role_key,
+                        "expected_range": f"{ROLE_SALARY_RANGES[role_key][0]}-{ROLE_SALARY_RANGES[role_key][1]} LPA"
+                    })
+                    break
+
     # Detect salaries (LPA format)
     for match in re.finditer(r'(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lac)\s*(?:per\s*annum|p\.?a\.?)?', text_lower):
         sal_val = float(match.group(1))
         result["detected_salaries"].append(sal_val)
 
-    # Also detect monthly salary
-    for match in re.finditer(r'(?:rs\.?|inr|₹)\s*(\d[\d,]*)\s*(?:per\s*month|p\.?m\.?|/\s*month)', text_lower):
+    # Also detect monthly salary (handles: Rs. 13000/-per month, Rs 15,000 per month, etc.)
+    for match in re.finditer(r'(?:rs\.?|inr|₹)\s*(\d[\d,]*)/?-?\s*(?:per\s*month|p\.?m\.?|/\s*month)', text_lower):
         monthly = float(match.group(1).replace(",", ""))
         annual_lpa = (monthly * 12) / 100000
         result["detected_salaries"].append(round(annual_lpa, 1))
