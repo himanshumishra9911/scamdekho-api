@@ -27,12 +27,12 @@ SOURCE_WEIGHTS = {
     "URLhaus": 0.85,
     "PhishTank": 0.80,
     "AbuseIPDB": 0.85,
-    "DNS Security": 0.70,
-    "SSL Certificate": 0.80,
-    "Domain Age": 0.55,
+    "DNS Security": 0.60,
+    "SSL Certificate": 0.70,
+    "Domain Age": 0.85,
     "HTTP Analysis": 0.55,
-    "IP & Hosting": 0.45,
-    "Content Analysis": 0.50,
+    "IP & Hosting": 0.55,
+    "Content Analysis": 0.65,
     "URL Patterns": 0.75,
     "VirusTotal": 0.90,
 }
@@ -47,8 +47,6 @@ def check_domain_age(domain: str):
         import json as _json
         from datetime import datetime
 
-        # RDAP — ICANN official, no binary needed
-        tld = domain.split('.')[-1]
         rdap_url = f"https://rdap.org/domain/{domain}"
         req = urllib.request.Request(rdap_url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=8) as resp:
@@ -103,7 +101,8 @@ def check_domain_age(domain: str):
 
     except Exception as e:
         return {"score": 5, "status": "neutral", "message": "Domain age unavailable", "detail": f"RDAP lookup failed: {str(e)[:60]}", "age_days": None, "created": None}
-        
+
+
 # ======================================
 # 2. SSL CHECK (SYNC, FREE)
 # ======================================
@@ -401,11 +400,23 @@ async def check_ip_info(domain: str):
         location = d.get("country", "Unknown")
         findings.append(f"Country: {location}")
         findings.append(f"ISP: {d.get('isp', 'Unknown')}")
-        if d.get("countryCode") in ["RU", "CN", "KP", "NG"]:
-            score += 15; status = "negative"; findings.append("High-risk country")
+        HIGH_RISK_COUNTRIES = ["RU", "CN", "KP", "NG", "HK"]
+        MEDIUM_RISK_COUNTRIES = ["UA", "RO", "BY"]
+        cc = d.get("countryCode", "")
+        if cc in HIGH_RISK_COUNTRIES:
+            score += 15
+            status = "negative"
+            findings.append(f"High-risk hosting country: {cc}")
+        elif cc in MEDIUM_RISK_COUNTRIES:
+            score += 8
+            findings.append(f"Medium-risk hosting country: {cc}")
+            if status == "positive":
+                status = "neutral"
     except Exception as e:
-        findings.append(f"IP unavailable: {str(e)[:50]}"); status = "neutral"
+        findings.append(f"IP unavailable: {str(e)[:50]}")
+        status = "neutral"
     return {"score": score, "status": status, "message": f"Server: {location}", "detail": " | ".join(findings), "ip": ip, "location": location}
+
 
 # ======================================
 # 13. SUSPICIOUS URL PATTERN CHECK (FREE)
@@ -415,9 +426,13 @@ def check_url_patterns(url: str, domain: str):
     findings = []
     status = "positive"
 
-    SUSPICIOUS_TLDS = ['.name', '.tk', '.ml', '.ga', '.cf', '.gq', '.xyz', '.top',
-                       '.club', '.online', '.site', '.website', '.info', '.biz',
-                       '.click', '.link', '.work', '.date', '.download', '.win']
+    SUSPICIOUS_TLDS = [
+        '.name', '.tk', '.ml', '.ga', '.cf', '.gq', '.xyz', '.top',
+        '.club', '.online', '.site', '.website', '.info', '.biz',
+        '.click', '.link', '.work', '.date', '.download', '.win',
+        '.one', '.icu', '.vip', '.cyou', '.monster', '.fun', '.rest',
+        '.live', '.pw', '.cc', '.su', '.buzz', '.cfd'
+    ]
 
     tld = '.' + domain.split('.')[-1].lower()
     if tld in SUSPICIOUS_TLDS:
@@ -435,7 +450,6 @@ def check_url_patterns(url: str, domain: str):
             findings.append(f"Suspicious path: {path}")
             break
 
-    # Short random path like /yiy /xyz /aab
     path_parts = [p for p in path.split('/') if p]
     if path_parts and len(path_parts[-1]) <= 4 and path_parts[-1].isalpha():
         score += 10
@@ -452,7 +466,8 @@ def check_url_patterns(url: str, domain: str):
         "message": "URL Pattern: " + ("Suspicious" if status == "negative" else "OK" if status == "positive" else "Caution"),
         "detail": " | ".join(findings)
     }
-    
+
+
 # ======================================
 # 14. VIRUSTOTAL (FREE 500/day)
 # ======================================
@@ -461,39 +476,26 @@ async def check_virustotal(url: str):
     if not api_key:
         return {"score": 0, "status": "neutral", "message": "VirusTotal: API key not set", "detail": "Set VIRUSTOTAL_API_KEY"}
     try:
-        # URL ko base64 encode karna padta hai VirusTotal ke liye
         url_id = base64.b64encode(url.encode()).decode().strip("=")
-        
         async with httpx.AsyncClient(timeout=10.0) as c:
             r = await c.get(
                 f"https://www.virustotal.com/api/v3/urls/{url_id}",
                 headers={"x-apikey": api_key}
             )
-            
             if r.status_code == 200:
                 stats = r.json()["data"]["attributes"]["last_analysis_stats"]
                 malicious = stats.get("malicious", 0)
                 suspicious = stats.get("suspicious", 0)
                 harmless = stats.get("harmless", 0)
                 total = malicious + suspicious + harmless
-                
                 detail = f"Malicious: {malicious} | Suspicious: {suspicious} | Clean: {harmless} engines"
-                
                 if malicious >= 3:
-                    return {"score": 85, "status": "negative", 
-                            "message": f"DANGER: VirusTotal — {malicious} engines flagged!", 
-                            "detail": detail}
+                    return {"score": 85, "status": "negative", "message": f"DANGER: VirusTotal — {malicious} engines flagged!", "detail": detail}
                 elif malicious >= 1 or suspicious >= 3:
-                    return {"score": 45, "status": "negative", 
-                            "message": f"WARNING: VirusTotal — {malicious} malicious, {suspicious} suspicious", 
-                            "detail": detail}
+                    return {"score": 45, "status": "negative", "message": f"WARNING: VirusTotal — {malicious} malicious, {suspicious} suspicious", "detail": detail}
                 elif total > 0:
-                    return {"score": 0, "status": "positive", 
-                            "message": f"VirusTotal: Clean ({harmless}/{total} engines)", 
-                            "detail": detail}
-                            
+                    return {"score": 0, "status": "positive", "message": f"VirusTotal: Clean ({harmless}/{total} engines)", "detail": detail}
             elif r.status_code == 404:
-                # URL abhi tak scan nahi hua — submit karo
                 async with httpx.AsyncClient(timeout=10.0) as c2:
                     submit = await c2.post(
                         "https://www.virustotal.com/api/v3/urls",
@@ -501,10 +503,7 @@ async def check_virustotal(url: str):
                         data={"url": url}
                     )
                     if submit.status_code == 200:
-                        return {"score": 5, "status": "neutral", 
-                                "message": "VirusTotal: First scan submitted", 
-                                "detail": "URL submitted for analysis — no prior data"}
-                                
+                        return {"score": 5, "status": "neutral", "message": "VirusTotal: First scan submitted", "detail": "URL submitted for analysis — no prior data"}
         return {"score": 0, "status": "neutral", "message": "VirusTotal: No data", "detail": "Check failed"}
     except Exception as e:
         return {"score": 0, "status": "neutral", "message": "VirusTotal: Check failed", "detail": str(e)[:80]}
@@ -514,13 +513,62 @@ async def check_virustotal(url: str):
 # SCORING ENGINE
 # ======================================
 def calculate_trust_score(source_results: dict) -> int:
-    wr = 0; tw = 0
+    wr = 0
+    tw = 0
     for name, res in source_results.items():
         w = SOURCE_WEIGHTS.get(name, 0.5)
         wr += res.get("score", 0) * w
         tw += w
     norm = wr / tw if tw > 0 else 0
-    return max(0, min(100, int(100 - norm)))
+    base_score = max(0, min(100, int(100 - norm)))
+
+    # ── HARD PENALTIES (ScamAdviser-style) ──────────────────────
+    penalty = 0
+
+    # Domain age — most important signal
+    da = source_results.get("Domain Age", {})
+    age_days = da.get("age_days")
+    if age_days is not None:
+        if age_days <= 3:
+            penalty += 45   # Same day / brand new = very high risk
+        elif age_days <= 14:
+            penalty += 35
+        elif age_days <= 30:
+            penalty += 25
+        elif age_days <= 90:
+            penalty += 12
+    else:
+        penalty += 8        # Age unknown bhi suspicious hai
+
+    # VirusTotal flag
+    vt = source_results.get("VirusTotal", {})
+    vt_score = vt.get("score", 0)
+    if vt_score >= 85:
+        penalty += 50
+    elif vt_score >= 45:
+        penalty += 25       # 1 malicious flag
+    elif vt_score >= 5:
+        penalty += 10
+
+    # Suspicious TLD (.one, .xyz, .tk etc.)
+    url_pat = source_results.get("URL Patterns", {})
+    if url_pat.get("status") == "negative":
+        penalty += 15
+
+    # High-risk hosting country (HK, RU, CN etc.)
+    ip_res = source_results.get("IP & Hosting", {})
+    if ip_res.get("score", 0) > 0:
+        penalty += 10
+
+    # Suspicious content
+    ca = source_results.get("Content Analysis", {})
+    if ca.get("status") == "negative":
+        penalty += 20
+    elif ca.get("status") == "neutral":
+        penalty += 5
+
+    final_score = max(0, base_score - penalty)
+    return final_score
 
 
 def get_verdict(trust_score: int, blacklisted: bool) -> dict:
@@ -542,32 +590,55 @@ def categorize_signals(source_results: dict) -> dict:
     pos, neg, neu = [], [], []
     for name, res in source_results.items():
         entry = {"name": name, "status": res.get("status", "neutral"), "message": res.get("message", ""), "detail": res.get("detail", "")}
-        if res.get("status") == "positive": pos.append(entry)
-        elif res.get("status") == "negative": neg.append(entry)
-        else: neu.append(entry)
+        if res.get("status") == "positive":
+            pos.append(entry)
+        elif res.get("status") == "negative":
+            neg.append(entry)
+        else:
+            neu.append(entry)
     return {"positive_signals": len(pos), "negative_signals": len(neg), "neutral_signals": len(neu), "positive": pos, "negative": neg, "neutral": neu}
 
 
 def generate_explanation(sr: dict, ts: int, bl: bool) -> list:
     reasons = []
-    if bl: reasons.append("Ye URL security databases me blacklisted hai")
+    if bl:
+        reasons.append("Ye URL security databases me blacklisted hai")
     da = sr.get("Domain Age", {})
     if da.get("age_days") is not None:
-        if da["age_days"] < 90: reasons.append(f"Domain bahut naya hai ({da['age_days']} din purana)")
-        elif da["age_days"] > 730: reasons.append(f"Domain established hai ({da['age_days'] // 365} saal purana)")
+        if da["age_days"] < 90:
+            reasons.append(f"Domain bahut naya hai ({da['age_days']} din purana)")
+        elif da["age_days"] > 730:
+            reasons.append(f"Domain established hai ({da['age_days'] // 365} saal purana)")
     ss = sr.get("SSL Certificate", {})
-    if ss.get("status") == "positive": reasons.append("SSL certificate valid hai")
-    elif ss.get("status") == "negative": reasons.append("SSL me problem hai")
+    if ss.get("status") == "positive":
+        reasons.append("SSL certificate valid hai")
+    elif ss.get("status") == "negative":
+        reasons.append("SSL me problem hai")
     ab = sr.get("AbuseIPDB", {})
-    if (ab.get("abuse_score") or 0) >= 40: reasons.append(f"IP address abuse reports me hai (score: {ab.get('abuse_score')}%)")
+    if (ab.get("abuse_score") or 0) >= 40:
+        reasons.append(f"IP address abuse reports me hai (score: {ab.get('abuse_score')}%)")
     for src in ["Google Safe Browsing", "PhishDestroy", "OpenPhish", "URLhaus", "PhishTank"]:
         r = sr.get(src, {})
-        if r.get("status") == "negative": reasons.append(f"{src}: DANGER — reported!")
-        elif r.get("status") == "positive": reasons.append(f"{src}: Clean")
+        if r.get("status") == "negative":
+            reasons.append(f"{src}: DANGER — reported!")
+        elif r.get("status") == "positive":
+            reasons.append(f"{src}: Clean")
+    vt = sr.get("VirusTotal", {})
+    if vt.get("status") == "negative":
+        reasons.append(f"VirusTotal: {vt.get('message', 'Flagged')}")
+    ip_r = sr.get("IP & Hosting", {})
+    if ip_r.get("score", 0) > 0:
+        reasons.append(f"High-risk hosting: {ip_r.get('message', '')}")
+    url_p = sr.get("URL Patterns", {})
+    if url_p.get("status") == "negative":
+        reasons.append(f"Suspicious URL pattern: {url_p.get('detail', '')}")
     ca = sr.get("Content Analysis", {})
-    if ca.get("status") == "negative": reasons.append("Page me suspicious patterns mile")
-    if ts >= 85 and not bl: reasons.append("Zyada tar sources ne safe report kiya hai")
-    elif ts < 50: reasons.append("Kai sources ne risky report kiya hai")
+    if ca.get("status") == "negative":
+        reasons.append("Page me suspicious patterns mile")
+    if ts >= 85 and not bl:
+        reasons.append("Zyada tar sources ne safe report kiya hai")
+    elif ts < 50:
+        reasons.append("Kai sources ne risky report kiya hai")
     return reasons
 
 
@@ -575,15 +646,20 @@ def build_technical_report(domain: str, url: str, sr: dict) -> str:
     lines = [f"DOMAIN: {domain}", f"URL: {url}", ""]
     lines.append("=== BLACKLIST & THREAT DATABASES ===")
     for s in ["Google Safe Browsing", "VirusTotal", "PhishDestroy", "OpenPhish", "URLhaus", "PhishTank"]:
-        r = sr.get(s, {}); lines.append(f"- {s}: {r.get('message', 'N/A')}")
+        r = sr.get(s, {})
+        lines.append(f"- {s}: {r.get('message', 'N/A')}")
     lines.append("\n=== IP REPUTATION ===")
     for s in ["AbuseIPDB", "IP & Hosting"]:
-        r = sr.get(s, {}); lines.append(f"- {s}: {r.get('message', 'N/A')}")
-        if r.get("detail"): lines.append(f"  Detail: {r['detail']}")
+        r = sr.get(s, {})
+        lines.append(f"- {s}: {r.get('message', 'N/A')}")
+        if r.get("detail"):
+            lines.append(f"  Detail: {r['detail']}")
     lines.append("\n=== TECHNICAL CHECKS ===")
-    for s in ["Domain Age", "SSL Certificate", "DNS Security", "HTTP Analysis", "Content Analysis"]:
-        r = sr.get(s, {}); lines.append(f"- {s}: {r.get('message', 'N/A')}")
-        if r.get("detail"): lines.append(f"  Detail: {r['detail']}")
+    for s in ["Domain Age", "SSL Certificate", "DNS Security", "HTTP Analysis", "Content Analysis", "URL Patterns"]:
+        r = sr.get(s, {})
+        lines.append(f"- {s}: {r.get('message', 'N/A')}")
+        if r.get("detail"):
+            lines.append(f"  Detail: {r['detail']}")
     return "\n".join(lines)
 
 
@@ -602,7 +678,9 @@ async def analyze_url_full(url: str) -> dict:
         ip_address = socket.gethostbyname(domain)
     except Exception:
         pass
+
     url_pattern_result = check_url_patterns(url, domain)
+
     results = await asyncio.gather(
         loop.run_in_executor(executor, check_domain_age, domain),
         loop.run_in_executor(executor, check_ssl, domain),
@@ -640,33 +718,43 @@ async def analyze_url_full(url: str) -> dict:
         "VirusTotal": safe(results[12], "VirusTotal"),
     }
 
-     # ── COMBO RISK OVERRIDE ──────────────────────────────────────
-    _ssl_bad   = sr["SSL Certificate"].get("status") == "negative"
-    _abuse_val = sr["AbuseIPDB"].get("score", 0)
-    _url_bad   = sr["URL Patterns"].get("status") in ["negative", "neutral"]
-    _age_unk   = "unavailable" in sr["Domain Age"].get("message", "").lower()
+    # ── COMBO RISK OVERRIDE ──────────────────────────────────────
+    _ssl_bad    = sr["SSL Certificate"].get("status") == "negative"
+    _abuse_val  = sr["AbuseIPDB"].get("score", 0)
+    _url_bad    = sr["URL Patterns"].get("status") in ["negative", "neutral"]
+    _age_unk    = "unavailable" in sr["Domain Age"].get("message", "").lower()
+    _age_new    = (sr["Domain Age"].get("age_days") or 999) < 30
+    _vt_flagged = sr["VirusTotal"].get("score", 0) >= 45
+    _hk_host    = sr["IP & Hosting"].get("score", 0) > 0
 
-    _risk_flags = sum([_ssl_bad, _abuse_val >= 30, _url_bad, _age_unk])
+    _risk_flags = sum([_ssl_bad, _abuse_val >= 30, _url_bad, _age_unk or _age_new, _vt_flagged, _hk_host])
     _combo_override = False
 
     if _risk_flags >= 3:
         _combo_override = True
-    elif _risk_flags >= 2 and _ssl_bad:
+    elif _risk_flags >= 2 and (_ssl_bad or _vt_flagged or _age_new):
         _combo_override = True
 
     blacklisted = any(sr[s].get("score", 0) >= 80 for s in ["Google Safe Browsing", "VirusTotal", "PhishDestroy", "OpenPhish", "URLhaus", "PhishTank"])
     trust_score = max(5, min(15, calculate_trust_score(sr))) if blacklisted else calculate_trust_score(sr)
-    # COMBO OVERRIDE — agar 2-3+ risk signals hain toh cap karo
+
+    # COMBO OVERRIDE — cap score agar multiple risk signals hain
     if _combo_override and trust_score > 55:
         trust_score = min(trust_score, 48)
+
     verdict_info = get_verdict(trust_score, blacklisted)
     signals = categorize_signals(sr)
     explanation = generate_explanation(sr, trust_score, blacklisted)
     tech_report = build_technical_report(domain, url, sr)
-    da = sr.get("Domain Age", {}); ip_d = sr.get("IP & Hosting", {})
+    da = sr.get("Domain Age", {})
+    ip_d = sr.get("IP & Hosting", {})
 
     sources_list = [{"name": n, "status": r.get("status", "neutral"), "message": r.get("message", ""), "detail": r.get("detail", "")} for n, r in sr.items()]
-    top_risks = sorted([{"source": n, "risk": r.get("message", "")} for n, r in sr.items() if r.get("status") == "negative" and r.get("score", 0) > 0], key=lambda x: sr.get(x["source"], {}).get("score", 0), reverse=True)[:5]
+    top_risks = sorted(
+        [{"source": n, "risk": r.get("message", "")} for n, r in sr.items() if r.get("status") == "negative" and r.get("score", 0) > 0],
+        key=lambda x: sr.get(x["source"], {}).get("score", 0),
+        reverse=True
+    )[:5]
 
     return {
         "trust_score": trust_score,
@@ -678,11 +766,22 @@ async def analyze_url_full(url: str) -> dict:
         "domain": domain,
         "url": url,
         "blacklisted": blacklisted,
-        "summary": {"positive_signals": signals["positive_signals"], "negative_signals": signals["negative_signals"], "neutral_signals": signals["neutral_signals"], "total_sources_checked": len(sr)},
+        "combo_override": _combo_override,
+        "summary": {
+            "positive_signals": signals["positive_signals"],
+            "negative_signals": signals["negative_signals"],
+            "neutral_signals": signals["neutral_signals"],
+            "total_sources_checked": len(sr)
+        },
         "sources": sources_list,
         "top_risks": [r["risk"] for r in top_risks],
         "explanation": explanation,
-        "other_info": {"domain_created": da.get("created", "Unknown"), "server_location": ip_d.get("location", "Unknown"), "ssl_issuer": sr.get("SSL Certificate", {}).get("issuer", "Unknown"), "ip_address": ip_d.get("ip", ip_address)},
+        "other_info": {
+            "domain_created": da.get("created", "Unknown"),
+            "server_location": ip_d.get("location", "Unknown"),
+            "ssl_issuer": sr.get("SSL Certificate", {}).get("issuer", "Unknown"),
+            "ip_address": ip_d.get("ip", ip_address)
+        },
         "technical_report": tech_report,
         "signals": {"positive": signals["positive"], "negative": signals["negative"], "neutral": signals["neutral"]},
     }
