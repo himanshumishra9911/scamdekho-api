@@ -4,6 +4,7 @@ import ssl
 import os
 import re
 import httpx
+import base64
 import whois
 from urllib.parse import urlparse, quote
 from datetime import datetime
@@ -34,6 +35,7 @@ SOURCE_WEIGHTS = {
     "IP & Hosting": 0.45,
     "Content Analysis": 0.50,
     "URL Patterns": 0.75,
+    "VirusTotal": 0.90,
 }
 
 
@@ -427,6 +429,62 @@ def check_url_patterns(url: str, domain: str):
         "message": "URL Pattern: " + ("Suspicious" if status == "negative" else "OK" if status == "positive" else "Caution"),
         "detail": " | ".join(findings)
     }
+    
+# ======================================
+# 14. VIRUSTOTAL (FREE 500/day)
+# ======================================
+async def check_virustotal(url: str):
+    api_key = os.getenv("VIRUSTOTAL_API_KEY")
+    if not api_key:
+        return {"score": 0, "status": "neutral", "message": "VirusTotal: API key not set", "detail": "Set VIRUSTOTAL_API_KEY"}
+    try:
+        # URL ko base64 encode karna padta hai VirusTotal ke liye
+        url_id = base64.b64encode(url.encode()).decode().strip("=")
+        
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(
+                f"https://www.virustotal.com/api/v3/urls/{url_id}",
+                headers={"x-apikey": api_key}
+            )
+            
+            if r.status_code == 200:
+                stats = r.json()["data"]["attributes"]["last_analysis_stats"]
+                malicious = stats.get("malicious", 0)
+                suspicious = stats.get("suspicious", 0)
+                harmless = stats.get("harmless", 0)
+                total = malicious + suspicious + harmless
+                
+                detail = f"Malicious: {malicious} | Suspicious: {suspicious} | Clean: {harmless} engines"
+                
+                if malicious >= 3:
+                    return {"score": 85, "status": "negative", 
+                            "message": f"DANGER: VirusTotal — {malicious} engines flagged!", 
+                            "detail": detail}
+                elif malicious >= 1 or suspicious >= 3:
+                    return {"score": 45, "status": "negative", 
+                            "message": f"WARNING: VirusTotal — {malicious} malicious, {suspicious} suspicious", 
+                            "detail": detail}
+                elif total > 0:
+                    return {"score": 0, "status": "positive", 
+                            "message": f"VirusTotal: Clean ({harmless}/{total} engines)", 
+                            "detail": detail}
+                            
+            elif r.status_code == 404:
+                # URL abhi tak scan nahi hua — submit karo
+                async with httpx.AsyncClient(timeout=10.0) as c2:
+                    submit = await c2.post(
+                        "https://www.virustotal.com/api/v3/urls",
+                        headers={"x-apikey": api_key},
+                        data={"url": url}
+                    )
+                    if submit.status_code == 200:
+                        return {"score": 5, "status": "neutral", 
+                                "message": "VirusTotal: First scan submitted", 
+                                "detail": "URL submitted for analysis — no prior data"}
+                                
+        return {"score": 0, "status": "neutral", "message": "VirusTotal: No data", "detail": "Check failed"}
+    except Exception as e:
+        return {"score": 0, "status": "neutral", "message": "VirusTotal: Check failed", "detail": str(e)[:80]}
 
 
 # ======================================
@@ -493,7 +551,7 @@ def generate_explanation(sr: dict, ts: int, bl: bool) -> list:
 def build_technical_report(domain: str, url: str, sr: dict) -> str:
     lines = [f"DOMAIN: {domain}", f"URL: {url}", ""]
     lines.append("=== BLACKLIST & THREAT DATABASES ===")
-    for s in ["Google Safe Browsing", "PhishDestroy", "OpenPhish", "URLhaus", "PhishTank"]:
+    for s in ["Google Safe Browsing", "VirusTotal", "PhishDestroy", "OpenPhish", "URLhaus", "PhishTank"]:
         r = sr.get(s, {}); lines.append(f"- {s}: {r.get('message', 'N/A')}")
     lines.append("\n=== IP REPUTATION ===")
     for s in ["AbuseIPDB", "IP & Hosting"]:
@@ -535,6 +593,7 @@ async def analyze_url_full(url: str) -> dict:
         check_http_headers(url),
         check_content_analysis(url),
         check_ip_info(domain),
+        check_virustotal(url),
         return_exceptions=True
     )
 
@@ -555,6 +614,7 @@ async def analyze_url_full(url: str) -> dict:
         "Content Analysis": safe(results[10], "Content"),
         "IP & Hosting": safe(results[11], "IP"),
         "URL Patterns": url_pattern_result,
+        "VirusTotal": safe(results[12], "VirusTotal"),
     }
 
      # ── COMBO RISK OVERRIDE ──────────────────────────────────────
@@ -571,7 +631,7 @@ async def analyze_url_full(url: str) -> dict:
     elif _risk_flags >= 2 and _ssl_bad:
         _combo_override = True
 
-    blacklisted = any(sr[s].get("score", 0) >= 80 for s in ["Google Safe Browsing", "PhishDestroy", "OpenPhish", "URLhaus", "PhishTank"])
+    blacklisted = any(sr[s].get("score", 0) >= 80 for s in ["Google Safe Browsing", "VirusTotal", "PhishDestroy", "OpenPhish", "URLhaus", "PhishTank"])
     trust_score = max(5, min(15, calculate_trust_score(sr))) if blacklisted else calculate_trust_score(sr)
     # COMBO OVERRIDE — agar 2-3+ risk signals hain toh cap karo
     if _combo_override and trust_score > 55:
