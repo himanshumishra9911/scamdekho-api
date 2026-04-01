@@ -26,13 +26,14 @@ SOURCE_WEIGHTS = {
     "OpenPhish": 0.85,
     "URLhaus": 0.85,
     "PhishTank": 0.80,
-    "AbuseIPDB": 0.75,
+    "AbuseIPDB": 0.85,
     "DNS Security": 0.70,
-    "SSL Certificate": 0.65,
+    "SSL Certificate": 0.80,
     "Domain Age": 0.55,
     "HTTP Analysis": 0.55,
     "IP & Hosting": 0.45,
     "Content Analysis": 0.50,
+    "URL Patterns": 0.75,
 }
 
 
@@ -381,6 +382,52 @@ async def check_ip_info(domain: str):
         findings.append(f"IP unavailable: {str(e)[:50]}"); status = "neutral"
     return {"score": score, "status": status, "message": f"Server: {location}", "detail": " | ".join(findings), "ip": ip, "location": location}
 
+# ======================================
+# 13. SUSPICIOUS URL PATTERN CHECK (FREE)
+# ======================================
+def check_url_patterns(url: str, domain: str):
+    score = 0
+    findings = []
+    status = "positive"
+
+    SUSPICIOUS_TLDS = ['.name', '.tk', '.ml', '.ga', '.cf', '.gq', '.xyz', '.top',
+                       '.club', '.online', '.site', '.website', '.info', '.biz',
+                       '.click', '.link', '.work', '.date', '.download', '.win']
+
+    tld = '.' + domain.split('.')[-1].lower()
+    if tld in SUSPICIOUS_TLDS:
+        score += 20
+        status = "negative"
+        findings.append(f"Suspicious TLD: {tld}")
+
+    path = urlparse(url).path.lower()
+    suspicious_paths = ['/verify', '/login', '/secure', '/update', '/confirm',
+                        '/account', '/wallet', '/claim']
+    for p in suspicious_paths:
+        if path.startswith(p):
+            score += 15
+            status = "negative"
+            findings.append(f"Suspicious path: {path}")
+            break
+
+    # Short random path like /yiy /xyz /aab
+    path_parts = [p for p in path.split('/') if p]
+    if path_parts and len(path_parts[-1]) <= 4 and path_parts[-1].isalpha():
+        score += 10
+        findings.append(f"Short random path: /{path_parts[-1]}")
+        if status == "positive":
+            status = "neutral"
+
+    if not findings:
+        findings.append("No suspicious URL patterns")
+
+    return {
+        "score": min(score, 40),
+        "status": status,
+        "message": "URL Pattern: " + ("Suspicious" if status == "negative" else "OK" if status == "positive" else "Caution"),
+        "detail": " | ".join(findings)
+    }
+
 
 # ======================================
 # SCORING ENGINE
@@ -474,7 +521,7 @@ async def analyze_url_full(url: str) -> dict:
         ip_address = socket.gethostbyname(domain)
     except Exception:
         pass
-
+    url_pattern_result = check_url_patterns(url, domain)
     results = await asyncio.gather(
         loop.run_in_executor(executor, check_domain_age, domain),
         loop.run_in_executor(executor, check_ssl, domain),
@@ -507,10 +554,28 @@ async def analyze_url_full(url: str) -> dict:
         "HTTP Analysis": safe(results[9], "HTTP"),
         "Content Analysis": safe(results[10], "Content"),
         "IP & Hosting": safe(results[11], "IP"),
+        "URL Patterns": url_pattern_result,
     }
+
+     # ── COMBO RISK OVERRIDE ──────────────────────────────────────
+    _ssl_bad   = sr["SSL Certificate"].get("status") == "negative"
+    _abuse_val = sr["AbuseIPDB"].get("score", 0)
+    _url_bad   = sr["URL Patterns"].get("status") in ["negative", "neutral"]
+    _age_unk   = "unavailable" in sr["Domain Age"].get("message", "").lower()
+
+    _risk_flags = sum([_ssl_bad, _abuse_val >= 30, _url_bad, _age_unk])
+    _combo_override = False
+
+    if _risk_flags >= 3:
+        _combo_override = True
+    elif _risk_flags >= 2 and _ssl_bad:
+        _combo_override = True
 
     blacklisted = any(sr[s].get("score", 0) >= 80 for s in ["Google Safe Browsing", "PhishDestroy", "OpenPhish", "URLhaus", "PhishTank"])
     trust_score = max(5, min(15, calculate_trust_score(sr))) if blacklisted else calculate_trust_score(sr)
+    # COMBO OVERRIDE — agar 2-3+ risk signals hain toh cap karo
+    if _combo_override and trust_score > 55:
+        trust_score = min(trust_score, 48)
     verdict_info = get_verdict(trust_score, blacklisted)
     signals = categorize_signals(sr)
     explanation = generate_explanation(sr, trust_score, blacklisted)
