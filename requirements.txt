@@ -8,7 +8,6 @@ python-multipart
 pytesseract
 playwright
 Pillow
-python-whois
 motor
 httpx
 opencv-python-headless
