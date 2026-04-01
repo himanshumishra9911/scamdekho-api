@@ -43,8 +43,8 @@ STRICT RULES:
 
 
 # ===============================
-# URL ANALYSIS SYSTEM PROMPT — NEW
-# Receives: 12-source report + screenshot
+# URL ANALYSIS SYSTEM PROMPT
+# Receives: 14-source report + screenshot
 # ===============================
 URL_ANALYSIS_SYSTEM_PROMPT = """
 You are ScamDekho's expert URL analysis engine for Indian users.
@@ -68,16 +68,18 @@ AUTOMATIC SCAM (risk 85-100):
 HIGH RISK (risk 65-84) — 2+ of these present:
 - SSL certificate missing or invalid
 - AbuseIPDB 40%+
-- Suspicious TLD: .name .tk .ml .xyz .top .click .online etc.
-- Domain age unknown OR under 30 days
+- Suspicious TLD: .one .name .tk .ml .xyz .top .click .online .icu .vip etc.
+- Domain age under 30 days OR unknown
+- VirusTotal flagged any engine
+- High-risk hosting country (HK, RU, CN, KP, NG)
 - Short random path like /yiy /xyz /abc
-- Content analysis found phishing patterns
 
 SUSPICIOUS (risk 40-64) — ANY 1 of:
 - SSL missing/invalid
 - AbuseIPDB 30-79%
 - Suspicious TLD with no other trust signals
 - Domain age unknown + 1 other minor signal
+- combo_override=true in data
 
 SAFE (risk 0-30) — ALL must be true:
 - All 5 blacklists: CLEAN
@@ -85,16 +87,25 @@ SAFE (risk 0-30) — ALL must be true:
 - AbuseIPDB below 20%
 - Domain 1+ year old OR well-known brand
 - Normal TLD (.com .org .gov .edu .in etc.)
+- VirusTotal: CLEAN
+
+ALIGNMENT RULE (CRITICAL):
+- The scoring engine has already calculated a trust_score. Your risk_score should align with it.
+- trust_score to AI risk conversion: AI risk = 100 - trust_score
+- Only deviate by more than 20 points if the screenshot shows CLEAR contradiction.
+- Example: trust_score=25 → your risk_score should be ~70-85 (HIGH RISK range)
+- Example: trust_score=80 → your risk_score should be ~15-30 (SAFE range)
 
 CRITICAL RULES:
-1. "8 sources clean" does NOT mean safe if SSL missing + AbuseIPDB elevated + suspicious TLD
-2. .name .tk .ml TLDs are HIGH suspicion — rarely used by legitimate sites
+1. "8 sources clean" does NOT mean safe if domain is 1 day old + suspicious TLD + VirusTotal flag
+2. .one .tk .ml TLDs are HIGH suspicion — rarely used by legitimate sites
 3. Short random paths like /yiy suggest phishing redirect
-4. Missing SSL in 2025 = serious red flag, not minor issue
-5. Name SPECIFIC sources in "why" (e.g. "AbuseIPDB flagged 49% abuse score")
-6. Give SPECIFIC actions in "what_to_do" — not generic advice
-7. combo_override=true in data means technical signals override source count
+4. Name SPECIFIC sources in "why" (e.g. "VirusTotal flagged 1 malicious engine")
+5. Give SPECIFIC actions in "what_to_do" — not generic advice
+6. combo_override=true means technical signals strongly indicate fraud
+7. Brand impersonation (e.g. fake Marina Bay Sands on .one domain) = HIGH RISK
 """
+
 
 # ===============================
 # TEXT AI ANALYSIS (unchanged)
@@ -147,7 +158,7 @@ def call_ai_vision_analysis(image_bytes):
 
 
 # ===============================
-# VISION + TECHNICAL CONTEXT (old — kept for backward compat)
+# VISION + TECHNICAL CONTEXT (kept for backward compat)
 # ===============================
 def call_ai_vision_analysis_with_context(image_bytes, technical_report: str):
     try:
@@ -177,8 +188,29 @@ Remember: Only mark SCAM if there is CLEAR fraud evidence. When in doubt → SAF
 
 
 # ===============================
+# SCORE RECONCILIATION HELPER
+# ===============================
+def reconcile_ai_and_score(trust_score: int, ai_result: dict) -> dict:
+    """
+    Agar AI risk aur trust_score mein 30+ point gap hai toh blend karo.
+    trust_score=25 → expected AI risk ~75. Agar AI ne 20 diya → blend karke ~55 karo.
+    """
+    ai_risk = ai_result.get("risk_score", 50)
+    expected_ai_risk = 100 - trust_score
+    gap = abs(ai_risk - expected_ai_risk)
+
+    if gap > 30:
+        # 60% scoring engine, 40% AI
+        blended_risk = int((expected_ai_risk * 0.60) + (ai_risk * 0.40))
+        blended_risk = max(0, min(100, blended_risk))
+        ai_result["risk_score"] = blended_risk
+
+    return ai_result
+
+
+# ===============================
 # NEW — FULL URL ANALYSIS WITH AI
-# Screenshot + 12-source intel + trust score → AI final verdict
+# Screenshot + 14-source intel + trust score → AI final verdict
 # ===============================
 def call_ai_url_full_analysis(screenshot_bytes, intel: dict):
     """
@@ -186,7 +218,36 @@ def call_ai_url_full_analysis(screenshot_bytes, intel: dict):
     intel = full response from analyze_url_full()
     """
     try:
-        # Build comprehensive prompt with all source data
+        # Score guidance for AI alignment
+        ts = intel.get("trust_score", 50)
+        expected_risk = 100 - ts
+
+        if ts >= 75:
+            score_guidance = (
+                f"Scoring engine trust_score={ts}/100 → LIKELY SAFE. "
+                f"Your risk_score should be ~{expected_risk} (low). "
+                "Only override higher if screenshot shows CLEAR fraud (fake login, brand impersonation, KYC harvesting)."
+            )
+        elif ts >= 50:
+            score_guidance = (
+                f"Scoring engine trust_score={ts}/100 → SUSPICIOUS. "
+                f"Your risk_score should be ~{expected_risk} (medium). "
+                "Look for confirming visual evidence of fraud."
+            )
+        elif ts >= 30:
+            score_guidance = (
+                f"Scoring engine trust_score={ts}/100 → HIGH RISK. "
+                f"Your risk_score should be ~{expected_risk} (high). "
+                "Technical signals strongly suggest fraud — confirm with visual."
+            )
+        else:
+            score_guidance = (
+                f"Scoring engine trust_score={ts}/100 → VERY HIGH RISK. "
+                f"Your risk_score should be ~{expected_risk} (very high). "
+                "Multiple strong fraud signals present."
+            )
+
+        # Build source summary
         source_summary = ""
         for src in intel.get("sources", []):
             icon = "✅" if src["status"] == "positive" else "❌" if src["status"] == "negative" else "⚪"
@@ -194,11 +255,14 @@ def call_ai_url_full_analysis(screenshot_bytes, intel: dict):
             if src.get("detail"):
                 source_summary += f"   Detail: {src['detail']}\n"
 
-        prompt_text = f"""Analyze this website for scam risk using ALL the intelligence data below.
+        prompt_text = f"""SCORING ENGINE GUIDANCE: {score_guidance}
 
-=== TRUST SCORE: {intel.get('trust_score', 'N/A')}/100 ===
+Analyze this website for scam risk using ALL the intelligence data below.
+
+=== TRUST SCORE: {ts}/100 (Expected AI risk: ~{expected_risk}) ===
 === VERDICT FROM SCORING ENGINE: {intel.get('verdict', 'N/A')} ===
 === BLACKLISTED: {intel.get('blacklisted', False)} ===
+=== COMBO OVERRIDE: {intel.get('combo_override', False)} ===
 
 === SIGNAL SUMMARY ===
 Positive signals: {intel.get('summary', {}).get('positive_signals', 0)}
@@ -226,7 +290,8 @@ IP address: {intel.get('other_info', {}).get('ip_address', 'Unknown')}
 
 NOW analyze the website SCREENSHOT along with ALL this data.
 Look for: brand impersonation, fake login pages, KYC harvesting, urgency language, prize/lottery, poor design, suspicious forms.
-Give your final verdict considering EVERYTHING — the 12 intelligence sources AND what you SEE in the screenshot."""
+Give your final verdict considering EVERYTHING — the 14 intelligence sources AND what you SEE in the screenshot.
+Your risk_score MUST be within 20 points of {expected_risk} unless screenshot shows clear contradiction."""
 
         messages = [
             {"role": "system", "content": URL_ANALYSIS_SYSTEM_PROMPT},
@@ -242,7 +307,6 @@ Give your final verdict considering EVERYTHING — the 12 intelligence sources A
                 ]
             })
         else:
-            # No screenshot — text-only analysis
             messages.append({
                 "role": "user",
                 "content": prompt_text + "\n\nNOTE: Screenshot could not be captured. Analyze based on technical intelligence only."
@@ -255,13 +319,18 @@ Give your final verdict considering EVERYTHING — the 12 intelligence sources A
         )
 
         data = json.loads(response.choices[0].message.content)
-        return {
+        ai_result = {
             "risk_score": int(data.get("risk_score", 50)),
             "confidence": data.get("confidence", {}),
             "why": data.get("why", []),
             "what_to_do": data.get("what_to_do", []),
             "how_to_avoid": data.get("how_to_avoid", [])
         }
+
+        # Final reconciliation — safety net
+        ai_result = reconcile_ai_and_score(ts, ai_result)
+
+        return ai_result
 
     except Exception as e:
         print("AI URL FULL ANALYSIS ERROR:", e)
