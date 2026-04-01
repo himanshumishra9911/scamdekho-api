@@ -5,7 +5,6 @@ import os
 import re
 import httpx
 import base64
-import whois
 from urllib.parse import urlparse, quote
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -44,21 +43,44 @@ SOURCE_WEIGHTS = {
 # ======================================
 def check_domain_age(domain: str):
     try:
-        info = whois.whois(domain)
-        creation = info.creation_date
-        registrar = info.registrar or "Unknown"
-        expiry = info.expiration_date
-        if isinstance(creation, list):
-            creation = creation[0]
-        if isinstance(expiry, list):
-            expiry = expiry[0]
+        import urllib.request
+        import json as _json
+        from datetime import datetime
+
+        # RDAP — ICANN official, no binary needed
+        tld = domain.split('.')[-1]
+        rdap_url = f"https://rdap.org/domain/{domain}"
+        req = urllib.request.Request(rdap_url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = _json.loads(resp.read().decode())
+
+        registrar = "Unknown"
+        creation = None
+        expiry = None
+
+        for entity in data.get("entities", []):
+            for role in entity.get("roles", []):
+                if role == "registrar":
+                    registrar = entity.get("vcardArray", [None, []])[1]
+                    for v in registrar:
+                        if v[0] == "fn":
+                            registrar = v[3]
+                            break
+
+        for event in data.get("events", []):
+            if event.get("eventAction") == "registration":
+                creation = event.get("eventDate", "")[:10]
+            elif event.get("eventAction") == "expiration":
+                expiry = event.get("eventDate", "")[:10]
 
         if creation:
-            age_days = (datetime.now() - creation).days
-            created_str = creation.strftime("%B %d, %Y")
+            created_dt = datetime.strptime(creation, "%Y-%m-%d")
+            age_days = (datetime.now() - created_dt).days
+            created_str = created_dt.strftime("%B %d, %Y")
             expiry_warn = ""
             if expiry:
-                dte = (expiry - datetime.now()).days
+                expiry_dt = datetime.strptime(expiry, "%Y-%m-%d")
+                dte = (expiry_dt - datetime.now()).days
                 if dte < 30:
                     expiry_warn = " | Expiring very soon!"
                 elif dte < 90:
@@ -76,11 +98,12 @@ def check_domain_age(domain: str):
                 return {"score": -10, "status": "positive", "message": f"Established domain — {age_days // 365} years old", "detail": f"Created: {created_str} | Registrar: {registrar}", "age_days": age_days, "created": created_str}
             else:
                 return {"score": 0, "status": "positive", "message": f"Domain {age_days} days old", "detail": f"Created: {created_str} | Registrar: {registrar}", "age_days": age_days, "created": created_str}
-        return {"score": 5, "status": "neutral", "message": "Domain age unavailable", "detail": f"Registrar: {registrar}", "age_days": None, "created": None}
-    except Exception:
-        return {"score": 5, "status": "neutral", "message": "Domain age unavailable", "detail": "WHOIS lookup failed", "age_days": None, "created": None}
 
+        return {"score": 5, "status": "neutral", "message": "Domain age unavailable", "detail": "No creation date found", "age_days": None, "created": None}
 
+    except Exception as e:
+        return {"score": 5, "status": "neutral", "message": "Domain age unavailable", "detail": f"RDAP lookup failed: {str(e)[:60]}", "age_days": None, "created": None}
+        
 # ======================================
 # 2. SSL CHECK (SYNC, FREE)
 # ======================================
