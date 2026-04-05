@@ -63,10 +63,10 @@ APP_REGISTRY = {
     "paytm": {
         "display": "Paytm",
         "color_hint": "blue",
-        "utr_pattern": r"^\d{15,20}$",                       # long numeric
+        "utr_pattern": r"^\d{10,20}$",
         "utr_prefix": None,
-        "handles": ["paytm", "ptyes", "ptsbi"],
-        "status_texts": ["payment successful", "paid successfully", "money transferred"],
+        "handles": ["paytm", "ptyes", "ptsbi", "ybl", "ibl", "okicici", "oksbi", "okhdfcbank", "okaxis"],
+        "status_texts": ["payment successful", "paid successfully", "money transferred", "paid successfully"],
         "logo_keywords": ["paytm"],
     },
     "bhim": {
@@ -117,10 +117,10 @@ APP_REGISTRY = {
     "navi": {
         "display": "Navi",
         "color_hint": "yellow",
-        "utr_pattern": r"^\d{12,18}$",
+        "utr_pattern": r"^[A-Za-z0-9]{10,30}$",
         "utr_prefix": None,
         "handles": ["navi", "naviaxis"],
-        "status_texts": ["payment successful"],
+        "status_texts": ["payment successful", "transaction successful", "received from"],
         "logo_keywords": ["navi"],
     },
     "mobikwik": {
@@ -393,9 +393,11 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
             })
 
     # --- UPI ID basic validation ---
+    # Allow masked UPI IDs like navi.******2623@naviaxis (real app receipt format)
     upi_id = (fields.get("upi_id") or "").strip().lower()
     if upi_id:
-        if not re.match(r'^[\w.\-]+@[\w.\-]+$', upi_id):
+        upi_for_check = upi_id.replace("*", "a")  # replace asterisks before regex
+        if not re.match(r'^[\w.\-]+@[\w.\-]+$', upi_for_check):
             signals.append({
                 "type": "red_flag", "weight": 20,
                 "en": f"UPI ID format invalid: {upi_id}",
@@ -535,11 +537,26 @@ def run_consistency_check(fields: dict, app_key: str) -> list:
             # Check if handle belongs to a DIFFERENT app
             for other_key, other_info in APP_REGISTRY.items():
                 if other_key != app_key and handle in other_info.get("handles", []):
-                    signals.append({
-                        "type": "red_flag", "weight": 40,
-                        "en": f"MISMATCH: Screenshot claims {app_info.get('display', app_key)} but UPI handle @{handle} belongs to {other_info['display']}",
-                        "hi": f"मिसमैच: Screenshot {app_info.get('display', app_key)} दिखा रहा है लेकिन @{handle} handle {other_info['display']} का है"
-                    })
+                    # Cross-app UPI is allowed in India — only flag if app is completely different
+                    # e.g. Paytm can pay to @ybl (PhonePe handle) — that's normal
+                    cross_app_ok = {
+                        ("paytm", "phonepe"), ("paytm", "gpay"), ("paytm", "bhim"),
+                        ("gpay", "phonepe"), ("gpay", "paytm"),
+                        ("phonepe", "gpay"), ("phonepe", "paytm"),
+                        ("bhim", "phonepe"), ("bhim", "gpay"), ("bhim", "paytm"),
+                    }
+                    if (app_key, other_key) not in cross_app_ok:
+                        signals.append({
+                            "type": "red_flag", "weight": 40,
+                            "en": f"MISMATCH: Screenshot claims {app_info.get('display', app_key)} but UPI handle @{handle} belongs to {other_info['display']}",
+                            "hi": f"मिसमैच: Screenshot {app_info.get('display', app_key)} दिखा रहा है लेकिन @{handle} handle {other_info['display']} का है"
+                        })
+                    else:
+                        signals.append({
+                            "type": "green_flag", "weight": -5,
+                            "en": f"Cross-app UPI payment: {app_info.get('display', app_key)} paying to @{handle} ({other_info['display']} handle) — normal in India",
+                            "hi": f"Cross-app UPI payment सामान्य है — {app_info.get('display', app_key)} से {other_info['display']} handle पर payment"
+                        })
                     break
             else:
                 # Handle not found in any known app — unknown handle
@@ -618,13 +635,14 @@ def run_upi_id_check(upi_id: str) -> list:
             })
 
     # Check if username is suspiciously generic
+    # NOTE: q033328366@ybl is a valid phone-number based UPI ID — do NOT flag it
     generic_patterns = [
-        r'^[a-z]{1,3}\d{6,}$',      # letters + long number = temp account
-        r'^\d{10}$',                  # just phone number
-        r'^test',                     # test account
-        r'^demo',                     # demo account
-        r'^fake',                     # literally fake
-        r'^sample',
+        r'^\d{10}$',                  # pure 10-digit number only (no letters at all)
+        r'^test\d*$',               # test account
+        r'^demo\d*$',               # demo account
+        r'^fake\d*$',               # literally fake
+        r'^sample\d*$',
+        r'^dummy\d*$',
     ]
     for pat in generic_patterns:
         if re.match(pat, username):
@@ -709,7 +727,12 @@ Now do a VISUAL forensic analysis:
 - Does the amount field look native or pasted?
 - Is the transaction ID area visually consistent?
 
-Remember: If unsure → mark suspicious, not genuine."""
+Remember: If unsure → mark suspicious, not genuine.
+IMPORTANT REAL-WORLD NOTES:
+- In India, Paytm/GPay/BHIM apps CAN pay to @ybl handles (PhonePe). This is normal cross-app UPI — NOT a fake signal.
+- Masked UPI IDs like "navi.******2623@naviaxis" are shown by real apps for privacy — NOT fake.
+- PhonePe "Transaction Successful" screens shown inside Navi/Paytm = real, the receiving app shows the credit.
+- Do NOT flag screenshots just because the UI color looks slightly different from the detected app."""
 
         response = get_client().chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
