@@ -16,10 +16,11 @@ from app.services.cache_service import get_cached_result, set_cached_result
 from app.services.rate_limiter import check_rate_limit
 from app.api.report import router as report_router
 from app.api.contact import router as contact_router
-from app.api.payment_screenshot import router as payment_screenshot_router
 from app.api.offer_letter import router as offer_letter_router
 from app.api.upi_checker import analyze_upi_full
 from app.api.qr_checker import decode_qr_image
+from app.api.payment_screenshot import router as payment_screenshot_router
+
 
 router = APIRouter()
 
