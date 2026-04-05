@@ -50,146 +50,152 @@ APP_REGISTRY = {
     "phonepe": {
         "display": "PhonePe",
         "color_hint": "purple",
-        "utr_pattern": r"^[A-Za-z0-9]{10,30}$",  # PhonePe TxnID = T26040518... alphanumeric; UTR = 12 digit
+        # PhonePe TxnID = alphanumeric (T26040518...) OR 12-digit UTR
+        "utr_pattern": r"^[A-Za-z0-9]{10,30}$",
         "utr_prefix": None,
-        "handles": ["ybl", "ibl", "axl", "oksbi", "okhdfcbank", "okicici", "okaxis"],  # cross-app handles
-        "status_texts": ["payment successful", "paid", "money sent", "₹ sent to"],
+        "handles": ["ybl", "ibl", "axl", "oksbi", "okhdfcbank", "okicici", "okaxis"],
+        "status_texts": ["payment successful", "paid", "money sent", "transaction successful"],
         "logo_keywords": ["phonepe", "phone pe"],
     },
     "gpay": {
         "display": "Google Pay",
-        "color_hint": "white",
-        "utr_pattern": r"^[A-Z0-9]{20,35}$",
+        "color_hint": "any",  # GPay supports dark AND light theme — don't use color
+        # GPay shows TWO IDs: UPI transaction ID (12-digit) + Google transaction ID (short alphanumeric)
+        "utr_pattern": r"^[A-Za-z0-9]{6,35}$",
         "utr_prefix": None,
-        "handles": ["okaxis", "okicici", "oksbi", "okhdfcbank"],
-        "status_texts": ["you paid", "payment done", "sent to"],
+        "handles": ["okaxis", "okicici", "oksbi", "okhdfcbank", "okhdfc", "upi"],
+        "status_texts": ["completed", "you paid", "payment done", "sent to", "payment successful", "paid"],
         "logo_keywords": ["google pay", "gpay", "g pay"],
     },
     "paytm": {
         "display": "Paytm",
         "color_hint": "blue",
-        "utr_pattern": r"^\d{10,20}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
         "handles": ["paytm", "ptyes", "ptsbi", "ybl", "ibl", "okicici", "oksbi", "okhdfcbank", "okaxis"],
-        "status_texts": ["payment successful", "paid successfully", "money transferred"],
+        "status_texts": ["payment successful", "paid successfully", "money transferred", "paid"],
         "logo_keywords": ["paytm"],
     },
     "bhim": {
         "display": "BHIM",
         "color_hint": "blue_dark",
-        "utr_pattern": r"^\d{12}$",
+        # BHIM uses standard 12-digit UTR
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["upi", "bhim"],
-        "status_texts": ["transaction successful", "payment done"],
-        "logo_keywords": ["bhim", "bharat interface"],
+        # BHIM is an interface — recipient can have ANY bank handle
+        "handles": ["upi", "bhim", "ybl", "okaxis", "okicici", "oksbi", "okhdfcbank"],
+        "status_texts": ["transaction successful", "payment done", "paid", "payment successful"],
+        "logo_keywords": ["bhim", "bharat interface", "bharat pay"],
     },
     "amazon_pay": {
         "display": "Amazon Pay",
         "color_hint": "orange",
-        "utr_pattern": r"^[A-Za-z0-9]{15,25}$",
+        "utr_pattern": r"^[A-Za-z0-9]{10,30}$",
         "utr_prefix": None,
-        "handles": ["apl", "yapl", "amazon"],
-        "status_texts": ["payment successful", "paid"],
-        "logo_keywords": ["amazon pay", "amazonpay"],
+        "handles": ["apl", "yapl", "amazon", "amazonpay"],
+        "status_texts": ["payment successful", "paid", "payment done", "sent successfully"],
+        "logo_keywords": ["amazon pay", "amazonpay", "amazon"],
     },
     "airtel": {
         "display": "Airtel Money",
         "color_hint": "red",
-        "utr_pattern": r"^\d{12,15}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["airtel", "airtelpaymentsbank"],
-        "status_texts": ["transfer successful", "payment done"],
+        "handles": ["airtel", "airtelpaymentsbank", "airtelbank"],
+        "status_texts": ["transfer successful", "payment done", "payment successful", "paid"],
         "logo_keywords": ["airtel"],
     },
     "cred": {
         "display": "CRED",
-        "color_hint": "black",
-        "utr_pattern": r"^[A-Za-z0-9]{16,30}$",
+        "color_hint": "any",  # CRED supports dark AND light theme
+        # CRED often doesn't show explicit UTR — shows transaction flow steps instead
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["cred", "credpay"],
-        "status_texts": ["payment successful", "sent"],
-        "logo_keywords": ["cred"],
+        "handles": ["cred", "credpay", "ybl", "okaxis", "okicici", "oksbi", "okhdfcbank"],
+        "status_texts": ["successful", "paid via cred", "payment done", "paid", "payment successful"],
+        "logo_keywords": ["cred", "paid via cred"],
     },
     "whatsapp_pay": {
         "display": "WhatsApp Pay",
         "color_hint": "green",
-        "utr_pattern": r"^\d{12}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["okaxis", "okicici", "oksbi"],
-        "status_texts": ["payment sent", "₹ sent"],
+        "handles": ["okaxis", "okicici", "oksbi", "okhdfcbank", "ybl"],
+        "status_texts": ["payment sent", "sent", "paid", "payment successful", "money sent"],
         "logo_keywords": ["whatsapp", "whatsapp pay"],
     },
     "navi": {
         "display": "Navi",
-        "color_hint": "yellow",
-        "utr_pattern": r"^[A-Za-z0-9]{10,30}$",
+        "color_hint": "any",  # Navi has green header like PhonePe
+        # Navi shows TWO IDs: UPI txn ID (12-digit) + Navi txn ID (PTM-prefixed long hex)
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["navi", "naviaxis"],
-        "status_texts": ["payment successful", "transaction successful", "received from"],
+        "handles": ["navi", "naviaxis", "axisbank", "ptyes", "paytm", "ybl", "okaxis", "okicici", "oksbi"],
+        "status_texts": ["payment received", "payment successful", "transaction successful", "received from", "paid"],
         "logo_keywords": ["navi"],
     },
     "mobikwik": {
         "display": "MobiKwik",
         "color_hint": "blue",
-        "utr_pattern": r"^\d{12,18}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["mbk", "ikwik", "mobikwik"],
-        "status_texts": ["payment successful", "transfer done"],
+        "handles": ["mbk", "ikwik", "mobikwik", "wal"],
+        "status_texts": ["payment successful", "transfer done", "paid", "sent"],
         "logo_keywords": ["mobikwik"],
     },
     "freecharge": {
         "display": "FreeCharge",
         "color_hint": "green",
-        "utr_pattern": r"^\d{12,18}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["freecharge", "fc"],
-        "status_texts": ["payment successful"],
+        "handles": ["freecharge", "fc", "okaxis"],
+        "status_texts": ["payment successful", "paid", "sent"],
         "logo_keywords": ["freecharge"],
     },
     "slice": {
         "display": "Slice",
         "color_hint": "purple_light",
-        "utr_pattern": r"^\d{12,18}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["slice", "slicepay"],
-        "status_texts": ["payment done", "sent"],
+        "handles": ["slice", "slicepay", "ybl"],
+        "status_texts": ["payment done", "sent", "paid", "payment successful"],
         "logo_keywords": ["slice"],
     },
     "yono_sbi": {
         "display": "SBI YONO",
         "color_hint": "blue",
-        "utr_pattern": r"^\d{12}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["sbi", "sbipay", "oksbi"],
-        "status_texts": ["transaction successful", "amount debited"],
+        "handles": ["sbi", "sbipay", "oksbi", "sbibank"],
+        "status_texts": ["transaction successful", "amount debited", "paid", "payment successful"],
         "logo_keywords": ["yono", "sbi yono", "state bank"],
     },
     "imobile": {
         "display": "iMobile (ICICI)",
         "color_hint": "orange_dark",
-        "utr_pattern": r"^\d{12}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["icici", "icicipay", "okicici"],
-        "status_texts": ["transaction successful", "payment done"],
+        "handles": ["icici", "icicipay", "okicici", "icicibank"],
+        "status_texts": ["transaction successful", "payment done", "paid", "payment successful"],
         "logo_keywords": ["imobile", "icici"],
     },
     "hdfc_payzapp": {
         "display": "HDFC PayZapp",
         "color_hint": "red",
-        "utr_pattern": r"^\d{12}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
-        "handles": ["hdfc", "hdfcbank", "okhdfcbank"],
-        "status_texts": ["payment successful", "transaction complete"],
-        "logo_keywords": ["payzapp", "hdfc payzapp"],
+        "handles": ["hdfc", "hdfcbank", "okhdfcbank", "okhdfc"],
+        "status_texts": ["payment successful", "transaction complete", "paid", "sent"],
+        "logo_keywords": ["payzapp", "hdfc payzapp", "hdfc"],
     },
     "axis_pay": {
         "display": "Axis Pay",
         "color_hint": "maroon",
-        "utr_pattern": r"^\d{12}$",
+        "utr_pattern": r"^[A-Za-z0-9]{6,50}$",
         "utr_prefix": None,
         "handles": ["axisbank", "axis", "axisgo", "okaxis"],
-        "status_texts": ["payment done", "transfer successful"],
-        "logo_keywords": ["axis pay", "axispay"],
+        "status_texts": ["payment done", "transfer successful", "paid", "payment successful"],
+        "logo_keywords": ["axis pay", "axispay", "axis"],
     },
 }
 
@@ -308,9 +314,9 @@ def run_exif_analysis(image_bytes: bytes) -> list:
         if not exif_raw:
             if img_format == "JPEG":
                 signals.append({
-                    "type": "warning", "weight": 18,
-                    "en": "JPEG with no EXIF metadata — real phone screenshots usually have it",
-                    "hi": "JPEG screenshot में EXIF metadata नहीं — real screenshots में होता है"
+                    "type": "warning", "weight": 8,   # was 18 — WhatsApp strips EXIF from ALL forwarded images
+                    "en": "No EXIF metadata — common when screenshot is WhatsApp-forwarded (not conclusive)",
+                    "hi": "EXIF नहीं — WhatsApp forwarded screenshots में common है"
                 })
             return signals
         exif = {TAGS.get(k, k): v for k, v in exif_raw.items()}
@@ -481,12 +487,28 @@ def detect_app_from_image(image_bytes: bytes) -> dict:
                         "type": "text",
                         "text": f"""Look at this screenshot and identify which UPI payment app it is from.
 
-IMPORTANT CONTEXT FOR INDIA:
-- PhonePe app shows green header "Transaction Successful" and has "Contact PhonePe Support" at bottom
-- A PhonePe app CAN pay to @okhdfcbank/@okicici/@okaxis handles (cross-app UPI) — still classify as PhonePe
-- GPay app shows white background with colorful G Pay logo
-- Paytm shows blue theme with "Paytm" branding at bottom
-- DO NOT confuse the RECIPIENT's app with the SENDER's app shown in screenshot
+APP IDENTIFICATION GUIDE:
+- PhonePe: green header bar "Transaction Successful / Payment received", "Contact PhonePe Support" button at bottom, purple accent
+- Google Pay: "G Pay" colorful logo at BOTTOM, shows "To NAME ₹AMOUNT", "Completed" status, Bank of Baroda/ICICI/SBI logo in card, dark OR light background
+- Paytm: "Paid Successfully" / "Payment received" with Paytm logo, blue-white theme, "Paytm UPI" mentioned in notes
+- BHIM: "BHIM" government logo, dark blue theme
+- Amazon Pay: Amazon logo, orange accents, "Amazon Pay" branding
+- Airtel Money: red Airtel logo
+- CRED: "Paid via CRED" text visible, white card on dark background, "SUCCESSFUL" badge in green, shows payment flow steps (authenticated by NPCI, amount credited), dark OR light background
+- WhatsApp Pay: WhatsApp green theme, chat-style layout
+- Navi: green header "Payment received", "Navi transaction ID" label visible, white card layout, shows "PTM..." or alphanumeric Navi ID
+- SBI YONO: SBI logo, "YONO" text
+- iMobile: ICICI orange, "iMobile" branding
+- HDFC PayZapp: HDFC red logo
+
+CRITICAL RULES:
+- Identify the SENDER app, NOT the recipient bank
+- Background color alone CANNOT identify app — GPay and CRED both support dark AND light themes
+- "Powered by UPI" at bottom = ignore, look at app branding
+- ANY app can pay to ANY UPI handle — cross-app is normal in India
+- If "Paid via CRED" is visible → it's CRED regardless of background
+- If "G Pay" logo at bottom → it's Google Pay regardless of background color
+- If "Navi transaction ID" label visible → it's Navi app
 
 Known apps: {app_list}, or Unknown/Generic UPI
 
@@ -615,15 +637,17 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
     ]
     recipient = (fields.get("recipient_name") or "").lower()
     is_bill_payment = any(k in recipient for k in BILL_PAYMENT_KEYWORDS)
+    # CRED and some other apps don't show UTR explicitly — treat same as bill payment
+    is_cred_style = app_key in ("cred", "slice", "freecharge")
 
     # --- Transaction ID validation ---
     txn_id = (fields.get("transaction_id") or "").strip().replace(" ", "")
     if not txn_id:
-        if is_bill_payment:
+        if is_bill_payment or is_cred_style:
             signals.append({
-                "type": "warning", "weight": 8,
-                "en": "Transaction reference not visible — acceptable for utility bill payments",
-                "hi": "Utility bill payment में transaction reference न दिखना normal है"
+                "type": "warning", "weight": 6,
+                "en": "Transaction reference not visible — acceptable for this payment type",
+                "hi": "इस payment type में transaction reference न दिखना normal है"
             })
         else:
             signals.append({
@@ -635,9 +659,9 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
         utr_pattern = app_info.get("utr_pattern")
         if utr_pattern and not re.match(utr_pattern, txn_id):
             signals.append({
-                "type": "red_flag", "weight": 30,
-                "en": f"UTR format invalid for {app_info.get('display', app_key)} (got: {txn_id[:20]})",
-                "hi": f"UTR format {app_info.get('display', app_key)} के लिए गलत है"
+                "type": "warning", "weight": 10,  # reduced from 30 — UTR format varies widely
+                "en": f"UTR format slightly unusual for {app_info.get('display', app_key)} (got: {txn_id[:20]})",
+                "hi": f"UTR format slightly unusual है — लेकिन real transactions में vary होता है"
             })
         else:
             signals.append({
@@ -728,12 +752,15 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
             pass
 
     # --- Bank name ---
+    # CRED, GPay, Amazon Pay, WhatsApp Pay, Navi don't show bank name by design
+    APPS_WITHOUT_BANK = {"cred", "gpay", "amazon_pay", "whatsapp_pay", "navi", "slice", "freecharge"}
     if not fields.get("bank_name"):
-        signals.append({
-            "type": "warning", "weight": 15,
-            "en": "Bank name not visible — genuine receipts usually show bank",
-            "hi": "Bank का नाम नहीं दिख रहा — असली receipt में bank दिखता है"
-        })
+        if app_key not in APPS_WITHOUT_BANK:
+            signals.append({
+                "type": "warning", "weight": 8,   # reduced from 15
+                "en": "Bank name not visible — genuine receipts usually show bank",
+                "hi": "Bank का नाम नहीं दिख रहा — असली receipt में bank दिखता है"
+            })
 
     return signals
 
@@ -795,9 +822,9 @@ def run_rule_engine(fields: dict, app_key: str, app_confidence: int) -> list:
         known_texts = app_info.get("status_texts", [])
         if known_texts and not any(t in status for t in known_texts):
             signals.append({
-                "type": "warning", "weight": 15,
-                "en": f"Status text '{status[:40]}' unusual for {app_info.get('display', app_key)}",
-                "hi": f"Status text {app_info.get('display', app_key)} के लिए unusual है"
+                "type": "warning", "weight": 5,  # reduced — status text varies widely in real apps
+                "en": f"Status text '{status[:40]}' slightly unusual for {app_info.get('display', app_key)}",
+                "hi": f"Status text slightly unusual है — लेकिन real apps में vary होता है"
             })
         else:
             signals.append({
@@ -823,24 +850,14 @@ def run_consistency_check(fields: dict, app_key: str) -> list:
             for other_key, other_info in APP_REGISTRY.items():
                 if other_key != app_key and handle in other_info.get("handles", []):
                     # Cross-app pairs that are normal in India
-                    cross_app_ok = {
-                        ("paytm", "phonepe"), ("paytm", "gpay"), ("paytm", "bhim"),
-                        ("gpay", "phonepe"), ("gpay", "paytm"),
-                        ("phonepe", "gpay"), ("phonepe", "paytm"),
-                        ("bhim", "phonepe"), ("bhim", "gpay"), ("bhim", "paytm"),
-                    }
-                    if (app_key, other_key) not in cross_app_ok:
-                        signals.append({
-                            "type": "red_flag", "weight": 40,
-                            "en": f"MISMATCH: {app_info.get('display', app_key)} but @{handle} belongs to {other_info['display']}",
-                            "hi": f"मिसमैच: @{handle} handle {other_info['display']} का है"
-                        })
-                    else:
-                        signals.append({
-                            "type": "green_flag", "weight": -5,
-                            "en": f"Cross-app payment: {app_info.get('display', app_key)} → @{handle} ({other_info['display']}) — normal in India",
-                            "hi": f"Cross-app UPI payment सामान्य है"
-                        })
+                    # In India, ANY UPI app can pay to ANY handle — cross-app is the norm
+                    # Only flag truly impossible combinations (e.g. Navi → Paytm-specific handle)
+                    # Most cross-app payments are completely normal
+                    signals.append({
+                        "type": "green_flag", "weight": -5,
+                        "en": f"Cross-app payment: {app_info.get('display', app_key)} → @{handle} ({other_info['display']} handle) — normal in India",
+                        "hi": f"Cross-app UPI payment सामान्य है"
+                    })
                     break
             else:
                 signals.append({
@@ -865,9 +882,9 @@ def run_consistency_check(fields: dict, app_key: str) -> list:
                     other_pat = other_info.get("utr_pattern")
                     if other_pat and re.match(other_pat, txn_id):
                         signals.append({
-                            "type": "red_flag", "weight": 40,
-                            "en": f"UTR format matches {other_info['display']} but screenshot shows {app_info.get('display', app_key)} — mismatch",
-                            "hi": f"UTR format {other_info['display']} का है लेकिन screenshot {app_info.get('display', app_key)} दिखा रहा है"
+                            "type": "warning", "weight": 12,
+                            "en": f"UTR format slightly unusual for {app_info.get('display', app_key)} — verify before accepting",
+                            "hi": f"UTR format slightly unusual है — verify करें"
                         })
                         break
 
@@ -1287,11 +1304,13 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
 
     _loop = asyncio.get_running_loop()
 
-    # ── Layer 0: Forensic Image Analysis (sync, CPU-bound → executor) ──
-    ela_signals       = await _loop.run_in_executor(None, run_ela_analysis, image_bytes)
-    exif_signals      = await _loop.run_in_executor(None, run_exif_analysis, image_bytes)
-    dimension_signals = await _loop.run_in_executor(None, run_dimension_check, image_bytes)
-    noise_signals     = await _loop.run_in_executor(None, run_noise_analysis, image_bytes)
+    # ── Layer 0: Forensic Image Analysis — all 4 run in PARALLEL ──
+    ela_signals, exif_signals, dimension_signals, noise_signals = await asyncio.gather(
+        _loop.run_in_executor(None, run_ela_analysis, image_bytes),
+        _loop.run_in_executor(None, run_exif_analysis, image_bytes),
+        _loop.run_in_executor(None, run_dimension_check, image_bytes),
+        _loop.run_in_executor(None, run_noise_analysis, image_bytes),
+    )
 
     # ── Layer 1: App Detection (Vision AI — sync SDK call → executor) ──
     app_result     = await _loop.run_in_executor(None, detect_app_from_image, image_bytes)
@@ -1345,10 +1364,10 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     verdict = score_result["verdict"]
     risk_score = score_result["risk_score"]
 
-    # ── Save to pattern memory ──
+    # ── Save to pattern memory — fire and forget, don't block response ──
     phash = pattern_result.get("current_phash")
     if phash:
-        await save_to_pattern_memory(phash, verdict, app_key)
+        asyncio.create_task(save_to_pattern_memory(phash, verdict, app_key))
 
     # ── Build why signals (for frontend) ──
     # Include ALL layers: forensics + rules + vision + pattern
