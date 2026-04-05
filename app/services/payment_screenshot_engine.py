@@ -1229,6 +1229,55 @@ def aggregate_score(
 # MASTER FUNCTION — Full Pipeline
 # ─────────────────────────────────────────────
 
+# ─────────────────────────────────────────────
+# ADVICE — What to do per verdict
+# ─────────────────────────────────────────────
+def get_advice(verdict: str, app_display: str) -> dict:
+    if verdict == "SAFE":
+        return {
+            "what_to_do": [
+                {"en": "Still verify the payment in YOUR bank app or UPI app before handing over goods", "hi": "Goods देने से पहले अपने bank app में payment verify करें"},
+                {"en": "Check your account balance or transaction history for the credited amount", "hi": "अपने account में credited amount check करें"},
+                {"en": "A SAFE verdict means low risk — always confirm in your own app", "hi": "SAFE verdict का मतलब कम risk है — अपने app में confirm करें"},
+            ],
+            "how_to_avoid": [
+                {"en": "Always verify payments in YOUR bank app, not the buyer's screenshot", "hi": "हमेशा अपने bank app में verify करें, buyer के screenshot से नहीं"},
+                {"en": "Enable transaction SMS alerts from your bank for instant confirmation", "hi": "Bank से transaction SMS alerts enable करें"},
+                {"en": "Never rely solely on a screenshot as payment proof", "hi": "Screenshot को कभी भी payment proof न मानें"},
+            ],
+        }
+    elif verdict == "SUSPICIOUS":
+        return {
+            "what_to_do": [
+                {"en": "DO NOT accept this as payment proof — verify directly in your bank app", "hi": "इसे payment proof न मानें — सीधे अपने bank app में verify करें"},
+                {"en": "Ask the sender to show you the payment in THEIR UPI app live (not screenshot)", "hi": "Sender से कहें कि वो LIVE अपने UPI app में payment दिखाए (screenshot नहीं)"},
+                {"en": "Check your bank account or UPI app for the exact UTR number shown", "hi": "अपने bank account में exact UTR number check करें"},
+                {"en": "If unsure, do not hand over goods until bank credit is confirmed", "hi": "यदि doubt है तो bank credit confirm होने तक goods न दें"},
+            ],
+            "how_to_avoid": [
+                {"en": "Always verify payments in YOUR bank app, not the buyer's screenshot", "hi": "हमेशा अपने bank app में verify करें, buyer के screenshot से नहीं"},
+                {"en": "Scammers use fake UPI apps and editing tools to create realistic screenshots", "hi": "Scammers fake UPI apps और editing tools से realistic screenshots बनाते हैं"},
+                {"en": "Train your staff: screenshot ≠ payment. Only bank credit = payment", "hi": "अपने staff को train करें: screenshot ≠ payment. सिर्फ bank credit = payment"},
+            ],
+        }
+    else:  # SCAM
+        return {
+            "what_to_do": [
+                {"en": "Do NOT accept this payment — no real money has been transferred", "hi": "यह payment स्वीकार न करें — कोई real money transfer नहीं हुई है"},
+                {"en": "Do NOT hand over any goods, cash, or services", "hi": "कोई goods, cash, या services न दें"},
+                {"en": "Report this UPI ID to NPCI at npci.org.in and call Cyber Crime helpline 1930", "hi": "इस UPI ID को NPCI पर report करें और Cyber Crime helpline 1930 पर call करें"},
+                {"en": "File a complaint at cybercrime.gov.in with this screenshot as evidence", "hi": "cybercrime.gov.in पर complaint दर्ज करें — यह screenshot evidence है"},
+                {"en": "Block and report the sender's number immediately", "hi": "Sender का नंबर तुरंत block और report करें"},
+            ],
+            "how_to_avoid": [
+                {"en": "Never trust any payment screenshot — always verify in YOUR app", "hi": "कभी भी payment screenshot पर trust न करें — हमेशा अपने app में verify करें"},
+                {"en": "Scammers use apps like 'Fake Pay' to generate realistic receipts in seconds", "hi": "Scammers 'Fake Pay' जैसे apps से seconds में realistic receipts बनाते हैं"},
+                {"en": "If someone is rushing you to accept payment — that's a red flag", "hi": "यदि कोई आपको जल्दी payment accept करने के लिए pressure कर रहा है — यह red flag है"},
+                {"en": "Place a notice at your shop: 'We verify all UPI payments in our app'", "hi": "अपनी shop पर लगाएं: 'हम सभी UPI payments अपने app में verify करते हैं'"},
+            ],
+        }
+
+
 async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     """
     Full 8-layer analysis pipeline for fake UPI payment screenshot detection.
