@@ -24,6 +24,7 @@ Supported apps:
   MobiKwik, Freecharge, generic UPI
 """
 
+import asyncio
 import os
 import re
 import json
@@ -31,7 +32,6 @@ import base64
 import hashlib
 import io
 from datetime import datetime
-from typing import Optional
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -50,9 +50,9 @@ APP_REGISTRY = {
     "phonepe": {
         "display": "PhonePe",
         "color_hint": "purple",
-        "utr_pattern": r"^\d{12}$",
+        "utr_pattern": r"^[A-Za-z0-9]{10,30}$",  # PhonePe TxnID = T26040518... alphanumeric; UTR = 12 digit
         "utr_prefix": None,
-        "handles": ["ybl", "ibl", "axl", "oksbi"],
+        "handles": ["ybl", "ibl", "axl", "oksbi", "okhdfcbank", "okicici", "okaxis"],  # cross-app handles
         "status_texts": ["payment successful", "paid", "money sent", "₹ sent to"],
         "logo_keywords": ["phonepe", "phone pe"],
     },
@@ -380,9 +380,9 @@ def run_dimension_check(image_bytes: bytes) -> list:
                 "en": f"Unusual aspect ratio {w}x{h} — not a typical phone resolution",
                 "hi": f"Unusual aspect ratio {w}x{h} — phone screenshot के लिए typical नहीं"
             })
-        elif w < 350:
+        elif w < 280:
             signals.append({
-                "type": "warning", "weight": 12,
+                "type": "warning", "weight": 6,   # reduced — WhatsApp often compresses to ~332px wide
                 "en": f"Very small image {w}x{h} — may be a cropped or resized fake",
                 "hi": f"बहुत छोटी image {w}x{h} — cropped/resized हो सकती है"
             })
@@ -481,6 +481,13 @@ def detect_app_from_image(image_bytes: bytes) -> dict:
                         "type": "text",
                         "text": f"""Look at this screenshot and identify which UPI payment app it is from.
 
+IMPORTANT CONTEXT FOR INDIA:
+- PhonePe app shows green header "Transaction Successful" and has "Contact PhonePe Support" at bottom
+- A PhonePe app CAN pay to @okhdfcbank/@okicici/@okaxis handles (cross-app UPI) — still classify as PhonePe
+- GPay app shows white background with colorful G Pay logo
+- Paytm shows blue theme with "Paytm" branding at bottom
+- DO NOT confuse the RECIPIENT's app with the SENDER's app shown in screenshot
+
 Known apps: {app_list}, or Unknown/Generic UPI
 
 Return ONLY valid JSON:
@@ -542,7 +549,7 @@ Return ONLY valid JSON with these exact fields (use null if not visible):
 {
   "amount": "exact amount shown e.g. ₹5,000 or 5000.00",
   "amount_numeric": 5000.00,
-  "transaction_id": "UTR or transaction reference number",
+  "transaction_id": "EITHER the Transaction ID (e.g. T260405180450845739875​9) OR UTR number (e.g. 179142498181) — extract BOTH if visible, prefer Transaction ID",
   "upi_id": "recipient UPI ID e.g. someone@ybl",
   "recipient_name": "name of recipient shown",
   "sender_name": "name of sender if shown",
@@ -598,14 +605,32 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
     signals = []
     app_info = APP_REGISTRY.get(app_key, {})
 
+    # --- Bill Payment Detection ---
+    BILL_PAYMENT_KEYWORDS = [
+        "vidyut", "bijli", "electricity", "bsnl", "gas", "water",
+        "jal", "metro", "irctc", "railway", "insurance", "fasttag",
+        "kshetra", "mpmk", "bescom", "msedcl", "discom", "bses",
+        "tata power", "torrent", "wesco", "cesc", "electric", "utility",
+        "telecom", "broadband", "municipality", "nagar",
+    ]
+    recipient = (fields.get("recipient_name") or "").lower()
+    is_bill_payment = any(k in recipient for k in BILL_PAYMENT_KEYWORDS)
+
     # --- Transaction ID validation ---
     txn_id = (fields.get("transaction_id") or "").strip().replace(" ", "")
     if not txn_id:
-        signals.append({
-            "type": "red_flag", "weight": 25,
-            "en": "Transaction ID / UTR not found in screenshot",
-            "hi": "स्क्रीनशॉट में Transaction ID / UTR नहीं मिला"
-        })
+        if is_bill_payment:
+            signals.append({
+                "type": "warning", "weight": 8,
+                "en": "Transaction reference not visible — acceptable for utility bill payments",
+                "hi": "Utility bill payment में transaction reference न दिखना normal है"
+            })
+        else:
+            signals.append({
+                "type": "red_flag", "weight": 25,
+                "en": "Transaction ID / UTR not found in screenshot",
+                "hi": "स्क्रीनशॉट में Transaction ID / UTR नहीं मिला"
+            })
     else:
         utr_pattern = app_info.get("utr_pattern")
         if utr_pattern and not re.match(utr_pattern, txn_id):
@@ -659,11 +684,18 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
                 "hi": f"UPI ID format गलत है: {upi_id}"
             })
     else:
-        signals.append({
-            "type": "warning", "weight": 10,
-            "en": "UPI ID not visible in screenshot",
-            "hi": "UPI ID screenshot में नहीं दिख रहा"
-        })
+        if is_bill_payment:
+            signals.append({
+                "type": "green_flag", "weight": -5,
+                "en": "Utility/bill payment — merchant UPI ID not shown is normal",
+                "hi": "Bill payment में UPI ID न दिखना सामान्य है"
+            })
+        else:
+            signals.append({
+                "type": "warning", "weight": 10,
+                "en": "UPI ID not visible in screenshot",
+                "hi": "UPI ID screenshot में नहीं दिख रहा"
+            })
 
     # --- Timestamp validation ---
     ts = (fields.get("timestamp") or "").strip()
@@ -712,18 +744,22 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
 
 
 def run_rule_engine(fields: dict, app_key: str, app_confidence: int) -> list:
-    """
-    Apply all heuristic rules. Returns list of signal dicts with weights.
-    """
+    """Apply all heuristic rules. Returns list of signal dicts with weights."""
     signals = []
     app_info = APP_REGISTRY.get(app_key, {})
 
-    # Rule R1: Low app detection confidence
-    if app_confidence < 60:
+    # Rule R1: App detection confidence — two-tier threshold
+    if app_confidence < 40:
         signals.append({
             "type": "red_flag", "weight": 20,
-            "en": f"Payment app not clearly identified (confidence: {app_confidence}%) — suspicious",
-            "hi": f"Payment app clearly identify नहीं हुआ ({app_confidence}% confidence) — संदिग्ध"
+            "en": f"Payment app not identifiable (confidence: {app_confidence}%) — very suspicious",
+            "hi": f"Payment app identify नहीं हुआ ({app_confidence}%) — बहुत suspicious"
+        })
+    elif app_confidence < 60:
+        signals.append({
+            "type": "warning", "weight": 8,
+            "en": f"Payment app identified with low confidence ({app_confidence}%) — image may be WhatsApp-compressed",
+            "hi": f"Low confidence ({app_confidence}%) — image compressed हो सकती है"
         })
     elif app_key == "unknown":
         signals.append({
@@ -732,7 +768,7 @@ def run_rule_engine(fields: dict, app_key: str, app_confidence: int) -> list:
             "hi": "Unknown payment app — किसी recognized UPI platform का नहीं"
         })
 
-    # Rule R2: No verifiable proof at all → auto suspicious floor
+    # Rule R2: Not enough verifiable fields
     extractable_fields = [
         fields.get("transaction_id"),
         fields.get("amount"),
@@ -773,31 +809,20 @@ def run_rule_engine(fields: dict, app_key: str, app_confidence: int) -> list:
     return signals
 
 
-# ─────────────────────────────────────────────
-# LAYER 4 — CONSISTENCY CROSS-CHECK
-# App vs UTR, UPI handle vs App, Amount vs Status
-# ─────────────────────────────────────────────
-
-
 def run_consistency_check(fields: dict, app_key: str) -> list:
-    """
-    Cross-check fields against each other and the detected app.
-    App+UTR mismatch = direct strong SCAM signal.
-    """
+    """Cross-check fields against each other and the detected app."""
     signals = []
     app_info = APP_REGISTRY.get(app_key, {})
 
-    # C1: UPI ID handle vs detected app
+    # C1: UPI handle vs detected app — cross-app UPI is NORMAL in India
     upi_id = (fields.get("upi_id") or "").strip().lower()
     if upi_id and "@" in upi_id:
         handle = upi_id.split("@")[1]
         expected_handles = app_info.get("handles", [])
         if expected_handles and handle not in expected_handles:
-            # Check if handle belongs to a DIFFERENT app
             for other_key, other_info in APP_REGISTRY.items():
                 if other_key != app_key and handle in other_info.get("handles", []):
-                    # Cross-app UPI is allowed in India — only flag if app is completely different
-                    # e.g. Paytm can pay to @ybl (PhonePe handle) — that's normal
+                    # Cross-app pairs that are normal in India
                     cross_app_ok = {
                         ("paytm", "phonepe"), ("paytm", "gpay"), ("paytm", "bhim"),
                         ("gpay", "phonepe"), ("gpay", "paytm"),
@@ -807,64 +832,59 @@ def run_consistency_check(fields: dict, app_key: str) -> list:
                     if (app_key, other_key) not in cross_app_ok:
                         signals.append({
                             "type": "red_flag", "weight": 40,
-                            "en": f"MISMATCH: Screenshot claims {app_info.get('display', app_key)} but UPI handle @{handle} belongs to {other_info['display']}",
-                            "hi": f"मिसमैच: Screenshot {app_info.get('display', app_key)} दिखा रहा है लेकिन @{handle} handle {other_info['display']} का है"
+                            "en": f"MISMATCH: {app_info.get('display', app_key)} but @{handle} belongs to {other_info['display']}",
+                            "hi": f"मिसमैच: @{handle} handle {other_info['display']} का है"
                         })
                     else:
                         signals.append({
                             "type": "green_flag", "weight": -5,
-                            "en": f"Cross-app UPI payment: {app_info.get('display', app_key)} paying to @{handle} ({other_info['display']} handle) — normal in India",
-                            "hi": f"Cross-app UPI payment सामान्य है — {app_info.get('display', app_key)} से {other_info['display']} handle पर payment"
+                            "en": f"Cross-app payment: {app_info.get('display', app_key)} → @{handle} ({other_info['display']}) — normal in India",
+                            "hi": f"Cross-app UPI payment सामान्य है"
                         })
                     break
             else:
-                # Handle not found in any known app — unknown handle
                 signals.append({
                     "type": "warning", "weight": 12,
                     "en": f"UPI handle @{handle} not in expected handles for {app_info.get('display', app_key)}",
-                    "hi": f"@{handle} handle {app_info.get('display', app_key)} के expected handles में नहीं है"
+                    "hi": f"@{handle} handle expected नहीं है"
                 })
         elif expected_handles and handle in expected_handles:
             signals.append({
                 "type": "green_flag", "weight": -12,
                 "en": f"UPI handle @{handle} matches {app_info.get('display', app_key)}",
-                "hi": f"UPI handle @{handle} {app_info.get('display', app_key)} से match करता है"
+                "hi": f"UPI handle @{handle} सही है"
             })
 
     # C2: UTR format vs app
     txn_id = (fields.get("transaction_id") or "").strip().replace(" ", "")
     if txn_id and app_key != "unknown":
         utr_pattern = app_info.get("utr_pattern")
-        if utr_pattern:
-            if not re.match(utr_pattern, txn_id):
-                # Check if it matches another app's pattern
-                for other_key, other_info in APP_REGISTRY.items():
-                    if other_key != app_key:
-                        other_pat = other_info.get("utr_pattern")
-                        if other_pat and re.match(other_pat, txn_id):
-                            signals.append({
-                                "type": "red_flag", "weight": 40,
-                                "en": f"UTR format matches {other_info['display']} but screenshot shows {app_info.get('display', app_key)} — definite mismatch",
-                                "hi": f"UTR format {other_info['display']} का है लेकिन screenshot {app_info.get('display', app_key)} दिखा रहा है"
-                            })
-                            break
+        if utr_pattern and not re.match(utr_pattern, txn_id):
+            for other_key, other_info in APP_REGISTRY.items():
+                if other_key != app_key:
+                    other_pat = other_info.get("utr_pattern")
+                    if other_pat and re.match(other_pat, txn_id):
+                        signals.append({
+                            "type": "red_flag", "weight": 40,
+                            "en": f"UTR format matches {other_info['display']} but screenshot shows {app_info.get('display', app_key)} — mismatch",
+                            "hi": f"UTR format {other_info['display']} का है लेकिन screenshot {app_info.get('display', app_key)} दिखा रहा है"
+                        })
+                        break
 
-    # C3: Amount consistency — "₹5000" vs status "₹500 sent"
+    # C3: Amount consistency
     amount_num = fields.get("amount_numeric")
     raw_text = (fields.get("raw_text_visible") or "").lower()
     if amount_num and raw_text:
-        # Look for another amount mentioned in raw text
         other_amounts = re.findall(r'₹\s*(\d[\d,]*(?:\.\d{1,2})?)', raw_text)
         for oa in other_amounts:
             oa_clean = float(oa.replace(",", ""))
-            if abs(oa_clean - amount_num) > 1 and oa_clean != amount_num:
-                if oa_clean < amount_num * 0.5 or oa_clean > amount_num * 2:
-                    signals.append({
-                        "type": "warning", "weight": 15,
-                        "en": f"Amount inconsistency: main shows ₹{amount_num} but other text shows ₹{oa}",
-                        "hi": f"Amount inconsistency: main ₹{amount_num} दिखा रहा है लेकिन अन्य text में ₹{oa} है"
-                    })
-                    break
+            if oa_clean != amount_num and (oa_clean < amount_num * 0.5 or oa_clean > amount_num * 2):
+                signals.append({
+                    "type": "warning", "weight": 15,
+                    "en": f"Amount inconsistency: ₹{amount_num} vs ₹{oa} in text",
+                    "hi": f"Amount inconsistency: ₹{amount_num} vs ₹{oa}"
+                })
+                break
 
     return signals
 
@@ -872,13 +892,8 @@ def run_consistency_check(fields: dict, app_key: str) -> list:
 # ─────────────────────────────────────────────
 # LAYER 5 — UPI ID DEEP CHECK
 # ─────────────────────────────────────────────
-
-
 def run_upi_id_check(upi_id: str) -> list:
-    """
-    Check UPI ID for scam patterns without calling external API.
-    Returns weighted signals.
-    """
+    """Check UPI ID for scam patterns."""
     signals = []
     if not upi_id:
         return signals
@@ -886,24 +901,18 @@ def run_upi_id_check(upi_id: str) -> list:
     upi_lower = upi_id.lower().strip()
     username = upi_lower.split("@")[0] if "@" in upi_lower else upi_lower
 
-    # Check scam keywords
     for keyword, weight, reason in SCAM_UPI_KEYWORDS:
         if keyword in username:
             signals.append({
                 "type": "red_flag", "weight": weight,
                 "en": f"Scam keyword '{keyword}' in UPI ID — {reason}",
-                "hi": f"UPI ID में scam keyword '{keyword}' — {reason}"
+                "hi": f"UPI ID में scam keyword '{keyword}'"
             })
 
-    # Check if username is suspiciously generic
-    # NOTE: phone-number UPI IDs (9876543210@paytm, q033328366@ybl) are VALID — do not flag
+    # Generic account patterns — phone-number UPI IDs are VALID, do not flag
     generic_patterns = [
-        r'^test\d*$',               # test account
-        r'^demo\d*$',               # demo account
-        r'^fake\d*$',               # literally fake
-        r'^sample\d*$',             # sample account
-        r'^dummy\d*$',              # dummy account
-        r'^null\d*$',               # null/placeholder
+        r'^test\d*$', r'^demo\d*$', r'^fake\d*$',
+        r'^sample\d*$', r'^dummy\d*$', r'^null\d*$',
     ]
     for pat in generic_patterns:
         if re.match(pat, username):
@@ -914,7 +923,6 @@ def run_upi_id_check(upi_id: str) -> list:
             })
             break
 
-    # Positive signals
     if len(username) >= 5 and not any(k in username for k, _, _ in SCAM_UPI_KEYWORDS):
         signals.append({
             "type": "green_flag", "weight": -8,
@@ -928,13 +936,8 @@ def run_upi_id_check(upi_id: str) -> list:
 # ─────────────────────────────────────────────
 # LAYER 6 — VISION AI FORENSICS
 # ─────────────────────────────────────────────
-
-VISION_FORENSICS_SYSTEM = """You are a forensic expert specializing in detecting fake UPI payment screenshots in India.
-
-You will receive a payment screenshot and context from rule analysis.
-Your job is to visually inspect the image for signs of tampering or fakery.
-
-Return ONLY valid JSON:
+VISION_FORENSICS_SYSTEM = """You are a forensic expert detecting fake UPI payment screenshots in India.
+Inspect the image for tampering or fakery and return ONLY valid JSON:
 {
   "visual_risk_score": 0-100,
   "logo_authentic": true/false,
@@ -944,31 +947,15 @@ Return ONLY valid JSON:
   "amount_area_suspicious": true/false,
   "ui_matches_claimed_app": true/false,
   "overall_visual_verdict": "genuine|suspicious|fake",
-  "visual_flags": [
-    {"en": "specific visual issue found", "hi": "Hindi version"}
-  ],
-  "visual_safe_signals": [
-    {"en": "positive visual signal", "hi": "Hindi version"}
-  ],
-  "visual_reasoning": "detailed explanation of what you see"
+  "visual_flags": [{"en": "issue", "hi": "Hindi"}],
+  "visual_safe_signals": [{"en": "positive signal", "hi": "Hindi"}],
+  "visual_reasoning": "explanation"
 }
-
-STRICT RULES:
-1. If logo is blurry, stretched, or pixelated → flag it
-2. If font in amount field looks different from rest of UI → flag it
-3. If colors don't match the claimed app → flag it
-4. If there are pixel inconsistencies around text (common in edited screenshots) → flag it
-5. If the overall layout feels "off" or generic → flag it
-6. IMPORTANT: If unsure → mark SUSPICIOUS, NOT genuine/safe
-7. Fake payment generator apps create screenshots that look real — look for subtle differences in spacing, font weight, icon quality
-8. Green tick / checkmark — is it the same style as the real app uses?"""
+If unsure → mark SUSPICIOUS, NOT genuine."""
 
 
 def run_vision_forensics(image_bytes: bytes, app_key: str, app_display: str, rule_context: str) -> dict:
-    """
-    Deep visual forensics using Vision AI.
-    Returns visual risk score and specific visual flags.
-    """
+    """Deep visual forensics using Vision AI."""
     try:
         image_b64 = base64.b64encode(image_bytes).decode()
         app_info = APP_REGISTRY.get(app_key, {})
@@ -976,24 +963,25 @@ def run_vision_forensics(image_bytes: bytes, app_key: str, app_display: str, rul
         prompt = f"""Analyze this UPI payment screenshot for authenticity.
 
 CLAIMED APP: {app_display}
-EXPECTED COLOR SCHEME: {app_info.get('color_hint', 'unknown')}
-EXPECTED STATUS TEXTS: {', '.join(app_info.get('status_texts', []))}
+EXPECTED COLOR: {app_info.get('color_hint', 'unknown')}
+EXPECTED STATUS: {', '.join(app_info.get('status_texts', []))}
 
-RULE ENGINE CONTEXT (pre-detected issues):
+RULE ENGINE CONTEXT:
 {rule_context}
 
-Now do a VISUAL forensic analysis:
+Visual forensic analysis:
 - Is this genuinely from {app_display}?
-- Any signs of image editing, cropping, or template use?
+- Any signs of editing, cropping, or template use?
 - Does the amount field look native or pasted?
 - Is the transaction ID area visually consistent?
 
-Remember: If unsure → mark suspicious, not genuine.
 IMPORTANT REAL-WORLD NOTES:
-- In India, Paytm/GPay/BHIM apps CAN pay to @ybl handles (PhonePe). This is normal cross-app UPI — NOT a fake signal.
-- Masked UPI IDs like "navi.******2623@naviaxis" are shown by real apps for privacy — NOT fake.
-- PhonePe "Transaction Successful" screens shown inside Navi/Paytm = real, the receiving app shows the credit.
-- Do NOT flag screenshots just because the UI color looks slightly different from the detected app."""
+- In India, Paytm/GPay/BHIM apps CAN pay to @ybl/@okhdfcbank handles. Cross-app UPI is normal — NOT fake.
+- Masked UPI IDs like "navi.******2623@naviaxis" shown by real apps for privacy — NOT fake.
+- PhonePe green header "Transaction Successful" + "Contact PhonePe Support" = real PhonePe app.
+- Do NOT flag screenshots just because the UI color looks slightly different from the detected app.
+- CRITICAL: If the image is small (<400px wide) or heavily JPEG-compressed, pixelation/blur/font softness are from COMPRESSION, NOT editing. Only flag font inconsistency if you see it in ONE localized area (e.g. amount text looks pasted on different background). Uniform compression artifacts across the whole image = genuine screenshot, NOT fake.
+- If unsure → mark suspicious, not genuine."""
 
         response = get_client().chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
@@ -1012,66 +1000,49 @@ IMPORTANT REAL-WORLD NOTES:
         )
         data = json.loads(response.choices[0].message.content)
         return {
-            "visual_risk_score": int(data.get("visual_risk_score", 50)),
-            "logo_authentic": data.get("logo_authentic", None),
-            "font_consistent": data.get("font_consistent", None),
-            "color_scheme_correct": data.get("color_scheme_correct", None),
+            "visual_risk_score":      int(data.get("visual_risk_score", 50)),
+            "logo_authentic":         data.get("logo_authentic"),
+            "font_consistent":        data.get("font_consistent"),
+            "color_scheme_correct":   data.get("color_scheme_correct"),
             "pixel_artifacts_detected": data.get("pixel_artifacts_detected", False),
             "amount_area_suspicious": data.get("amount_area_suspicious", False),
-            "ui_matches_claimed_app": data.get("ui_matches_claimed_app", None),
+            "ui_matches_claimed_app": data.get("ui_matches_claimed_app"),
             "overall_visual_verdict": data.get("overall_visual_verdict", "suspicious"),
-            "visual_flags": data.get("visual_flags", []),
-            "visual_safe_signals": data.get("visual_safe_signals", []),
-            "visual_reasoning": data.get("visual_reasoning", ""),
+            "visual_flags":           data.get("visual_flags", []),
+            "visual_safe_signals":    data.get("visual_safe_signals", []),
+            "visual_reasoning":       data.get("visual_reasoning", ""),
         }
     except Exception as e:
         print(f"VISION FORENSICS ERROR: {e}")
         return {
-            "visual_risk_score": 50,
-            "overall_visual_verdict": "suspicious",
-            "visual_flags": [],
-            "visual_safe_signals": [],
-            "visual_reasoning": "Visual analysis failed",
-            "logo_authentic": None,
-            "font_consistent": None,
-            "color_scheme_correct": None,
-            "pixel_artifacts_detected": False,
-            "amount_area_suspicious": False,
+            "visual_risk_score": 50, "overall_visual_verdict": "suspicious",
+            "visual_flags": [], "visual_safe_signals": [], "visual_reasoning": "Failed",
+            "logo_authentic": None, "font_consistent": None, "color_scheme_correct": None,
+            "pixel_artifacts_detected": False, "amount_area_suspicious": False,
             "ui_matches_claimed_app": None,
         }
 
 
 # ─────────────────────────────────────────────
 # LAYER 7 — FRAUD PATTERN MEMORY
-# Perceptual hash via MongoDB
 # ─────────────────────────────────────────────
-
-
 def _perceptual_hash(image_bytes: bytes) -> str:
-    """
-    Simple perceptual hash using resize + pixel average.
-    Same fake template = similar hash within threshold.
-    """
+    """Simple perceptual hash — same fake template = similar hash."""
     try:
         from PIL import Image
         img = Image.open(io.BytesIO(image_bytes)).convert("L").resize((16, 16), Image.LANCZOS)
         pixels = list(img.getdata())
         avg = sum(pixels) / len(pixels)
         bits = "".join("1" if p > avg else "0" for p in pixels)
-        # Convert to hex
-        h = hex(int(bits, 2))[2:].zfill(64)
-        return h
+        return hex(int(bits, 2))[2:].zfill(64)
     except Exception:
-        # Fallback to MD5
         return hashlib.md5(image_bytes[:1024]).hexdigest()
 
 
 def _hamming_distance(h1: str, h2: str) -> int:
-    """Hamming distance between two hex hashes.
-    Fixed: auto-detect bit length so MD5 (128-bit) and pHash (256-bit) both work.
-    """
+    """Hamming distance — auto-detect bit length for MD5 (128-bit) vs pHash (256-bit)."""
     try:
-        bit_len = max(len(h1), len(h2)) * 4  # hex chars * 4 bits each
+        bit_len = max(len(h1), len(h2)) * 4
         b1 = bin(int(h1, 16))[2:].zfill(bit_len)
         b2 = bin(int(h2, 16))[2:].zfill(bit_len)
         return sum(c1 != c2 for c1, c2 in zip(b1, b2))
@@ -1079,29 +1050,16 @@ def _hamming_distance(h1: str, h2: str) -> int:
         return 256
 
 
-
-# ─────────────────────────────────────────────
-# LAYER 0 — ELA (Error Level Analysis)
-# Fixed: PNG lossless→JPEG always fires — skip ELA for PNG
-# For JPEG: double-pass recompression to amplify real edits
-# ─────────────────────────────────────────────
-
-
 async def check_fraud_pattern_memory(image_bytes: bytes) -> dict:
-    """
-    Check if this screenshot matches a known fake template in our DB.
-    Returns match info and weight signal.
-    """
+    """Check if screenshot matches a known fake template in DB."""
     result = {"found": False, "match_count": 0, "signal": None}
     try:
         from app.core.database import db
-        import asyncio as _asyncio2
-        _loop2 = _asyncio2.get_event_loop()
+        _loop2 = asyncio.get_running_loop()
         phash = await _loop2.run_in_executor(None, _perceptual_hash, image_bytes)
-        # Fetch recent fake screenshot hashes
+
         cursor = db.fake_screenshot_hashes.find(
-            {"verdict": "SCAM"},
-            {"phash": 1, "count": 1, "app": 1}
+            {"verdict": "SCAM"}, {"phash": 1, "count": 1, "app": 1}
         ).limit(200)
 
         async for doc in cursor:
@@ -1109,19 +1067,17 @@ async def check_fraud_pattern_memory(image_bytes: bytes) -> dict:
             if not stored_hash:
                 continue
             dist = _hamming_distance(phash, stored_hash)
-            # Threshold: distance < 20 = very similar image
             if dist < 20:
                 result["found"] = True
                 result["match_count"] = doc.get("count", 1)
                 result["matched_app"] = doc.get("app", "unknown")
                 result["signal"] = {
                     "type": "red_flag", "weight": 25,
-                    "en": f"This screenshot matches a known fake template seen {result['match_count']} times before",
-                    "hi": f"यह screenshot एक known fake template से match करता है जो {result['match_count']} बार पहले देखा गया है"
+                    "en": f"Matches known fake template seen {result['match_count']} times",
+                    "hi": f"Known fake template से match — {result['match_count']} बार पहले देखा"
                 }
                 break
 
-        # Save this hash for future reference (will be tagged after verdict)
         result["current_phash"] = phash
         return result
     except Exception as e:
@@ -1143,38 +1099,16 @@ async def save_to_pattern_memory(phash: str, verdict: str, app_key: str):
             )
         else:
             await db.fake_screenshot_hashes.insert_one({
-                "phash": phash,
-                "verdict": verdict,
-                "app": app_key,
-                "count": 1,
-                "created_at": datetime.utcnow(),
-                "last_seen": datetime.utcnow(),
+                "phash": phash, "verdict": verdict, "app": app_key,
+                "count": 1, "created_at": datetime.utcnow(), "last_seen": datetime.utcnow(),
             })
     except Exception as e:
         print(f"SAVE PATTERN ERROR: {e}")
 
 
-# ─────────────────────────────────────────────
-# LAYER 8 — SCORE AGGREGATOR
-# Weighted combination of all layers
-# ─────────────────────────────────────────────
-LAYER_WEIGHTS = {
-    "rule_engine": 0.20,       # validation + rule signals
-    "consistency": 0.15,       # cross-check signals
-    "vision_ai": 0.35,         # visual forensics (highest — eyes don't lie)
-    "upi_id": 0.15,            # UPI ID check
-    "pattern_memory": 0.05,    # fraud template match
-    "app_confidence": 0.10,    # app detection confidence
-}
-
-
 def signals_to_bayesian_score(signals: list) -> float:
-    """
-    Bayesian scoring: start at 40% prior (benefit of doubt),
-    update multiplicatively with each signal.
-    Much more accurate than additive scoring.
-    """
-    p_fake = 0.40  # Prior: benefit of doubt
+    """Bayesian scoring: start at 40% prior, update multiplicatively."""
+    p_fake = 0.40
     for s in signals:
         w = s.get("weight", 0)
         stype = s.get("type", "")
@@ -1204,30 +1138,25 @@ def aggregate_score(
     dimension_signals: list = None,
     noise_signals: list = None,
 ) -> dict:
-    """
-    Bayesian score aggregation across all layers.
-    Higher score = more likely fake.
-    """
-    ela_signals = ela_signals or []
-    exif_signals = exif_signals or []
+    """Bayesian score aggregation across all layers."""
+    ela_signals       = ela_signals or []
+    exif_signals      = exif_signals or []
     dimension_signals = dimension_signals or []
-    noise_signals = noise_signals or []
+    noise_signals     = noise_signals or []
 
     all_rule = (
         ela_signals + exif_signals + dimension_signals + noise_signals +
         validation_signals + rule_signals + consistency_signals + upi_signals
     )
 
-    # Per-layer Bayesian scores
     forensic_score = signals_to_bayesian_score(ela_signals + exif_signals + dimension_signals + noise_signals)
     rule_score     = signals_to_bayesian_score(validation_signals + rule_signals)
     consist_score  = signals_to_bayesian_score(consistency_signals)
     upi_score      = signals_to_bayesian_score(upi_signals)
     vision_score   = vision_result.get("visual_risk_score", 50)
     memory_score   = 80 if pattern_result.get("found") else 35
-    conf_risk      = max(0, 100 - app_confidence)
+    conf_risk      = max(0, (100 - app_confidence) * 0.5)
 
-    # Weighted combination (forensics now 15%, vision still highest)
     final_risk = (
         forensic_score * 0.15 +
         rule_score     * 0.18 +
@@ -1239,12 +1168,10 @@ def aggregate_score(
     )
     final_risk = max(0.0, min(100.0, final_risk))
 
-    # Hard overrides
-    all_signals = all_rule
+    all_signals    = all_rule
     critical_flags = [s for s in all_signals if s.get("type") == "red_flag" and s.get("weight", 0) >= 35]
 
-    # ELA + EXIF both red = definite tampering
-    ela_red = any(s.get("type") == "red_flag" for s in ela_signals)
+    ela_red  = any(s.get("type") == "red_flag" for s in ela_signals)
     exif_red = any(s.get("type") == "red_flag" for s in exif_signals)
     if ela_red and exif_red:
         final_risk = max(final_risk, 75)
@@ -1255,28 +1182,23 @@ def aggregate_score(
     if pattern_result.get("found"):
         final_risk = max(final_risk, 62)
 
-    # Strong forensic green signals prevent false SCAM
-    ela_green = any(s.get("type") == "green_flag" for s in ela_signals)
-    exif_green = any(s.get("type") == "green_flag" for s in exif_signals)
+    ela_green   = any(s.get("type") == "green_flag" for s in ela_signals)
+    exif_green  = any(s.get("type") == "green_flag" for s in exif_signals)
     noise_green = any(s.get("type") == "green_flag" for s in noise_signals)
     green_count = sum([ela_green, exif_green, noise_green])
     if green_count >= 2 and final_risk > 65:
-        # Multiple forensic greens → cap at SUSPICIOUS unless other strong reds
         if len(critical_flags) < 2:
             final_risk = min(final_risk, 64)
 
     risk_int = round(final_risk)
     if risk_int <= 35:
-        verdict = "SAFE"
-        verdict_hi = "सुरक्षित"
+        verdict, verdict_hi = "SAFE", "सुरक्षित"
     elif risk_int <= 65:
-        verdict = "SUSPICIOUS"
-        verdict_hi = "संदिग्ध"
+        verdict, verdict_hi = "SUSPICIOUS", "संदिग्ध"
     else:
-        verdict = "SCAM"
-        verdict_hi = "धोखाधड़ी"
+        verdict, verdict_hi = "SCAM", "धोखाधड़ी"
 
-    all_count = len(all_signals)
+    all_count     = len(all_signals)
     critical_count = len(critical_flags)
     if all_count >= 10 or critical_count >= 2:
         confidence_level = "high"
@@ -1285,75 +1207,22 @@ def aggregate_score(
     else:
         confidence_level = "low"
 
-    layer_scores = {
-        "forensics_ela_exif": round(forensic_score),
-        "rule_engine": round(rule_score),
-        "consistency": round(consist_score),
-        "vision_ai": round(vision_score),
-        "upi_id_check": round(upi_score),
-        "pattern_memory": round(memory_score),
-        "app_confidence_risk": round(conf_risk),
-    }
-
     return {
-        "risk_score": risk_int,
-        "verdict": verdict,
-        "verdict_hi": verdict_hi,
-        "confidence_level": confidence_level,
-        "layer_scores": layer_scores,
+        "risk_score":        risk_int,
+        "verdict":           verdict,
+        "verdict_hi":        verdict_hi,
+        "confidence_level":  confidence_level,
+        "layer_scores": {
+            "forensics_ela_exif":  round(forensic_score),
+            "rule_engine":         round(rule_score),
+            "consistency":         round(consist_score),
+            "vision_ai":           round(vision_score),
+            "upi_id_check":        round(upi_score),
+            "pattern_memory":      round(memory_score),
+            "app_confidence_risk": round(conf_risk),
+        },
         "critical_flag_count": critical_count,
     }
-
-
-# ─────────────────────────────────────────────
-# WHAT TO DO + HOW TO AVOID — per verdict
-# ─────────────────────────────────────────────
-
-
-def get_advice(verdict: str, app_display: str) -> dict:
-    if verdict == "SAFE":
-        return {
-            "what_to_do": [
-                {"en": "Always verify the payment in YOUR own UPI app transaction history — don't rely on this screenshot alone", "hi": "अपने UPI app की transaction history में payment verify करें — सिर्फ इस screenshot पर भरोसा न करें"},
-                {"en": f"Open your {app_display} or bank app and confirm the credit shows up", "hi": f"अपना {app_display} या bank app खोलें और confirm करें कि credit आया है"},
-                {"en": "Match the UTR/Transaction ID shown here with your bank statement", "hi": "यहाँ दिखाई UTR/Transaction ID को अपने bank statement से match करें"},
-            ],
-            "how_to_avoid": [
-                {"en": "A screenshot is never proof of payment — always check your bank", "hi": "Screenshot कभी payment का proof नहीं है — हमेशा अपना bank check करें"},
-                {"en": "Enable bank SMS alerts so you get instant credit notifications", "hi": "Bank SMS alerts enable करें ताकि instant credit notification मिले"},
-                {"en": "Never hand over goods or services before confirming payment in your account", "hi": "Account में payment confirm होने से पहले कभी goods/services न दें"},
-            ],
-        }
-    elif verdict == "SUSPICIOUS":
-        return {
-            "what_to_do": [
-                {"en": "DO NOT accept this as payment proof — verify directly in your bank app", "hi": "इसे payment proof न मानें — सीधे अपने bank app में verify करें"},
-                {"en": "Ask the sender to show you the payment in THEIR UPI app live (not screenshot)", "hi": "Sender से कहें कि वो LIVE अपने UPI app में payment दिखाए (screenshot नहीं)"},
-                {"en": "Check your bank account or UPI app for the exact UTR number shown", "hi": "अपने bank account में exact UTR number check करें"},
-                {"en": "If unsure, do not hand over goods until bank credit is confirmed", "hi": "यदि doubt है तो bank credit confirm होने तक goods न दें"},
-            ],
-            "how_to_avoid": [
-                {"en": "Always verify payments in YOUR bank app, not the buyer's screenshot", "hi": "हमेशा अपने bank app में verify करें, buyer के screenshot से नहीं"},
-                {"en": "Scammers use fake UPI apps and editing tools to create realistic screenshots", "hi": "Scammers fake UPI apps और editing tools से realistic screenshots बनाते हैं"},
-                {"en": "Train your staff: screenshot ≠ payment. Only bank credit = payment", "hi": "अपने staff को train करें: screenshot ≠ payment. सिर्फ bank credit = payment"},
-            ],
-        }
-    else:  # SCAM
-        return {
-            "what_to_do": [
-                {"en": "Do NOT accept this payment — no real money has been transferred", "hi": "यह payment स्वीकार न करें — कोई real money transfer नहीं हुई है"},
-                {"en": "Do NOT hand over any goods, cash, or services", "hi": "कोई goods, cash, या services न दें"},
-                {"en": "Report this UPI ID to NPCI at npci.org.in and call Cyber Crime helpline 1930", "hi": "इस UPI ID को NPCI पर report करें और Cyber Crime helpline 1930 पर call करें"},
-                {"en": "File a complaint at cybercrime.gov.in with this screenshot as evidence", "hi": "cybercrime.gov.in पर complaint दर्ज करें — यह screenshot evidence है"},
-                {"en": "Block and report the sender's number immediately", "hi": "Sender का नंबर तुरंत block और report करें"},
-            ],
-            "how_to_avoid": [
-                {"en": "Never trust any payment screenshot — always verify in YOUR app", "hi": "कभी भी payment screenshot पर trust न करें — हमेशा अपने app में verify करें"},
-                {"en": "Scammers use apps like 'Fake Pay' to generate realistic receipts in seconds", "hi": "Scammers 'Fake Pay' जैसे apps से seconds में realistic receipts बनाते हैं"},
-                {"en": "If someone is rushing you to accept payment — that's a red flag", "hi": "यदि कोई आपको जल्दी payment accept करने के लिए pressure कर रहा है — यह red flag है"},
-                {"en": "Place a notice at your shop: 'We verify all UPI payments in our app'", "hi": "अपनी shop पर लगाएं: 'हम सभी UPI payments अपने app में verify करते हैं'"},
-            ],
-        }
 
 
 # ─────────────────────────────────────────────
@@ -1367,8 +1236,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     Output: structured verdict with risk%, signals, advice in EN+HI
     """
 
-    import asyncio as _asyncio
-    _loop = _asyncio.get_event_loop()
+    _loop = asyncio.get_running_loop()
 
     # ── Layer 0: Forensic Image Analysis (sync, CPU-bound → executor) ──
     ela_signals       = await _loop.run_in_executor(None, run_ela_analysis, image_bytes)
