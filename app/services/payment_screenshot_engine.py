@@ -32,7 +32,10 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def get_client():
+    """Lazy OpenAI client init — avoids crash at import time."""
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ─────────────────────────────────────────────
 # APP REGISTRY
@@ -218,7 +221,7 @@ def detect_app_from_image(image_bytes: bytes) -> dict:
         app_list = ", ".join([v["display"] for v in APP_REGISTRY.values()])
         image_b64 = base64.b64encode(image_bytes).decode()
 
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[{
                 "role": "user",
@@ -273,7 +276,7 @@ def extract_fields_from_image(image_bytes: bytes, app_key: str) -> dict:
         image_b64 = base64.b64encode(image_bytes).decode()
         app_info = APP_REGISTRY.get(app_key, {})
 
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[{
                 "role": "user",
@@ -708,7 +711,7 @@ Now do a VISUAL forensic analysis:
 
 Remember: If unsure → mark suspicious, not genuine."""
 
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[
                 {"role": "system", "content": VISION_FORENSICS_SYSTEM},
