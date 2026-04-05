@@ -1,17 +1,21 @@
 """
 Payment Screenshot Engine — ScamDekho
 ======================================
-8-Layer Fake UPI Payment Screenshot Detector
+12-Layer Fake UPI Payment Screenshot Detector (v2.1 — deduplicated + all bugs fixed)
 
 Layers:
+  0. ELA (Error Level Analysis) — detects pixel editing
+  0B. EXIF Metadata — real device vs fake generator
+  0C. Dimension Check — real phone resolution
+  0D. Noise Analysis — natural vs synthetic image
   1. App Detection + Confidence
   2. OCR Field Extraction + Validation
   3. Rule Engine (Weighted Signals)
   4. Consistency Cross-Check
   5. UPI ID Deep Check
   6. Vision AI Forensics (GPT-4o-mini)
-  7. Fraud Pattern Memory (MongoDB perceptual hash)
-  8. Soft Score Aggregator → SAFE / SUSPICIOUS / SCAM
+  7. Fraud Pattern Memory (perceptual hash)
+  8. Bayesian Score Aggregator → SAFE / SUSPICIOUS / SCAM
 
 Supported apps:
   PhonePe, Google Pay (GPay), Paytm, Amazon Pay, BHIM,
@@ -33,19 +37,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 def get_client():
     """Lazy OpenAI client init — avoids crash at import time."""
     return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+
 # ─────────────────────────────────────────────
 # APP REGISTRY
-# Each entry: name, bg_color_hint, utr_prefix_pattern, handle_hints
 # ─────────────────────────────────────────────
 APP_REGISTRY = {
     "phonepe": {
         "display": "PhonePe",
         "color_hint": "purple",
-        "utr_pattern": r"^\d{12}$",                          # 12 digit numeric
+        "utr_pattern": r"^\d{12}$",
         "utr_prefix": None,
         "handles": ["ybl", "ibl", "axl", "oksbi"],
         "status_texts": ["payment successful", "paid", "money sent", "₹ sent to"],
@@ -54,7 +59,7 @@ APP_REGISTRY = {
     "gpay": {
         "display": "Google Pay",
         "color_hint": "white",
-        "utr_pattern": r"^[A-Z0-9]{20,35}$",                 # alphanumeric uppercase
+        "utr_pattern": r"^[A-Z0-9]{20,35}$",
         "utr_prefix": None,
         "handles": ["okaxis", "okicici", "oksbi", "okhdfcbank"],
         "status_texts": ["you paid", "payment done", "sent to"],
@@ -66,13 +71,13 @@ APP_REGISTRY = {
         "utr_pattern": r"^\d{10,20}$",
         "utr_prefix": None,
         "handles": ["paytm", "ptyes", "ptsbi", "ybl", "ibl", "okicici", "oksbi", "okhdfcbank", "okaxis"],
-        "status_texts": ["payment successful", "paid successfully", "money transferred", "paid successfully"],
+        "status_texts": ["payment successful", "paid successfully", "money transferred"],
         "logo_keywords": ["paytm"],
     },
     "bhim": {
         "display": "BHIM",
         "color_hint": "blue_dark",
-        "utr_pattern": r"^\d{12}$",                          # standard RBI UTR = 12 digit
+        "utr_pattern": r"^\d{12}$",
         "utr_prefix": None,
         "handles": ["upi", "bhim"],
         "status_texts": ["transaction successful", "payment done"],
@@ -209,9 +214,255 @@ SCAM_UPI_KEYWORDS = [
     ("tax", 20, "Tax fraud pattern"),
 ]
 
+
+def run_ela_analysis(image_bytes: bytes) -> list:
+    signals = []
+    try:
+        from PIL import Image, ImageChops
+        import numpy as np
+
+        img = Image.open(io.BytesIO(image_bytes))
+        img_format = (img.format or "").upper()
+
+        # PNG is lossless — converting to JPEG always introduces artifacts
+        # ELA would flag EVERY genuine iOS/Android PNG screenshot as SCAM
+        if img_format == "PNG":
+            signals.append({
+                "type": "green_flag", "weight": -5,
+                "en": "ELA skipped — PNG is lossless, no JPEG compression artifacts expected",
+                "hi": "ELA skip किया — PNG lossless है, JPEG artifacts expected नहीं"
+            })
+            return signals
+
+        # JPEG: double-pass recompression highlights edited areas
+        original = img.convert("RGB")
+        buf1 = io.BytesIO()
+        original.save(buf1, format="JPEG", quality=75)
+        buf1.seek(0)
+        recomp1 = Image.open(buf1).convert("RGB")
+
+        buf2 = io.BytesIO()
+        recomp1.save(buf2, format="JPEG", quality=75)
+        buf2.seek(0)
+        recomp2 = Image.open(buf2).convert("RGB")
+
+        # Compare pass1 vs pass2 — edited areas have higher divergence
+        diff = ImageChops.difference(recomp1, recomp2)
+        diff_arr = np.array(diff).astype(np.float32)
+        max_ela  = diff_arr.max()
+        mean_ela = diff_arr.mean()
+
+        h = diff_arr.shape[0]
+        mid_region  = diff_arr[int(h * 0.25):int(h * 0.75)]
+        region_max  = mid_region.max()
+
+        # Calibrated thresholds for double-pass JPEG ELA
+        if max_ela > 25 and mean_ela > 3.0:
+            signals.append({
+                "type": "red_flag", "weight": 40,
+                "en": f"ELA detected editing artifacts (max={max_ela:.1f}, mean={mean_ela:.2f}) — image likely tampered",
+                "hi": f"ELA में image editing के artifacts मिले — image tampered हो सकती है"
+            })
+            if region_max > max_ela * 0.85 and region_max > 18:
+                signals.append({
+                    "type": "red_flag", "weight": 30,
+                    "en": "ELA hotspot in amount/transaction area — this region was likely edited",
+                    "hi": "Amount/transaction area में ELA hotspot — यह region edit किया गया लगता है"
+                })
+        elif max_ela > 12 and mean_ela > 1.5:
+            signals.append({
+                "type": "warning", "weight": 18,
+                "en": f"Mild ELA anomalies (max={max_ela:.1f}) — minor editing possible",
+                "hi": "Mild ELA anomalies — minor editing की संभावना"
+            })
+        else:
+            signals.append({
+                "type": "green_flag", "weight": -15,
+                "en": "ELA clean — no editing artifacts detected",
+                "hi": "ELA clean — कोई editing artifacts नहीं"
+            })
+        return signals
+    except Exception as e:
+        print(f"ELA ERROR: {e}")
+        return []
+
+
 # ─────────────────────────────────────────────
-# LAYER 1 — APP DETECTION via Vision AI
+# LAYER 0B — EXIF Metadata Analysis
+# Real phone screenshots have EXIF; fake generators don't
 # ─────────────────────────────────────────────
+
+
+def run_exif_analysis(image_bytes: bytes) -> list:
+    signals = []
+    try:
+        from PIL import Image
+        from PIL.ExifTags import TAGS
+        img = Image.open(io.BytesIO(image_bytes))
+        exif_raw = None
+        try:
+            exif_raw = img._getexif()
+        except Exception:
+            pass
+        img_format = img.format or "UNKNOWN"
+        if not exif_raw:
+            if img_format == "JPEG":
+                signals.append({
+                    "type": "warning", "weight": 18,
+                    "en": "JPEG with no EXIF metadata — real phone screenshots usually have it",
+                    "hi": "JPEG screenshot में EXIF metadata नहीं — real screenshots में होता है"
+                })
+            return signals
+        exif = {TAGS.get(k, k): v for k, v in exif_raw.items()}
+        software = str(exif.get("Software", "")).lower()
+        suspicious_sw = [
+            "canva", "photoshop", "gimp", "paint.net", "snapseed",
+            "picsart", "fake", "generator", "html2canvas", "puppeteer",
+            "wkhtmlto", "android fake", "screenshot_tool"
+        ]
+        for sw in suspicious_sw:
+            if sw in software:
+                signals.append({
+                    "type": "red_flag", "weight": 50,
+                    "en": f"EXIF reveals editing tool: '{exif.get('Software', software)}'",
+                    "hi": f"EXIF में editing software fingerprint मिला"
+                })
+                return signals
+        make = str(exif.get("Make", "")).strip()
+        model = str(exif.get("Model", "")).strip()
+        if make or model:
+            signals.append({
+                "type": "green_flag", "weight": -18,
+                "en": f"EXIF shows real device: {make} {model}".strip(),
+                "hi": f"EXIF में real device: {make} {model}".strip()
+            })
+        if exif.get("DateTime"):
+            signals.append({
+                "type": "green_flag", "weight": -8,
+                "en": "EXIF capture timestamp present",
+                "hi": "EXIF capture timestamp मौजूद है"
+            })
+        return signals
+    except Exception as e:
+        print(f"EXIF ERROR: {e}")
+        return []
+
+
+# ─────────────────────────────────────────────
+# LAYER 0C — IMAGE DIMENSION CHECK
+# Real phone screenshots have standard resolutions
+# ─────────────────────────────────────────────
+
+
+def run_dimension_check(image_bytes: bytes) -> list:
+    signals = []
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(image_bytes))
+        w, h = img.size
+        ratio = h / w if w > 0 else 0
+        if w > h:
+            signals.append({
+                "type": "red_flag", "weight": 25,
+                "en": "Landscape screenshot — UPI payment screens are always portrait",
+                "hi": "Landscape screenshot — UPI screens हमेशा portrait होते हैं"
+            })
+            return signals
+        REAL_RESOLUTIONS = {
+            (1080,2400),(1080,2340),(1080,2280),(1080,2160),
+            (1080,1920),(720,1600),(720,1280),(1440,3200),
+            (828,1792),(1170,2532),(1179,2556),(1080,2408),(1080,2376),
+            (1284,2778),(1125,2436),(750,1334),(640,1136),
+        }
+        if not (1.55 < ratio < 2.55):
+            signals.append({
+                "type": "warning", "weight": 15,
+                "en": f"Unusual aspect ratio {w}x{h} — not a typical phone resolution",
+                "hi": f"Unusual aspect ratio {w}x{h} — phone screenshot के लिए typical नहीं"
+            })
+        elif w < 350:
+            signals.append({
+                "type": "warning", "weight": 12,
+                "en": f"Very small image {w}x{h} — may be a cropped or resized fake",
+                "hi": f"बहुत छोटी image {w}x{h} — cropped/resized हो सकती है"
+            })
+        elif (w,h) in REAL_RESOLUTIONS or (h,w) in REAL_RESOLUTIONS:
+            signals.append({
+                "type": "green_flag", "weight": -10,
+                "en": f"Resolution {w}x{h} matches a known real phone screen",
+                "hi": f"Resolution {w}x{h} known phone screen से match करता है"
+            })
+        return signals
+    except Exception as e:
+        print(f"DIMENSION ERROR: {e}")
+        return []
+
+
+# ─────────────────────────────────────────────
+# LAYER 0D — NOISE ANALYSIS
+# Real phone screenshots have micro-noise; fake HTML generators don't
+# ─────────────────────────────────────────────
+
+
+def run_noise_analysis(image_bytes: bytes) -> list:
+    """
+    Real phone screenshots have micro-noise. Fake generators produce clean images.
+    Fixed: PNG has lower native noise; WhatsApp JPEG recompression destroys noise.
+    """
+    signals = []
+    try:
+        import numpy as np
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(image_bytes))
+        img_format = (img.format or "").upper()
+        arr = np.array(img.convert("L"), dtype=np.float32)
+        h, w = arr.shape
+
+        variances = []
+        step = max(1, min(h, w) // 20)
+        for y in range(0, h - 5, step):
+            for x in range(0, w - 5, step):
+                block = arr[y:y+5, x:x+5]
+                variances.append(float(block.var()))
+
+        if not variances:
+            return signals
+
+        avg_var = sum(variances) / len(variances)
+
+        # PNG is lossless — naturally lower noise than JPEG
+        # JPEG via WhatsApp recompressed to ~70% — legitimately reduces noise
+        if img_format == "PNG":
+            red_threshold  = 0.3
+            warn_threshold = 1.5
+        else:
+            red_threshold  = 0.5    # was 0.8 — too aggressive for WhatsApp screenshots
+            warn_threshold = 2.0
+
+        if avg_var < red_threshold:
+            signals.append({
+                "type": "red_flag", "weight": 22,
+                "en": f"Unnaturally clean image (noise={avg_var:.2f}) — may be generated by fake payment app",
+                "hi": f"Image unnaturally clean — fake payment app से generate हो सकता है"
+            })
+        elif avg_var < warn_threshold:
+            signals.append({
+                "type": "warning", "weight": 8,
+                "en": f"Low image noise ({avg_var:.2f}) — may be WhatsApp-compressed or generated",
+                "hi": f"Low noise — WhatsApp compressed या generated हो सकती है"
+            })
+        else:
+            signals.append({
+                "type": "green_flag", "weight": -10,
+                "en": "Natural image noise — consistent with a real phone screenshot",
+                "hi": "Natural noise — real phone screenshot जैसा"
+            })
+        return signals
+    except Exception as e:
+        print(f"NOISE ERROR: {e}")
+        return []
+
 def detect_app_from_image(image_bytes: bytes) -> dict:
     """
     Use GPT-4o-mini vision to detect which UPI app the screenshot is from.
@@ -267,6 +518,8 @@ Be strict — if you are not sure, say unknown with low confidence. Do not guess
 # LAYER 2 — OCR FIELD EXTRACTION via Vision AI
 # Much more reliable than Tesseract on styled UPI screens
 # ─────────────────────────────────────────────
+
+
 def extract_fields_from_image(image_bytes: bytes, app_key: str) -> dict:
     """
     Extract structured payment fields from the screenshot using Vision AI.
@@ -335,6 +588,8 @@ Be precise. If a field is partially visible or unclear, still include what you c
 # ─────────────────────────────────────────────
 # LAYER 2B — OCR FIELD VALIDATION (Regex checks)
 # ─────────────────────────────────────────────
+
+
 def validate_extracted_fields(fields: dict, app_key: str) -> list:
     """
     Validate each extracted field against expected patterns.
@@ -454,6 +709,8 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
 # ─────────────────────────────────────────────
 # LAYER 3 — RULE ENGINE (Weighted Signals)
 # ─────────────────────────────────────────────
+
+
 def run_rule_engine(fields: dict, app_key: str, app_confidence: int) -> list:
     """
     Apply all heuristic rules. Returns list of signal dicts with weights.
@@ -520,6 +777,8 @@ def run_rule_engine(fields: dict, app_key: str, app_confidence: int) -> list:
 # LAYER 4 — CONSISTENCY CROSS-CHECK
 # App vs UTR, UPI handle vs App, Amount vs Status
 # ─────────────────────────────────────────────
+
+
 def run_consistency_check(fields: dict, app_key: str) -> list:
     """
     Cross-check fields against each other and the detected app.
@@ -613,6 +872,8 @@ def run_consistency_check(fields: dict, app_key: str) -> list:
 # ─────────────────────────────────────────────
 # LAYER 5 — UPI ID DEEP CHECK
 # ─────────────────────────────────────────────
+
+
 def run_upi_id_check(upi_id: str) -> list:
     """
     Check UPI ID for scam patterns without calling external API.
@@ -635,14 +896,14 @@ def run_upi_id_check(upi_id: str) -> list:
             })
 
     # Check if username is suspiciously generic
-    # NOTE: q033328366@ybl is a valid phone-number based UPI ID — do NOT flag it
+    # NOTE: phone-number UPI IDs (9876543210@paytm, q033328366@ybl) are VALID — do not flag
     generic_patterns = [
-        r'^\d{10}$',                  # pure 10-digit number only (no letters at all)
         r'^test\d*$',               # test account
         r'^demo\d*$',               # demo account
         r'^fake\d*$',               # literally fake
-        r'^sample\d*$',
-        r'^dummy\d*$',
+        r'^sample\d*$',             # sample account
+        r'^dummy\d*$',              # dummy account
+        r'^null\d*$',               # null/placeholder
     ]
     for pat in generic_patterns:
         if re.match(pat, username):
@@ -784,6 +1045,8 @@ IMPORTANT REAL-WORLD NOTES:
 # LAYER 7 — FRAUD PATTERN MEMORY
 # Perceptual hash via MongoDB
 # ─────────────────────────────────────────────
+
+
 def _perceptual_hash(image_bytes: bytes) -> str:
     """
     Simple perceptual hash using resize + pixel average.
@@ -804,13 +1067,24 @@ def _perceptual_hash(image_bytes: bytes) -> str:
 
 
 def _hamming_distance(h1: str, h2: str) -> int:
-    """Hamming distance between two hex hashes."""
+    """Hamming distance between two hex hashes.
+    Fixed: auto-detect bit length so MD5 (128-bit) and pHash (256-bit) both work.
+    """
     try:
-        b1 = bin(int(h1, 16))[2:].zfill(256)
-        b2 = bin(int(h2, 16))[2:].zfill(256)
+        bit_len = max(len(h1), len(h2)) * 4  # hex chars * 4 bits each
+        b1 = bin(int(h1, 16))[2:].zfill(bit_len)
+        b2 = bin(int(h2, 16))[2:].zfill(bit_len)
         return sum(c1 != c2 for c1, c2 in zip(b1, b2))
     except Exception:
         return 256
+
+
+
+# ─────────────────────────────────────────────
+# LAYER 0 — ELA (Error Level Analysis)
+# Fixed: PNG lossless→JPEG always fires — skip ELA for PNG
+# For JPEG: double-pass recompression to amplify real edits
+# ─────────────────────────────────────────────
 
 
 async def check_fraud_pattern_memory(image_bytes: bytes) -> dict:
@@ -821,7 +1095,9 @@ async def check_fraud_pattern_memory(image_bytes: bytes) -> dict:
     result = {"found": False, "match_count": 0, "signal": None}
     try:
         from app.core.database import db
-        phash = _perceptual_hash(image_bytes)
+        import asyncio as _asyncio2
+        _loop2 = _asyncio2.get_event_loop()
+        phash = await _loop2.run_in_executor(None, _perceptual_hash, image_bytes)
         # Fetch recent fake screenshot hashes
         cursor = db.fake_screenshot_hashes.find(
             {"verdict": "SCAM"},
@@ -892,6 +1168,28 @@ LAYER_WEIGHTS = {
 }
 
 
+def signals_to_bayesian_score(signals: list) -> float:
+    """
+    Bayesian scoring: start at 40% prior (benefit of doubt),
+    update multiplicatively with each signal.
+    Much more accurate than additive scoring.
+    """
+    p_fake = 0.40  # Prior: benefit of doubt
+    for s in signals:
+        w = s.get("weight", 0)
+        stype = s.get("type", "")
+        if stype == "red_flag":
+            lr = 1 + (w / 100) * 3.5
+            p_fake = (p_fake * lr) / (p_fake * lr + (1 - p_fake))
+        elif stype == "warning":
+            lr = 1 + (w / 100) * 1.8
+            p_fake = (p_fake * lr) / (p_fake * lr + (1 - p_fake))
+        elif stype == "green_flag":
+            lr = max(0.05, 1 - (abs(w) / 100) * 2.5)
+            p_fake = (p_fake * lr) / (p_fake * lr + (1 - p_fake))
+    return max(0.0, min(1.0, p_fake)) * 100
+
+
 def aggregate_score(
     validation_signals: list,
     rule_signals: list,
@@ -901,56 +1199,72 @@ def aggregate_score(
     pattern_result: dict,
     app_confidence: int,
     app_key: str,
+    ela_signals: list = None,
+    exif_signals: list = None,
+    dimension_signals: list = None,
+    noise_signals: list = None,
 ) -> dict:
     """
-    Combine all signal lists into a final risk score (0–100).
-    Higher = more likely fake/scam.
+    Bayesian score aggregation across all layers.
+    Higher score = more likely fake.
     """
+    ela_signals = ela_signals or []
+    exif_signals = exif_signals or []
+    dimension_signals = dimension_signals or []
+    noise_signals = noise_signals or []
 
-    def signals_to_score(signals: list) -> float:
-        """Convert weighted signals to a 0-100 risk score."""
-        base = 40  # neutral start (benefit of doubt)
-        total = base
-        for s in signals:
-            if s["type"] in ("red_flag", "warning"):
-                total += s["weight"]
-            elif s["type"] == "green_flag":
-                total += s["weight"]  # weight is negative for green flags
-        return max(0, min(100, total))
-
-    # Per-layer scores
-    rule_score = signals_to_score(validation_signals + rule_signals)
-    consistency_score = signals_to_score(consistency_signals)
-    upi_score = signals_to_score(upi_signals)
-    vision_score = vision_result.get("visual_risk_score", 50)
-    memory_score = 80 if pattern_result.get("found") else 40
-    conf_score = max(0, (100 - app_confidence))  # lower confidence = higher risk
-
-    # Weighted average
-    final_risk = (
-        rule_score * LAYER_WEIGHTS["rule_engine"] +
-        consistency_score * LAYER_WEIGHTS["consistency"] +
-        vision_score * LAYER_WEIGHTS["vision_ai"] +
-        upi_score * LAYER_WEIGHTS["upi_id"] +
-        memory_score * LAYER_WEIGHTS["pattern_memory"] +
-        conf_score * LAYER_WEIGHTS["app_confidence"]
+    all_rule = (
+        ela_signals + exif_signals + dimension_signals + noise_signals +
+        validation_signals + rule_signals + consistency_signals + upi_signals
     )
-    final_risk = max(0, min(100, final_risk))
 
-    # Auto-floor: if very few fields extracted → minimum SUSPICIOUS (40)
-    # Already handled in rule engine R2 signal
+    # Per-layer Bayesian scores
+    forensic_score = signals_to_bayesian_score(ela_signals + exif_signals + dimension_signals + noise_signals)
+    rule_score     = signals_to_bayesian_score(validation_signals + rule_signals)
+    consist_score  = signals_to_bayesian_score(consistency_signals)
+    upi_score      = signals_to_bayesian_score(upi_signals)
+    vision_score   = vision_result.get("visual_risk_score", 50)
+    memory_score   = 80 if pattern_result.get("found") else 35
+    conf_risk      = max(0, 100 - app_confidence)
+
+    # Weighted combination (forensics now 15%, vision still highest)
+    final_risk = (
+        forensic_score * 0.15 +
+        rule_score     * 0.18 +
+        consist_score  * 0.12 +
+        vision_score   * 0.30 +
+        upi_score      * 0.12 +
+        memory_score   * 0.05 +
+        conf_risk      * 0.08
+    )
+    final_risk = max(0.0, min(100.0, final_risk))
 
     # Hard overrides
-    all_signals = validation_signals + rule_signals + consistency_signals + upi_signals
+    all_signals = all_rule
     critical_flags = [s for s in all_signals if s.get("type") == "red_flag" and s.get("weight", 0) >= 35]
+
+    # ELA + EXIF both red = definite tampering
+    ela_red = any(s.get("type") == "red_flag" for s in ela_signals)
+    exif_red = any(s.get("type") == "red_flag" for s in exif_signals)
+    if ela_red and exif_red:
+        final_risk = max(final_risk, 75)
+
     if len(critical_flags) >= 2:
-        # Multiple critical violations → cannot be SAFE
         final_risk = max(final_risk, 66)
 
     if pattern_result.get("found"):
-        final_risk = max(final_risk, 60)
+        final_risk = max(final_risk, 62)
 
-    # Verdict
+    # Strong forensic green signals prevent false SCAM
+    ela_green = any(s.get("type") == "green_flag" for s in ela_signals)
+    exif_green = any(s.get("type") == "green_flag" for s in exif_signals)
+    noise_green = any(s.get("type") == "green_flag" for s in noise_signals)
+    green_count = sum([ela_green, exif_green, noise_green])
+    if green_count >= 2 and final_risk > 65:
+        # Multiple forensic greens → cap at SUSPICIOUS unless other strong reds
+        if len(critical_flags) < 2:
+            final_risk = min(final_risk, 64)
+
     risk_int = round(final_risk)
     if risk_int <= 35:
         verdict = "SAFE"
@@ -962,24 +1276,23 @@ def aggregate_score(
         verdict = "SCAM"
         verdict_hi = "धोखाधड़ी"
 
-    # Confidence in our own verdict
     all_count = len(all_signals)
     critical_count = len(critical_flags)
-    if all_count >= 8 or critical_count >= 2:
+    if all_count >= 10 or critical_count >= 2:
         confidence_level = "high"
-    elif all_count >= 4:
+    elif all_count >= 5:
         confidence_level = "medium"
     else:
         confidence_level = "low"
 
-    # Layer scores for debugging / transparency
     layer_scores = {
+        "forensics_ela_exif": round(forensic_score),
         "rule_engine": round(rule_score),
-        "consistency": round(consistency_score),
+        "consistency": round(consist_score),
         "vision_ai": round(vision_score),
         "upi_id_check": round(upi_score),
         "pattern_memory": round(memory_score),
-        "app_confidence_risk": round(conf_score),
+        "app_confidence_risk": round(conf_risk),
     }
 
     return {
@@ -995,6 +1308,8 @@ def aggregate_score(
 # ─────────────────────────────────────────────
 # WHAT TO DO + HOW TO AVOID — per verdict
 # ─────────────────────────────────────────────
+
+
 def get_advice(verdict: str, app_display: str) -> dict:
     if verdict == "SAFE":
         return {
@@ -1044,6 +1359,7 @@ def get_advice(verdict: str, app_display: str) -> dict:
 # ─────────────────────────────────────────────
 # MASTER FUNCTION — Full Pipeline
 # ─────────────────────────────────────────────
+
 async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     """
     Full 8-layer analysis pipeline for fake UPI payment screenshot detection.
@@ -1051,14 +1367,23 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     Output: structured verdict with risk%, signals, advice in EN+HI
     """
 
-    # ── Layer 1: App Detection ──
-    app_result = detect_app_from_image(image_bytes)
-    app_key = app_result["app_key"]
-    app_display = app_result["display_name"]
+    import asyncio as _asyncio
+    _loop = _asyncio.get_event_loop()
+
+    # ── Layer 0: Forensic Image Analysis (sync, CPU-bound → executor) ──
+    ela_signals       = await _loop.run_in_executor(None, run_ela_analysis, image_bytes)
+    exif_signals      = await _loop.run_in_executor(None, run_exif_analysis, image_bytes)
+    dimension_signals = await _loop.run_in_executor(None, run_dimension_check, image_bytes)
+    noise_signals     = await _loop.run_in_executor(None, run_noise_analysis, image_bytes)
+
+    # ── Layer 1: App Detection (Vision AI — sync SDK call → executor) ──
+    app_result     = await _loop.run_in_executor(None, detect_app_from_image, image_bytes)
+    app_key        = app_result["app_key"]
+    app_display    = app_result["display_name"]
     app_confidence = app_result["confidence"]
 
-    # ── Layer 2: Field Extraction ──
-    fields = extract_fields_from_image(image_bytes, app_key)
+    # ── Layer 2: Field Extraction (Vision AI → executor) ──
+    fields = await _loop.run_in_executor(None, extract_fields_from_image, image_bytes, app_key)
 
     # ── Layer 2B: OCR Validation ──
     validation_signals = validate_extracted_fields(fields, app_key)
@@ -1074,17 +1399,17 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     upi_signals = run_upi_id_check(upi_id)
 
     # ── Layer 6: Vision Forensics ──
-    # Build rule context summary for AI prompt
     all_rule_signals = validation_signals + rule_signals + consistency_signals + upi_signals
-    red_flags_for_ai = [s["en"] for s in all_rule_signals if s.get("type") == "red_flag"]
-    rule_context = "\n".join(f"- {r}" for r in red_flags_for_ai) if red_flags_for_ai else "No critical rule violations detected yet"
+    forensic_reds = [s["en"] for s in (ela_signals+exif_signals+dimension_signals+noise_signals) if s.get("type")=="red_flag"]
+    rule_reds     = [s["en"] for s in all_rule_signals if s.get("type") == "red_flag"]
+    rule_context  = "\n".join(f"- {r}" for r in (forensic_reds + rule_reds)) or "No critical rule violations detected yet"
 
-    vision_result = run_vision_forensics(image_bytes, app_key, app_display, rule_context)
+    vision_result = await _loop.run_in_executor(None, run_vision_forensics, image_bytes, app_key, app_display, rule_context)
 
     # ── Layer 7: Pattern Memory ──
     pattern_result = await check_fraud_pattern_memory(image_bytes)
 
-    # ── Layer 8: Score Aggregation ──
+    # ── Layer 8: Bayesian Score Aggregation ──
     score_result = aggregate_score(
         validation_signals=validation_signals,
         rule_signals=rule_signals,
@@ -1094,6 +1419,10 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         pattern_result=pattern_result,
         app_confidence=app_confidence,
         app_key=app_key,
+        ela_signals=ela_signals,
+        exif_signals=exif_signals,
+        dimension_signals=dimension_signals,
+        noise_signals=noise_signals,
     )
 
     verdict = score_result["verdict"]
@@ -1105,16 +1434,18 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         await save_to_pattern_memory(phash, verdict, app_key)
 
     # ── Build why signals (for frontend) ──
-    # Show red flags if SCAM/SUSPICIOUS, green flags if SAFE
+    # Include ALL layers: forensics + rules + vision + pattern
     why_signals = []
     seen_en = set()
+    forensic_signals = ela_signals + exif_signals + dimension_signals + noise_signals
     all_signals_combined = (
-        all_rule_signals
-        + vision_result.get("visual_flags", [])
+        forensic_signals                                                          # Layer 0 forensics
+        + all_rule_signals                                                        # Layers 2-5 rules
+        + vision_result.get("visual_flags", [])                                  # Layer 6 vision
         + (vision_result.get("visual_safe_signals", []) if verdict == "SAFE" else [])
     )
     if pattern_result.get("signal"):
-        all_signals_combined.append(pattern_result["signal"])
+        all_signals_combined.append(pattern_result["signal"])                    # Layer 7 memory
 
     for sig in all_signals_combined:
         en_text = sig.get("en", "")
@@ -1182,5 +1513,5 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             "match_count": pattern_result.get("match_count", 0),
         },
         "layer_scores": score_result["layer_scores"],
-        "engine": "PAYMENT SCREENSHOT v1.0 — 8-LAYER",
+        "engine": "PAYMENT SCREENSHOT v2.1 — FULL FORENSICS + BAYESIAN",
     }
