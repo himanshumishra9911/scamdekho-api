@@ -16,6 +16,8 @@ pypdf
 python-docx
 PyMuPDF
 slowapi==0.1.9
+pyzbar
+apscheduler==3.10.4
 
 
 
