@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,15 +7,21 @@ from app.api.analytics import router as analytics_router
 from app.api.feedback import router as feedback_router
 from app.services.cache_service import setup_cache_ttl_index
 from app.services.website_screenshot import setup_screenshot_cache_index
+from app.services.scam_db_service import run_all_syncs
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="ScamDekho API")
 app.state.limiter = Limiter(key_func=get_remote_address)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+
+scheduler = AsyncIOScheduler()
 
 # ================= CORS CONFIG =================
 origins = [
@@ -38,8 +45,31 @@ app.add_middleware(
 # ================= STARTUP =================
 @app.on_event("startup")
 async def startup():
-    await setup_cache_ttl_index()          # URL result cache TTL index
-    await setup_screenshot_cache_index()   # Screenshot cache TTL index
+    await setup_cache_ttl_index()
+    await setup_screenshot_cache_index()
+
+    # Scam DB initial sync
+    try:
+        await run_all_syncs()
+        logger.info("Initial scam DB sync complete")
+    except Exception as e:
+        logger.error(f"Initial sync failed (non-fatal): {e}")
+
+    # Daily sync — raat 2 baje
+    scheduler.add_job(
+        run_all_syncs,
+        trigger="cron",
+        hour=2,
+        minute=0,
+        id="daily_scam_db_sync",
+        replace_existing=True,
+    )
+    scheduler.start()
+
+# ================= SHUTDOWN =================
+@app.on_event("shutdown")
+async def shutdown():
+    scheduler.shutdown()
 
 # ================= ROUTES =================
 app.include_router(v1_router, prefix="/api/v1")
