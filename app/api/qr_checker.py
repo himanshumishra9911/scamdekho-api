@@ -4,8 +4,6 @@ import cv2
 import numpy as np
 from PIL import Image
 from urllib.parse import unquote, parse_qs, urlparse
-
-# Known bank handles — UPI routing ke liye
 from app.api.upi_checker import VALID_BANK_HANDLES
 
 SUSPICIOUS_SHORTENERS = {
@@ -21,7 +19,7 @@ def decode_qr_image(image_bytes: bytes) -> dict:
         img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
         if img is None:
-            # PIL se try karo agar OpenCV read nahi kar paya
+            # PIL se try karo
             try:
                 pil_img = Image.open(io.BytesIO(image_bytes))
                 img_array2 = np.array(pil_img.convert("RGB"))
@@ -30,52 +28,38 @@ def decode_qr_image(image_bytes: bytes) -> dict:
                 return {"success": False, "error": "Could not read image file"}
 
         content = None
-
-        # Method 1: OpenCV — color
         qr_detector = cv2.QRCodeDetector()
+
+        # Method 1: color
         content, _, _ = qr_detector.detectAndDecode(img)
 
-        # Method 2: OpenCV — grayscale
+        # Method 2: grayscale
         if not content:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             content, _, _ = qr_detector.detectAndDecode(gray)
 
-        # Method 3: OpenCV — contrast enhanced
+        # Method 3: CLAHE contrast enhance
         if not content:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             enhanced = clahe.apply(gray)
             content, _, _ = qr_detector.detectAndDecode(enhanced)
 
-        # Method 4: pyzbar fallback — sabse accurate
+        # Method 4: 2x upscale
         if not content:
-            try:
-                from pyzbar.pyzbar import decode as pyzbar_decode
-                pil_img = Image.open(io.BytesIO(image_bytes))
-                decoded_list = pyzbar_decode(pil_img)
-                if decoded_list:
-                    content = decoded_list[0].data.decode("utf-8", errors="replace")
-            except ImportError:
-                pass  # pyzbar install nahi — OpenCV pe hi depend karo
-            except Exception:
-                pass
+            h, w = img.shape[:2]
+            big = cv2.resize(img, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+            content, _, _ = qr_detector.detectAndDecode(big)
 
-        # Method 5: pyzbar — upscaled image (blurry/small QR ke liye)
+        # Method 5: sharpen
         if not content:
-            try:
-                from pyzbar.pyzbar import decode as pyzbar_decode
-                pil_img = Image.open(io.BytesIO(image_bytes))
-                # 2x upscale karo — door se li gayi photos ke liye
-                w, h = pil_img.size
-                pil_big = pil_img.resize((w * 2, h * 2), Image.LANCZOS)
-                decoded_list = pyzbar_decode(pil_big)
-                if decoded_list:
-                    content = decoded_list[0].data.decode("utf-8", errors="replace")
-            except Exception:
-                pass
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+            sharpened = cv2.filter2D(gray, -1, kernel)
+            content, _, _ = qr_detector.detectAndDecode(sharpened)
 
         if not content:
-            return {"success": False, "error": "No QR code found in image. Try a clearer photo."}
+            return {"success": False, "error": "No QR code found. Try a clearer photo."}
 
         content = content.strip()
         return _parse_qr_content(content)
@@ -85,14 +69,9 @@ def decode_qr_image(image_bytes: bytes) -> dict:
 
 
 def _parse_qr_content(content: str) -> dict:
-    """
-    QR content parse karo aur sab fields extract karo.
-    FIX: Email routing bug solve kiya — sirf valid UPI handles route karo.
-    FIX: UPI deep link se pn/am/tn/mc bhi extract karo.
-    """
     content_lower = content.lower().strip()
 
-    # ── UPI deep link: upi://pay?pa=...&pn=...&am=... ──
+    # UPI deep link
     if content_lower.startswith("upi://"):
         try:
             parsed = urlparse(content)
@@ -103,7 +82,6 @@ def _parse_qr_content(content: str) -> dict:
             amount_raw = params.get("am", [None])[0]
             note = unquote(params.get("tn", [""])[0]).strip()
             merchant_code = params.get("mc", [None])[0]
-            currency = params.get("cu", ["INR"])[0]
 
             amount = None
             if amount_raw:
@@ -121,14 +99,12 @@ def _parse_qr_content(content: str) -> dict:
                 "amount": amount,
                 "note": note or None,
                 "is_merchant": merchant_code is not None,
-                "merchant_code": merchant_code,
-                "currency": currency,
                 "qr_type": "QRCODE"
             }
         except Exception:
             pass
 
-    # ── URL ──
+    # URL
     if content_lower.startswith("http://") or content_lower.startswith("https://"):
         try:
             parsed = urlparse(content)
@@ -145,7 +121,7 @@ def _parse_qr_content(content: str) -> dict:
         except Exception:
             pass
 
-    # ── Phone ──
+    # Phone
     if content_lower.startswith("tel:"):
         return {
             "success": True,
@@ -154,12 +130,10 @@ def _parse_qr_content(content: str) -> dict:
             "qr_type": "QRCODE"
         }
 
-    # ── Plain UPI ID — FIX: handle validate karo pehle ──
-    # Email aur UPI dono mein "@" hota hai — is bug ko fix kiya
+    # FIX: Plain UPI ID — handle validate karo pehle (email routing bug fix)
     if "@" in content and len(content.split("@")) == 2:
         handle = content.split("@")[1].lower().strip()
         if handle in VALID_BANK_HANDLES:
-            # Valid bank handle confirm hua — ye UPI ID hai
             return {
                 "success": True,
                 "content": content,
@@ -167,12 +141,11 @@ def _parse_qr_content(content: str) -> dict:
                 "upi_id": content.lower(),
                 "payee_name": None,
                 "amount": None,
-                "note": None,
                 "is_merchant": False,
                 "qr_type": "QRCODE"
             }
         else:
-            # Unknown handle ya email — text ke roop mein treat karo
+            # Email ya unknown handle — text treat karo
             return {
                 "success": True,
                 "content": content,
@@ -180,7 +153,7 @@ def _parse_qr_content(content: str) -> dict:
                 "qr_type": "QRCODE"
             }
 
-    # ── Generic text ──
+    # Generic text
     return {
         "success": True,
         "content": content,
