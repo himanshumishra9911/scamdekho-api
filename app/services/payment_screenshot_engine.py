@@ -697,16 +697,23 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
             })
 
     # --- UPI ID basic validation ---
-    # Allow masked UPI IDs like navi.******2623@naviaxis (real app receipt format)
+    # CRED shows masked bank account like XXXXXX2729 — NOT a UPI ID, completely normal
+    # Navi shows masked UPI like navi.******2623@naviaxis — has @ so regex handles it via * replace
+    APPS_WITHOUT_UPI = {"cred", "slice", "yono_sbi", "imobile", "hdfc_payzapp"}
     upi_id = (fields.get("upi_id") or "").strip().lower()
     if upi_id:
-        upi_for_check = upi_id.replace("*", "a")  # replace asterisks before regex
-        if not re.match(r'^[\w.\-]+@[\w.\-]+$', upi_for_check):
-            signals.append({
-                "type": "red_flag", "weight": 20,
-                "en": f"UPI ID format invalid: {upi_id}",
-                "hi": f"UPI ID format गलत है: {upi_id}"
-            })
+        if "@" not in upi_id:
+            # No @ → not a UPI ID (e.g. CRED shows masked bank account XXXXXX2729)
+            # Silently ignore — do NOT flag as invalid UPI format
+            pass
+        else:
+            upi_for_check = upi_id.replace("*", "a").replace("x", "a")  # handle masked chars
+            if not re.match(r'^[\w.\-]+@[\w.\-]+$', upi_for_check):
+                signals.append({
+                    "type": "red_flag", "weight": 20,
+                    "en": f"UPI ID format invalid: {upi_id}",
+                    "hi": f"UPI ID format गलत है: {upi_id}"
+                })
     else:
         if is_bill_payment:
             signals.append({
@@ -714,6 +721,8 @@ def validate_extracted_fields(fields: dict, app_key: str) -> list:
                 "en": "Utility/bill payment — merchant UPI ID not shown is normal",
                 "hi": "Bill payment में UPI ID न दिखना सामान्य है"
             })
+        elif app_key in APPS_WITHOUT_UPI:
+            pass  # CRED/SBI YONO show bank account instead of UPI ID — normal, don't flag
         else:
             signals.append({
                 "type": "warning", "weight": 10,
@@ -998,6 +1007,11 @@ IMPORTANT REAL-WORLD NOTES:
 - PhonePe green header "Transaction Successful" + "Contact PhonePe Support" = real PhonePe app.
 - Do NOT flag screenshots just because the UI color looks slightly different from the detected app.
 - CRITICAL: If the image is small (<400px wide) or heavily JPEG-compressed, pixelation/blur/font softness are from COMPRESSION, NOT editing. Only flag font inconsistency if you see it in ONE localized area (e.g. amount text looks pasted on different background). Uniform compression artifacts across the whole image = genuine screenshot, NOT fake.
+- CRED app shows masked bank account numbers like "XXXXXX2729" instead of UPI IDs — completely normal CRED behavior, NOT fake.
+- CRED receipts show a payment "flow" (steps: amount debited → authenticated → credited) instead of a simple UTR field — this is CRED's actual design.
+- CRED fonts appear condensed and premium by design — font appearance alone is NOT tampering evidence in CRED screenshots.
+- Google Pay (GPay) has pure black background with "Pay again" blue/periwinkle button and "Google Pay" logo at bottom — this is genuine GPay dark theme, NOT edited.
+- GPay shows TWO transaction IDs: a 12-digit UPI txn ID AND a short alphanumeric Google txn ID (e.g. CICAGNiEu6nxcw) — both are real, not suspicious.
 - If unsure → mark suspicious, not genuine."""
 
         response = get_client().chat.completions.create(
@@ -1089,9 +1103,9 @@ async def check_fraud_pattern_memory(image_bytes: bytes) -> dict:
                 result["match_count"] = doc.get("count", 1)
                 result["matched_app"] = doc.get("app", "unknown")
                 result["signal"] = {
-                    "type": "red_flag", "weight": 25,
-                    "en": f"Matches known fake template seen {result['match_count']} times",
-                    "hi": f"Known fake template से match — {result['match_count']} बार पहले देखा"
+                    "type": "red_flag", "weight": 15,   # was 25 — DB may have false entries from buggy period
+                    "en": f"Matches known template seen {result['match_count']} times — verify manually",
+                    "hi": f"Known template से match — {result['match_count']} बार पहले देखा — manually verify करें"
                 }
                 break
 
@@ -1196,8 +1210,10 @@ def aggregate_score(
     if len(critical_flags) >= 2:
         final_risk = max(final_risk, 66)
 
-    if pattern_result.get("found"):
-        final_risk = max(final_risk, 62)
+    # Pattern match weight (15 pts red_flag) flows through Bayesian scoring
+    # No separate floor — avoids false positives from poisoned DB entries
+    # if pattern_result.get("found"):
+    #     final_risk = max(final_risk, 62)
 
     ela_green   = any(s.get("type") == "green_flag" for s in ela_signals)
     exif_green  = any(s.get("type") == "green_flag" for s in exif_signals)
@@ -1364,9 +1380,12 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     verdict = score_result["verdict"]
     risk_score = score_result["risk_score"]
 
-    # ── Save to pattern memory — fire and forget, don't block response ──
+    # ── Save to pattern memory — only HIGH-CONFIDENCE SCAM with Vision AI confirmation ──
     phash = pattern_result.get("current_phash")
-    if phash:
+    if (phash
+        and verdict == "SCAM"
+        and app_confidence >= 75
+        and vision_result.get("overall_visual_verdict") == "fake"):
         asyncio.create_task(save_to_pattern_memory(phash, verdict, app_key))
 
     # ── Build why signals (for frontend) ──
