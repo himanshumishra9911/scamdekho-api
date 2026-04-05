@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Depends, Request
 from pydantic import BaseModel
+import asyncio
 
 # Services
 from app.services.ai_engine import (
@@ -202,13 +203,33 @@ async def check_url(
 
 
 # ======================================================
-# UPI CHECK (unchanged)
+# UPI CHECK — UPDATED
 # ======================================================
 @router.post("/check/upi")
 async def check_upi(data: UpiCheckRequest):
     upi_id = data.upi_id.strip()
     intel = await analyze_upi_full(upi_id)
 
+    # Agar govt DB mein confirmed scam hai — AI call waste mat karo
+    if intel.get("govt_confirmed"):
+        verdict = "SCAM"
+        await save_scan("upi", upi_id, verdict, 100)
+        return {
+            "verdict": verdict,
+            "verdict_state": "SCAM",
+            "confidence": {
+                "en": f"This UPI ID is confirmed in {intel['govt_source']} as a scam.",
+                "hi": f"यह UPI ID {intel['govt_source']} में confirmed scam है।"
+            },
+            "why": [{"en": f"Found in government scam database: {intel['govt_source']}", "hi": "सरकारी scam database में मिला"}],
+            "what_to_do": [{"en": "Do not make any payment to this UPI ID", "hi": "इस UPI ID पर कोई payment न करें"}],
+            "how_to_avoid": [{"en": "Always verify UPI IDs before payment", "hi": "Payment से पहले UPI ID verify करें"}],
+            "engine": "GOVT SCAM DB — CONFIRMED",
+            "bank_name": intel["bank_name"],
+            "community_reports": intel["community_reports"]
+        }
+
+    # AI call — executor mein chalao (blocking call hai)
     prompt = f"""You are analyzing a UPI ID for scam risk in India.
 
 TECHNICAL ANALYSIS REPORT:
@@ -217,23 +238,42 @@ TECHNICAL ANALYSIS REPORT:
 Analyze this UPI ID carefully. Consider:
 1. Scam patterns in the username
 2. Bank handle validity
-3. Community reports
+3. Community and government database reports
 4. Indian UPI fraud patterns (KYC fraud, fake support, lottery, refund fraud)
 
-Be decisive — if scam patterns exist, mark as SCAM."""
+IMPORTANT:
+- Phone-number usernames (10 digits) are NORMAL — do not flag them
+- Generic words like 'bank' or 'care' alone are NOT scam proof
+- Only mark SCAM if you see CLEAR, SPECIFIC fraud evidence"""
 
-    ai = call_ai_analysis(prompt)
-    verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
+    loop = asyncio.get_running_loop()
+    ai = await loop.run_in_executor(None, call_ai_analysis, prompt)
+
+    # 3-state verdict
+    risk = ai["risk_score"]
+    if risk >= 70:
+        verdict = "SCAM"
+        verdict_state = "SCAM"
+    elif risk >= 45:
+        verdict = "SUSPICIOUS"
+        verdict_state = "SUSPICIOUS"
+    else:
+        verdict = "SAFE"
+        verdict_state = "SAFE"
+
     await save_scan("upi", upi_id, verdict, ai["risk_score"])
+
     return {
         "verdict": verdict,
+        "verdict_state": verdict_state,
         "confidence": ai["confidence"],
         "why": ai["why"],
         "what_to_do": ai["what_to_do"],
         "how_to_avoid": ai["how_to_avoid"],
-        "engine": "UPI TECHNICAL + AI",
+        "engine": "UPI TECHNICAL + GOVT DB + AI",
         "bank_name": intel["bank_name"],
-        "community_reports": intel["community_reports"]
+        "community_reports": intel["community_reports"],
+        "govt_confirmed": intel["govt_confirmed"],
     }
 
 
