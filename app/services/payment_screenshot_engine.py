@@ -27,41 +27,86 @@ def _detect_media_type(image_bytes: bytes) -> str:
     return "image/jpeg"
 
 
-PROMPT = """You are an expert in detecting fake UPI payment screenshots in India.
+PROMPT = """You are an expert in detecting fake UPI payment screenshots in India. You have seen thousands of real and fake screenshots.
 
-Look at this screenshot carefully and tell me:
-1. Is this payment screenshot GENUINE, SUSPICIOUS, or FAKE?
-2. Which UPI app is this? (Paytm, PhonePe, GPay, BHIM, CRED, Navi, WhatsApp Pay, etc.)
-3. What are the payment details you can see? (amount, UTR/transaction ID, UPI ID, name, bank, time)
-4. Why did you give this verdict? Explain clearly.
-5. Give a risk score from 0 to 100 (0 = definitely genuine, 100 = definitely fake)
+Look at this screenshot carefully and determine: is it GENUINE, SUSPICIOUS, or FAKE?
 
-Return your answer as JSON only:
+STEP 1 - IDENTIFY THE APP:
+Which UPI app is this? (Paytm, PhonePe, GPay, BHIM, CRED, Navi, WhatsApp Pay, etc.)
+
+STEP 2 - EXTRACT ALL VISIBLE FIELDS:
+Read every detail shown in the screenshot.
+- amount
+- transaction_id (UTR/Ref No - any label)
+- upi_id
+- recipient_name
+- bank_name
+- timestamp (exact date and time shown)
+- status_text
+
+STEP 3 - VISUAL ANALYSIS:
+Look for signs of tampering:
+- Font inconsistency in the amount area
+- Blurry or hard edges around key fields (copy-paste artifacts)
+- Logo distortion or wrong colors
+- Status bar looks fake or inconsistent
+- UI does not match genuine app design
+
+STEP 4 - DATA ANALYSIS:
+Check the transaction data:
+- Is the UPI ID format valid? Note: @ptys and @ptm are GENUINE Paytm merchant handles - do NOT flag these as suspicious
+- Does the UTR look like a real transaction ID?
+- Is the timestamp realistic? Note: today is April 2026, so April 2026 timestamps are CURRENT not future
+
+STEP 5 - VERDICT:
+Based on visual + data evidence give your verdict.
+- GENUINE = everything looks correct, UI matches real app, no tampering
+- SUSPICIOUS = one or two issues, unclear, or something mildly off
+- FAKE = clear visual tampering OR impossible data OR scam UPI ID keywords
+
+Give risk_percentage:
+- GENUINE = 5 to 30
+- SUSPICIOUS = 31 to 65  
+- FAKE = 66 to 100
+
+IMPORTANT RULES:
+- @ptys, @ptm, @paytm = valid Paytm handles, NOT suspicious
+- April/May 2026 dates = current dates, NOT future
+- WhatsApp forwarded screenshots may have compression - NOT fake
+- Any app can pay to any UPI handle (cross-app is normal in India)
+- If you clearly see a real app UI with all correct details = GENUINE
+
+RETURN ONLY VALID JSON:
 {
-  "app_name": "name of UPI app",
-  "app_key": "paytm or gpay or phonepe or bhim or cred or navi or whatsapp_pay or unknown",
-  "app_confidence": 90,
+  "app_name": "Paytm",
+  "app_key": "paytm",
+  "app_confidence": 95,
   "fields": {
-    "amount": "amount shown",
-    "transaction_id": "UTR or transaction ID shown",
-    "upi_id": "UPI ID shown",
-    "recipient_name": "name of recipient",
-    "bank_name": "bank name",
-    "timestamp": "date and time",
-    "status_text": "success/paid text shown"
+    "amount": "500",
+    "transaction_id": "609532000947",
+    "upi_id": "merchant@ptys",
+    "recipient_name": "Shop Name",
+    "bank_name": "State Bank of India",
+    "timestamp": "05:49 PM, 05 Apr 2026",
+    "status_text": "Paid Successfully"
   },
-  "visual_verdict": "genuine or fake or suspicious",
-  "visual_signals": ["observation 1", "observation 2"],
-  "verdict": "GENUINE or SUSPICIOUS or FAKE",
+  "visual_verdict": "genuine",
+  "visual_signals": [
+    "Font consistent throughout - no tampering detected",
+    "Paytm blue header matches genuine design",
+    "Status bar visible and real"
+  ],
+  "verdict": "GENUINE",
   "risk_percentage": 10,
-  "confidence": "high or medium or low",
+  "confidence": "high",
   "reasons": [
-    {"en": "reason in english", "hi": "reason in hindi"},
-    {"en": "reason 2", "hi": "reason 2 hindi"}
+    {"en": "All visual elements match genuine Paytm design", "hi": "सभी visual elements असली Paytm design से match करते हैं"},
+    {"en": "UTR number present and valid", "hi": "UTR number present है और valid है"},
+    {"en": "No tampering evidence found", "hi": "Tampering का कोई evidence नहीं मिला"}
   ]
 }
 
-Return ONLY JSON. Nothing else."""
+Return ONLY the JSON. No markdown. No text outside JSON."""
 
 
 def _run_ai_analysis(image_bytes: bytes) -> dict:
