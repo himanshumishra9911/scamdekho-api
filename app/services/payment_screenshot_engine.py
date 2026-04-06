@@ -134,9 +134,13 @@ def _run_ai_analysis(image_bytes: bytes) -> dict:
     media_type = _detect_media_type(image_bytes)
 
     response = get_client().chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4.1-mini",
         max_tokens=1500,
         messages=[
+            {
+                "role": "system",
+                "content": "You are a strict UPI payment fraud detection expert. Your job is to catch fake screenshots. When in doubt, mark SUSPICIOUS. Never be lenient with fakes."
+            },
             {
                 "role": "user",
                 "content": [
@@ -153,7 +157,8 @@ def _run_ai_analysis(image_bytes: bytes) -> dict:
                     }
                 ]
             }
-        ]
+        ],
+        temperature=0.1
     )
 
     raw = response.choices[0].message.content.strip()
