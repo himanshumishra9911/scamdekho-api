@@ -90,60 +90,68 @@ def _run_ai_analysis(image_bytes: bytes) -> dict:
     b64 = _image_to_base64(image_bytes)
     media_type = _detect_media_type(image_bytes)
 
-    prompt = """You are an expert UPI payment fraud analyst. Analyze this screenshot carefully.
+    prompt = """You are a forensic expert specializing in UPI payment screenshot fraud detection in India. You have seen thousands of both real and fake screenshots.
 
-TASK: Determine if this UPI payment screenshot is GENUINE or FAKE/TAMPERED.
+YOUR JOB: Analyze this screenshot and determine if it is GENUINE or FAKE with maximum accuracy.
 
-STEP 1 - IDENTIFY APP:
-Which UPI app is this? (PhonePe, GPay/Google Pay, Paytm, BHIM, Amazon Pay, Airtel Money, CRED, Navi, WhatsApp Pay, Slice, or other)
-Give confidence 0-100%.
+== FAKE SCREENSHOT RED FLAGS ==
 
-STEP 2 - EXTRACT ALL FIELDS:
-Read every piece of payment information visible. Use context - "UPI Ref No", "Reference No", "Transaction ID", "UTR", "Ref ID", "UPI Transaction ID" are ALL the same thing - extract whichever label is present.
-- amount (numbers only, e.g. "500" not "₹500")
-- transaction_id (UTR/ref number - any label)
-- upi_id (recipient UPI ID like xyz@bank)
-- recipient_name
-- bank_name (sender's bank)
-- timestamp (date and time of payment)
-- status_text (e.g. "Paid Successfully", "Payment Successful")
+VISUAL TAMPERING:
+- Font looks different in amount area vs rest of screen (size, weight, spacing, family)
+- Amount text has slightly different color, background, or shadow than surrounding text
+- Pixels around amount look blurry, smeared, or have hard edges (copy-paste artifact)
+- Logo is blurry, pixelated, wrong shade, or stretched
+- Green checkmark looks wrong - wrong size, wrong shade, wrong position
+- Status bar looks fake - wrong font, missing elements, or inconsistent
+- Any element looks "pasted on" - different rendering quality than rest of image
 
-STEP 3 - VISUAL ANALYSIS:
-Look carefully for tampering signs:
-- Font inconsistency: different font/size in amount vs rest of text?
-- Logo issues: blurry, wrong color, stretched logo?
-- Color mismatch: amount box different shade than rest?
-- Copy-paste artifacts: hard edges, pixelation in one area?
-- Layout issues: elements misaligned or overlapping oddly?
-- Screen recording vs screenshot: does UI look genuine for this app?
+FAKE APP / GENERATOR SIGNS:
+- UI layout does not match the real app - buttons wrong place, wrong spacing
+- Missing UI elements that real app always shows
+- Watermark from a fake screenshot generator app
+- Suspiciously perfect image with zero compression artifacts
 
-APP-SPECIFIC NOTES (very important):
-- Paytm: blue header, "Paid Successfully" text, green checkmark, shows "UPI Ref No:" label
-- Paytm merchant QR: UPI ID ends in @ptys or @paytm - completely normal
-- PhonePe: purple/violet header, white checkmark circle
-- GPay: may have black (dark) OR white (light) background - BOTH are genuine GPay themes. Shows "Google Pay" text at bottom. Shows TWO IDs: a 12-digit UPI transaction ID AND a short Google transaction ID - both real
-- CRED: dark premium UI, shows masked bank account like "XXXXXX2729" instead of UPI ID - normal. Shows payment "flow" steps instead of simple UTR field - this is real CRED design. Condensed premium fonts are normal for CRED
-- WhatsApp Pay: green theme, "Sent" status
-- BHIM: orange/saffron theme
-- Navi: shows "Navi Transaction ID" label, may show masked UPI like navi.****2623@naviaxis
-- Bill payments: UTR may not be visible immediately - normal for bill payment receipts
+SUSPICIOUS DATA:
+- UTR/transaction ID missing entirely (except bill payment or CRED - normal for those)
+- UPI ID contains: support, refund, kyc, help, care, verify, reward, prize, bank, rbi
+- Timestamp before 2016 or in future
+- Amount is zero or negative
 
-STEP 4 - VERDICT:
-Based on all above, give:
-- overall verdict: "SAFE", "SUSPICIOUS", or "SCAM"
-- risk_percentage: 0-100 (0=definitely genuine, 100=definitely fake)
-- confidence in your verdict: "high", "medium", or "low"
-- specific reasons for your verdict
+== GENUINE SCREENSHOT SIGNS ==
+- Consistent fonts throughout entire screenshot
+- Status bar looks real (carrier name, time, battery visible)
+- App UI exactly matches known genuine design
+- UTR/ref number present with correct format
+- Slight JPEG compression artifacts visible (real phone screenshots)
+- Amount in words matches amount in numbers
 
-RETURN ONLY VALID JSON (no markdown, no explanation outside JSON):
+== APP GENUINE DESIGNS ==
+Paytm: blue header, "Paid Successfully", green checkmark badge, "UPI Ref No:" label, Paytm + UPI + bank logo at bottom. Merchant QR UPI IDs ending @ptys or @paytm = completely genuine.
+PhonePe: deep purple/violet header, white circle checkmark, "Transaction Successful" text.
+GPay: "Google Pay" text at bottom. Black (dark) OR white (light) background - BOTH genuine. TWO transaction IDs shown (long UPI ID + short Google ID) - BOTH real.
+CRED: dark premium UI. Masked bank account "XXXXXX2729" instead of UPI ID = NORMAL. Payment flow steps instead of simple UTR = NORMAL. Condensed premium fonts = BY DESIGN.
+WhatsApp Pay: green WhatsApp theme, "Sent" status.
+BHIM: orange/blue government theme, "BHIM" logo.
+Navi: green header, "Navi Transaction ID" label, may show masked UPI.
+Bill payments: UTR may not show immediately = normal.
+
+== CRITICAL RULES ==
+- Cross-app payments are normal in India - any app can pay to any UPI handle
+- "UPI Ref No", "Reference No", "Transaction ID", "UTR", "Ref ID" = ALL the same thing
+- WhatsApp forwarded screenshots may have compression - do not flag that alone as fake
+- Be STRICT with fakes - clear visual tampering = SCAM (high risk score)
+- Be FAIR with genuine ones - all checks pass = SAFE (low risk score)
+- Be DECISIVE - avoid calling everything SUSPICIOUS when evidence is clear
+
+RETURN ONLY VALID JSON (no markdown, no text outside JSON):
 {
   "app_name": "Paytm",
   "app_key": "paytm",
-  "app_confidence": 92,
+  "app_confidence": 95,
   "fields": {
     "amount": "500",
     "transaction_id": "609532000947",
-    "upi_id": "merchant@paytm",
+    "upi_id": "merchant@ptys",
     "recipient_name": "Shop Name",
     "bank_name": "State Bank of India",
     "timestamp": "05:49 PM, 05 Apr 2026",
@@ -151,22 +159,19 @@ RETURN ONLY VALID JSON (no markdown, no explanation outside JSON):
   },
   "visual_verdict": "genuine",
   "visual_signals": [
-    "Paytm blue header matches genuine app design",
-    "Green checkmark authentic",
-    "Font consistent throughout - no tampering detected"
+    "Font consistent throughout - no tampering detected",
+    "Paytm blue header matches genuine design exactly",
+    "Status bar real - carrier, time, battery all visible"
   ],
   "verdict": "SAFE",
   "risk_percentage": 8,
   "confidence": "high",
   "reasons": [
-    {"en": "Valid Paytm merchant QR UPI ID (@ptys is genuine Paytm handle)", "hi": "Valid Paytm merchant UPI ID - genuine है"},
-    {"en": "UTR format correct for Paytm", "hi": "UTR format Paytm के लिए सही है"},
-    {"en": "UI design matches genuine Paytm app", "hi": "UI design असली Paytm app से match करता है"}
+    {"en": "All visual elements match genuine Paytm design", "hi": "सभी visual elements असली Paytm design से match करते हैं"},
+    {"en": "UTR number present and format valid", "hi": "UTR number present है और format valid है"},
+    {"en": "Merchant QR UPI ID (@ptys) is genuine Paytm handle", "hi": "@ptys genuine Paytm merchant handle है"}
   ]
-}
-
-If something is missing or unclear, still return JSON with null for that field.
-Return ONLY JSON."""
+}"""
 
     response = get_client().chat.completions.create(
         model="gpt-4o-mini",
@@ -574,5 +579,4 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             "match_count": pattern_result.get("match_count", 0),
         },
         "what_to_do": WHAT_TO_DO[final_verdict],
-        "how_to_avoid": HOW_TO_AVOID,
-    }
+     
