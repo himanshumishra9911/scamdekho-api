@@ -27,76 +27,59 @@ def _detect_media_type(image_bytes: bytes) -> str:
     return "image/jpeg"
 
 
-PROMPT = """You are a forensic expert specializing in UPI payment screenshot fraud detection in India. You have analyzed thousands of real and fake UPI payment screenshots across apps like Google Pay, PhonePe, Paytm, BHIM, CRED, Navi, and WhatsApp Pay.
+PROMPT = """You are a forensic expert specializing in UPI payment screenshot fraud detection in India. You have analyzed thousands of real and fake UPI payment screenshots.
 
-Your task is to analyze the provided screenshot and determine whether it is:
-1. GENUINE
-2. SUSPICIOUS
-3. FAKE
+Your task: Determine if this screenshot is GENUINE, SUSPICIOUS, or FAKE.
 
-Be strict with fake detection, fair with genuine cases, and decisive in your conclusion.
+IMPORTANT BALANCE RULE:
+- Most UPI screenshots shared by real users are GENUINE - do not over-flag
+- Only mark FAKE when you see CLEAR, DEFINITIVE evidence of tampering
+- Mark SUSPICIOUS when something is mildly off but not conclusive
+- Mark GENUINE when everything looks correct
 
 STEP 1: VISUAL FORENSIC ANALYSIS
-Check for signs of image tampering:
-- Font inconsistencies (amount vs rest of text)
-- Misalignment in spacing, padding, or layout
-- Blurry or sharp edges around amount or key fields (copy-paste traces)
-- Color mismatch in amount text or UI elements
-- Logo distortion (blurred, stretched, wrong color)
-- Checkmark icon incorrect size, shade, or placement
-- Status bar inconsistencies (time, battery, network icons look fake or missing)
-- Any element appearing "pasted" or rendered differently
-If multiple issues found: mark as FAKE
+Look for CLEAR signs of tampering (not just compression or quality issues):
+- Font looks CLEARLY different in amount area vs rest of screen
+- Amount text has OBVIOUS color or background mismatch (not subtle)
+- VISIBLE hard edges or blurry artifacts specifically around amount (copy-paste)
+- Logo is clearly blurry, wrong color, or stretched
+- Status bar is completely missing or obviously fake
+- Element clearly looks "pasted on" with different rendering quality
 
-STEP 2: UI & APP AUTHENTICITY CHECK
-Verify whether UI matches real app design:
-- Google Pay: clean layout, "Google Pay" branding, proper spacing, usually 2 transaction IDs
+NOTE: Slight blur, compression artifacts, or WhatsApp forwarding quality = NOT fake evidence
+
+STEP 2: UI & APP AUTHENTICITY
+Verify UI matches real app design:
+- Google Pay: "Google Pay" branding, usually 2 transaction IDs, dark or light theme both ok
 - PhonePe: purple header, white checkmark in circle, "Transaction Successful"
-- Paytm: blue theme, "Paid Successfully", "UPI Ref No"
+- Paytm: blue theme, "Paid Successfully", "UPI Ref No" label
 - BHIM: government orange/blue UI
-- CRED: dark premium UI with masked account numbers
-- WhatsApp Pay: green theme, chat-based confirmation
-- Navi: green header with "Navi Transaction ID"
+- CRED: dark premium UI, masked account numbers like XXXXXX2729 = NORMAL
+- WhatsApp Pay: green theme
+- Navi: green header, "Navi Transaction ID" label
+- Paytm merchant QR: UPI ID ending @ptys or @paytm = completely genuine
 
-Check for:
-- Missing buttons (like "View Details")
-- Incorrect button placement
-- Abnormal spacing or alignment
-If UI does not match known design: FAKE
+Only flag UI issues if they are OBVIOUS and DEFINITIVE - not minor differences
 
-STEP 3: TRANSACTION DATA VALIDATION
-Analyze transaction details:
-- Check if UTR / Transaction ID is present
-- UTR should typically be numeric (10-16 digits, often ~12 digits in India)
-- Avoid repeated patterns like 111111, 123456, etc.
-- Timestamp should be realistic (not future or invalid)
-- Amount should be valid (> 0)
+STEP 3: TRANSACTION DATA
+- UTR/Transaction ID present = good sign
+- UTR missing = only suspicious if NOT a bill payment or CRED
+- UPI ID with scam words (support, refund, kyc, help, verify, prize, reward, rbi) = red flag
+- Timestamp before 2016 or clearly in future = red flag
+- Amount zero or negative = red flag
+- "UPI Ref No", "Reference No", "Transaction ID", "UTR" = all mean same thing
 
-UPI ID red flags:
-- Contains words like: support, refund, help, verify, prize, reward, kyc, rbi, bank
-If data looks fabricated: SUSPICIOUS or FAKE
+STEP 4: FINAL VERDICT LOGIC
+- GENUINE: UI matches app, fields present, no clear tampering evidence
+- SUSPICIOUS: One or two minor issues, unclear, or missing one field
+- FAKE: Multiple CLEAR tampering signs OR wrong UI design OR scam UPI keywords OR impossible data
 
-STEP 4: IMAGE QUALITY & COMPRESSION
-- Real screenshots usually have slight compression artifacts
-- Completely clean / overly perfect image: possible fake generator
-- WhatsApp-forwarded images may have compression (do NOT mark fake for this alone)
+Give risk_percentage:
+- GENUINE = 5 to 30
+- SUSPICIOUS = 31 to 65
+- FAKE = 66 to 100
 
-STEP 5: CONTEXTUAL / BEHAVIORAL FRAUD PATTERNS
-Consider common scam behaviors:
-- Sender insists "payment done" but asks not to check immediately
-- Claims delay due to "server issue" or "weekend"
-- Refuses to share live proof or screen recording
-- Pushes urgency after sending screenshot
-If combined with visual issues: FAKE
-
-STEP 6: FINAL VERDICT LOGIC
-- If strong visual tampering OR wrong UI: FAKE
-- If minor inconsistencies OR unclear: SUSPICIOUS
-- If everything aligns correctly: GENUINE
-
-Also extract all visible fields from the screenshot.
-
-RETURN ONLY VALID JSON (no markdown, no text outside JSON):
+RETURN ONLY VALID JSON:
 {
   "app_name": "Paytm",
   "app_key": "paytm",
@@ -113,16 +96,16 @@ RETURN ONLY VALID JSON (no markdown, no text outside JSON):
   "visual_verdict": "genuine",
   "visual_signals": [
     "Font consistent throughout - no tampering detected",
-    "Paytm blue header matches genuine design exactly",
-    "Status bar real - carrier, time, battery all visible"
+    "Paytm blue header matches genuine design",
+    "Status bar visible and real"
   ],
-  "verdict": "SAFE",
-  "risk_percentage": 8,
+  "verdict": "GENUINE",
+  "risk_percentage": 10,
   "confidence": "high",
   "reasons": [
     {"en": "All visual elements match genuine Paytm design", "hi": "सभी visual elements असली Paytm design से match करते हैं"},
-    {"en": "UTR number present and format valid", "hi": "UTR number present है और format valid है"},
-    {"en": "Merchant QR UPI ID (@ptys) is genuine Paytm handle", "hi": "@ptys genuine Paytm merchant handle है"}
+    {"en": "UTR number present and valid", "hi": "UTR number present है और valid है"},
+    {"en": "No tampering evidence found", "hi": "Tampering का कोई evidence नहीं मिला"}
   ]
 }
 
@@ -139,7 +122,7 @@ def _run_ai_analysis(image_bytes: bytes) -> dict:
         messages=[
             {
                 "role": "system",
-                "content": "You are a strict UPI payment fraud detection expert. Your job is to catch fake screenshots. When in doubt, mark SUSPICIOUS. Never be lenient with fakes."
+                "content": "You are a balanced UPI payment fraud detection expert in India. You must be accurate - not too strict, not too lenient. Mark SAFE only when everything looks genuinely correct. Mark SCAM only when you see clear visual tampering or fabricated data. Mark SUSPICIOUS when something is unclear or mildly off. Most real UPI screenshots from Indian users are genuine - do not over-flag them."
             },
             {
                 "role": "user",
@@ -158,7 +141,7 @@ def _run_ai_analysis(image_bytes: bytes) -> dict:
                 ]
             }
         ],
-        temperature=0.1
+        temperature=0.2
     )
 
     raw = response.choices[0].message.content.strip()
@@ -244,16 +227,38 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     ai_confidence  = ai_result.get("confidence") or "medium"
     ai_reasons     = ai_result.get("reasons") or []
 
-    # Map AI verdict to risk if not already set
-    ai_verdict_str = (ai_result.get("verdict") or "SUSPICIOUS").upper()
-    if ai_verdict_str == "FAKE":
-        ai_verdict_str = "SCAM"
-    elif ai_verdict_str == "GENUINE":
-        ai_verdict_str = "SAFE"
-
-    # Use AI verdict directly - trust the AI
-    final_verdict = ai_verdict_str
+    # ── Final Risk + Verdict Logic (balanced, probability-based) ──────────
     final_risk = round(ai_risk)
+
+    # Adjust based on AI confidence
+    if ai_confidence == "low":
+        final_risk = min(final_risk + 10, 100)
+    elif ai_confidence == "high":
+        final_risk = max(final_risk - 10, 0)
+
+    # Clamp
+    final_risk = max(0, min(final_risk, 100))
+
+    # Soft rules - raise risk floor but never hard-force SCAM
+    utr = (fields.get("transaction_id") or "").strip()
+    if not utr:
+        # UTR missing = suspicious, not SCAM (many apps delay showing it)
+        final_risk = max(final_risk, 50)
+    elif not re.match(r'^[0-9]{10,16}$', utr):
+        # UTR format off = raise floor slightly
+        final_risk = max(final_risk, 60)
+
+    # Final classification (3-tier, not binary)
+    if final_risk >= 75:
+        final_verdict = "SCAM"
+    elif final_risk >= 40:
+        final_verdict = "SUSPICIOUS"
+    else:
+        final_verdict = "SAFE"
+
+    # Visual safety override - if AI says genuine and risk < 60, trust it
+    if visual_verdict == "genuine" and final_risk < 60:
+        final_verdict = "SAFE"
 
     # Normalize reasons
     why = []
