@@ -3,6 +3,7 @@ Payment Screenshot API Router - ScamDekho
 """
 
 import asyncio
+import base64
 import logging
 import uuid
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
@@ -138,20 +139,42 @@ async def check_payment_screenshot(
             detail="Analysis failed. Please try again with a clearer screenshot."
         )
 
+    # ── Save to MongoDB with image ──────────────────────────────────────────
     try:
+        fields = result.get("extracted_fields", {})
+        app    = result.get("detected_app", {})
+
         content_label = " | ".join(filter(None, [
-            result.get("detected_app", {}).get("name"),
-            str(result.get("extracted_fields", {}).get("amount") or ""),
-            str(result.get("extracted_fields", {}).get("transaction_id") or ""),
+            app.get("name"),
+            str(fields.get("amount") or ""),
+            str(fields.get("transaction_id") or ""),
         ]))
+
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
         await save_scan(
-            "payment_screenshot",
-            content_label[:500],
-            result.get("verdict", "UNKNOWN"),
-            result.get("risk_percentage", 0),
+            scan_type    = "payment_screenshot",
+            content      = content_label[:500],
+            verdict      = result.get("verdict", "UNKNOWN"),
+            risk_score   = result.get("risk_percentage", 0),
+            extra        = {
+                "request_id":       request_id,
+                "client_ip":        client_ip,
+                "filename":         file.filename,
+                "file_size_bytes":  total_size,
+                "mime_type":        real_mime,
+                "image_base64":     image_b64,
+                "app_name":         app.get("name"),
+                "app_key":          app.get("app_key"),
+                "app_confidence":   app.get("detection_confidence"),
+                "extracted_fields": fields,
+                "reasons":          result.get("reasons", []),
+                "visual_signals":   result.get("visual_signals", []),
+            }
         )
     except Exception as e:
         logger.error(f"[{request_id}] DB save failed (non-fatal): {e}")
+    # ────────────────────────────────────────────────────────────────────────
 
     logger.info(
         f"[{request_id}] verdict:{result.get('verdict')} "
