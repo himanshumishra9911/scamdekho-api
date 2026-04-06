@@ -579,4 +579,5 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             "match_count": pattern_result.get("match_count", 0),
         },
         "what_to_do": WHAT_TO_DO[final_verdict],
-     
+        "how_to_avoid": HOW_TO_AVOID,
+    }
