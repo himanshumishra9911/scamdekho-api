@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 # “””
 Payment Screenshot Engine v3.0 — ScamDekho
 
@@ -35,13 +37,13 @@ def get_client():
 “”“Lazy OpenAI client — avoids crash at import time.”””
 return OpenAI(api_key=os.getenv(“OPENAI_API_KEY”))
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# HARD RULE CONSTANTS  (only 4 rules — clear-cut fraud signals)
+# HARD RULE CONSTANTS  (only 4 rules - clear-cut fraud signals)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# Scam keywords in UPI ID — no legitimate business uses these
+# Scam keywords in UPI ID - no legitimate business uses these
 
 SCAM_UPI_KEYWORDS = [
 “support”, “refund”, “helpdesk”, “kyc”, “kycupdate”, “kycverify”,
@@ -59,11 +61,11 @@ UPI_LAUNCH_YEAR = 2016
 
 PHASH_THRESHOLD = 20
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# HELPER: IMAGE → BASE64
+# HELPER: IMAGE -> BASE64
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 def _image_to_base64(image_bytes: bytes) -> str:
 return base64.b64encode(image_bytes).decode(“utf-8”)
@@ -77,11 +79,11 @@ if image_bytes[:4] == b’RIFF’ and image_bytes[8:12] == b’WEBP’:
 return “image/webp”
 return “image/jpeg”  # fallback
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# MAIN AI ANALYSIS  (single GPT-4o-mini call — does everything)
+# MAIN AI ANALYSIS  (single GPT-4o-mini call - does everything)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 def _run_ai_analysis(image_bytes: bytes) -> dict:
 “””
@@ -224,11 +226,11 @@ except json.JSONDecodeError:
     return {}
 ```
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# HARD RULE 1 — Scam keywords in UPI ID
+# HARD RULE 1 - Scam keywords in UPI ID
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 def _check_scam_upi_keywords(upi_id: str) -> dict | None:
 “”“Returns a signal dict if scam keyword found, else None.”””
@@ -245,11 +247,11 @@ return {
 }
 return None
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# HARD RULE 2 — Impossible timestamp
+# HARD RULE 2 - Impossible timestamp
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 def _check_timestamp(timestamp: str) -> dict | None:
 “”“Flag future dates or dates before UPI launch.”””
@@ -281,11 +283,11 @@ if year > now.year + 1:
 return None
 ```
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# HARD RULE 3 — Zero / negative amount
+# HARD RULE 3 - Zero / negative amount
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 def _check_amount(amount: str) -> dict | None:
 “”“Flag ₹0 or negative amounts.”””
@@ -308,11 +310,11 @@ except ValueError:
 pass
 return None
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# HARD RULE 4 — Pattern memory (perceptual hash)
+# HARD RULE 4 - Pattern memory (perceptual hash)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 def _perceptual_hash(image_bytes: bytes) -> str:
 “”“Simple perceptual hash using PIL resize + average.”””
@@ -389,11 +391,11 @@ await db.fake_screenshot_hashes.insert_one({
 except Exception as e:
 print(f”SAVE PATTERN ERROR: {e}”)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 # VERDICT LABELS  (EN + HI)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 VERDICT_LABELS = {
 “SAFE”: {
@@ -435,11 +437,11 @@ HOW_TO_AVOID = [
 {“en”: “Real UPI payments reflect in your account within seconds.”, “hi”: “Real UPI payment seconds में आपके account में reflect होती है।”},
 ]
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
-# SCORE ADJUSTMENT — Hard rules adjust AI risk score
+# SCORE ADJUSTMENT - Hard rules adjust AI risk score
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 def _apply_hard_rules(ai_risk: float, hard_signals: list) -> float:
 “””
@@ -462,11 +464,11 @@ if risk <= 65:
 return “SUSPICIOUS”
 return “SCAM”
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 # MAIN ENTRY POINT
 
-# ─────────────────────────────────────────────────────────────────────────────
+# —————————————————————————–
 
 async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
 “””
@@ -482,7 +484,7 @@ Architecture (Option B — AI-first + 4 hard rules):
   6. Combine AI risk + hard rule adjustments → final verdict
 """
 
-# ── Run AI analysis + pattern memory in parallel ──────────────────────
+# ----------------------------------------------------------------------------- Run AI analysis + pattern memory in parallel ----------------------
 loop = asyncio.get_running_loop()
 
 ai_task = loop.run_in_executor(None, _run_ai_analysis, image_bytes)
@@ -490,7 +492,7 @@ pattern_task = _check_pattern_memory(image_bytes)
 
 ai_result, pattern_result = await asyncio.gather(ai_task, pattern_task)
 
-# ── Parse AI result ───────────────────────────────────────────────────
+# ----------------------------------------------------------------------------- Parse AI result ---------------------------------------------------
 app_name       = ai_result.get("app_name") or "Unknown"
 app_key        = (ai_result.get("app_key") or "unknown").lower()
 app_confidence = int(ai_result.get("app_confidence") or 0)
@@ -510,7 +512,7 @@ for r in ai_reasons:
     elif isinstance(r, str):
         normalized_reasons.append({"en": r, "hi": ""})
 
-# ── Apply hard rules ──────────────────────────────────────────────────
+# ----------------------------------------------------------------------------- Apply hard rules --------------------------------------------------
 hard_signals = []
 
 upi_id = (fields.get("upi_id") or "").strip()
@@ -532,7 +534,7 @@ if sig3:
 if pattern_result.get("found") and pattern_result.get("signal"):
     hard_signals.append(pattern_result["signal"])
 
-# ── Compute final risk ────────────────────────────────────────────────
+# ----------------------------------------------------------------------------- Compute final risk ------------------------------------------------
 if hard_signals:
     final_risk = _apply_hard_rules(ai_risk, hard_signals)
 else:
@@ -547,12 +549,12 @@ if hard_signals and abs(final_risk - ai_risk) > 20:
 else:
     final_confidence = ai_confidence
 
-# ── Build why signals (AI reasons + hard rule signals) ────────────────
+# ----------------------------------------------------------------------------- Build why signals (AI reasons + hard rule signals) ----------------
 why = list(normalized_reasons)
 for sig in hard_signals:
     why.append({"en": sig.get("en", ""), "hi": sig.get("hi", "")})
 
-# ── Visual forensics signals for display ──────────────────────────────
+# ----------------------------------------------------------------------------- Visual forensics signals for display ------------------------------
 visual_forensics = []
 for vs in visual_signals:
     if isinstance(vs, str):
@@ -560,7 +562,7 @@ for vs in visual_signals:
     elif isinstance(vs, dict):
         visual_forensics.append(vs)
 
-# ── Save to pattern memory if high-confidence SCAM ────────────────────
+# ----------------------------------------------------------------------------- Save to pattern memory if high-confidence SCAM --------------------
 phash = pattern_result.get("current_phash")
 if (phash
         and final_verdict == "SCAM"
@@ -568,7 +570,7 @@ if (phash
         and visual_verdict == "fake"):
     asyncio.create_task(_save_pattern_memory(phash, app_key))
 
-# ── Build response ────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------- Build response ----------------------------------------------------
 return {
     "verdict": final_verdict,
     "risk_percentage": final_risk,
@@ -597,3 +599,4 @@ return {
     "what_to_do": WHAT_TO_DO[final_verdict],
     "how_to_avoid": HOW_TO_AVOID,
 }
+```
