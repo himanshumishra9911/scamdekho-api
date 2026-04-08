@@ -3,287 +3,563 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ScamDekho Admin Dashboard</title>
+  <title>ScamDekho — Admin Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --bg:        #080810;
+      --surface:   #0d0d1a;
+      --surface2:  #121220;
+      --border:    #1c1c30;
+      --border2:   #252540;
+      --text:      #c8c8e0;
+      --muted:     #4a4a70;
+      --accent:    #f97316;
+      --red:       #ff3d3d;
+      --green:     #00e87a;
+      --yellow:    #fbbf24;
+      --blue:      #60a5fa;
+      --purple:    #a78bfa;
+      --mono:      'JetBrains Mono', monospace;
+      --sans:      'Syne', sans-serif;
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
 
     body {
-      background: #0a0a0f;
-      color: #e0e0e0;
-      font-family: 'Segoe UI', Arial, sans-serif;
-      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
       min-height: 100vh;
+      overflow-x: hidden;
     }
 
-    /* HEADER */
-    .header {
+    /* ── Scan-line overlay ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(255,255,255,0.012) 2px,
+        rgba(255,255,255,0.012) 4px
+      );
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    /* ──────── TOPBAR ──────── */
+    .topbar {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 32px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid #1e1e2e;
+      gap: 14px;
+      padding: 18px 28px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 100;
     }
-    .header h1 {
-      font-size: 24px;
-      font-weight: 700;
+    .logo {
+      font-family: var(--sans);
+      font-size: 20px;
+      font-weight: 800;
       color: #fff;
+      letter-spacing: -0.5px;
     }
-    .header span {
-      font-size: 13px;
-      color: #666;
+    .logo span { color: var(--accent); }
+    .live-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0,232,122,0.08);
+      border: 1px solid rgba(0,232,122,0.2);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 11px;
+      color: var(--green);
+      font-family: var(--mono);
       margin-left: auto;
     }
     .live-dot {
-      width: 8px;
-      height: 8px;
-      background: #00ff88;
+      width: 6px; height: 6px;
+      background: var(--green);
       border-radius: 50%;
-      animation: pulse 1.5s infinite;
-      display: inline-block;
-      margin-right: 6px;
+      animation: blink 1.4s infinite;
     }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
-    /* STATS CARDS */
-    .stats {
+    /* ──────── LAYOUT ──────── */
+    .main { padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
+
+    /* ──────── STAT CARDS ──────── */
+    .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      margin-bottom: 32px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 24px;
     }
-    .card {
-      background: #13131f;
-      border: 1px solid #1e1e2e;
-      border-radius: 12px;
-      padding: 20px 24px;
+    @media(max-width:900px){ .stats-grid{grid-template-columns:repeat(2,1fr);} }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
     }
-    .card-label {
-      font-size: 12px;
-      color: #666;
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+    }
+    .stat-card.orange::before { background: var(--accent); }
+    .stat-card.red::before    { background: var(--red); }
+    .stat-card.green::before  { background: var(--green); }
+    .stat-card.yellow::before { background: var(--yellow); }
+
+    .stat-label {
+      font-size: 10px;
       text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 8px;
+      letter-spacing: 1.5px;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-bottom: 10px;
     }
-    .card-value {
-      font-size: 36px;
-      font-weight: 700;
-      color: #fff;
+    .stat-val {
+      font-size: 38px;
+      font-weight: 800;
+      line-height: 1;
+      font-family: var(--mono);
     }
-    .card-value.scam { color: #ff4d4d; }
-    .card-value.safe { color: #00ff88; }
-    .card-value.total { color: #f97316; }
-    .card-sub {
-      font-size: 12px;
-      color: #555;
-      margin-top: 4px;
-    }
+    .stat-card.orange .stat-val { color: var(--accent); }
+    .stat-card.red .stat-val    { color: var(--red); }
+    .stat-card.green .stat-val  { color: var(--green); }
+    .stat-card.yellow .stat-val { color: var(--yellow); }
+    .stat-sub { font-size: 11px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
 
-    /* SCAM RATE BAR */
-    .rate-bar-wrapper {
-      margin-top: 10px;
-    }
     .rate-bar {
-      height: 4px;
-      background: #1e1e2e;
+      height: 3px;
+      background: var(--border2);
       border-radius: 4px;
+      margin-top: 10px;
       overflow: hidden;
-      margin-top: 6px;
     }
-    .rate-bar-fill {
+    .rate-fill {
       height: 100%;
-      background: linear-gradient(90deg, #ff4d4d, #ff8c00);
+      background: linear-gradient(90deg, var(--accent), var(--red));
       border-radius: 4px;
-      transition: width 0.5s ease;
+      transition: width 0.6s cubic-bezier(.4,0,.2,1);
     }
 
-    /* TABLE */
-    .table-section {
-      background: #13131f;
-      border: 1px solid #1e1e2e;
-      border-radius: 12px;
-      overflow: hidden;
-    }
-    .table-header {
+    /* ──────── TABLE SECTION ──────── */
+    .section-header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 16px 24px;
-      border-bottom: 1px solid #1e1e2e;
+      gap: 10px;
+      margin-bottom: 14px;
     }
-    .table-header h2 {
-      font-size: 15px;
-      font-weight: 600;
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
       color: #fff;
+      letter-spacing: 0.3px;
+    }
+    .count-badge {
+      background: var(--border2);
+      color: var(--muted);
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-family: var(--mono);
     }
     .refresh-btn {
-      background: #1e1e2e;
-      border: none;
-      color: #888;
-      padding: 6px 12px;
+      margin-left: auto;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      color: var(--muted);
+      padding: 6px 14px;
       border-radius: 6px;
-      font-size: 12px;
+      font-size: 11px;
       cursor: pointer;
+      font-family: var(--mono);
       transition: all 0.2s;
     }
-    .refresh-btn:hover { background: #2a2a3e; color: #fff; }
+    .refresh-btn:hover { color: #fff; border-color: var(--muted); }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
+    /* ──────── FILTER TABS ──────── */
+    .filter-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
     }
-    thead tr {
-      background: #0f0f1a;
-    }
-    th {
-      padding: 12px 24px;
-      text-align: left;
+    .filter-btn {
+      background: transparent;
+      border: 1px solid var(--border2);
+      color: var(--muted);
+      padding: 5px 12px;
+      border-radius: 20px;
       font-size: 11px;
+      cursor: pointer;
+      font-family: var(--mono);
+      transition: all 0.2s;
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: var(--surface2);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* ──────── TABLE ──────── */
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: var(--bg); }
+    th {
+      padding: 11px 16px;
+      font-size: 10px;
       text-transform: uppercase;
-      letter-spacing: 1px;
-      color: #555;
+      letter-spacing: 1.2px;
+      color: var(--muted);
+      font-family: var(--mono);
       font-weight: 600;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
     }
     td {
-      padding: 14px 24px;
-      font-size: 13px;
-      border-bottom: 1px solid #1a1a2a;
+      padding: 12px 16px;
+      font-size: 12px;
+      border-bottom: 1px solid var(--border);
       vertical-align: middle;
+      font-family: var(--mono);
     }
     tbody tr:last-child td { border-bottom: none; }
-    tbody tr:hover { background: #16162a; }
+    tbody tr { transition: background 0.15s; cursor: pointer; }
+    tbody tr:hover { background: var(--surface2); }
 
-    .content-cell {
-      max-width: 380px;
+    /* ──────── TYPE BADGE ──────── */
+    .type-tag {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .type-text      { background:rgba(96,165,250,0.12); color:var(--blue); }
+    .type-url       { background:rgba(167,139,250,0.12); color:var(--purple); }
+    .type-image     { background:rgba(251,191,36,0.12); color:var(--yellow); }
+    .type-upi       { background:rgba(249,115,22,0.12); color:var(--accent); }
+    .type-qr        { background:rgba(0,232,122,0.1); color:var(--green); }
+    .type-offer     { background:rgba(255,61,61,0.1); color:var(--red); }
+    .type-payment   { background:rgba(192,132,252,0.12); color:#c084fc; }
+    .type-default   { background:var(--border2); color:var(--muted); }
+
+    /* ──────── VERDICT BADGE ──────── */
+    .verdict-scam {
+      display:inline-flex; align-items:center; gap:5px;
+      background:rgba(255,61,61,0.1);
+      color:var(--red);
+      border:1px solid rgba(255,61,61,0.2);
+      padding:3px 10px; border-radius:20px;
+      font-size:10px; font-weight:700; letter-spacing:0.5px;
+    }
+    .verdict-safe {
+      display:inline-flex; align-items:center; gap:5px;
+      background:rgba(0,232,122,0.08);
+      color:var(--green);
+      border:1px solid rgba(0,232,122,0.15);
+      padding:3px 10px; border-radius:20px;
+      font-size:10px; font-weight:700; letter-spacing:0.5px;
+    }
+    .verdict-suspicious {
+      display:inline-flex; align-items:center; gap:5px;
+      background:rgba(251,191,36,0.1);
+      color:var(--yellow);
+      border:1px solid rgba(251,191,36,0.2);
+      padding:3px 10px; border-radius:20px;
+      font-size:10px; font-weight:700; letter-spacing:0.5px;
+    }
+
+    /* ──────── CONTENT CELL ──────── */
+    .content-preview {
+      max-width: 300px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      color: #aaa;
-      font-size: 12px;
-    }
-
-    .badge {
-      display: inline-block;
-      padding: 3px 10px;
-      border-radius: 20px;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-    }
-    .badge-scam {
-      background: rgba(255, 77, 77, 0.15);
-      color: #ff4d4d;
-      border: 1px solid rgba(255, 77, 77, 0.3);
-    }
-    .badge-safe {
-      background: rgba(0, 255, 136, 0.1);
-      color: #00ff88;
-      border: 1px solid rgba(0, 255, 136, 0.2);
-    }
-
-    .type-badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      background: #1e1e2e;
       color: #888;
+      font-size: 11px;
+    }
+    .content-preview.has-image {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .thumb {
+      width: 36px; height: 36px;
+      object-fit: cover;
+      border-radius: 4px;
+      border: 1px solid var(--border2);
+      flex-shrink: 0;
     }
 
-    .time-cell { color: #555; font-size: 11px; }
+    .time-cell { color: var(--muted); font-size: 10px; white-space: nowrap; }
 
-    /* LOADING */
-    .loading {
-      text-align: center;
-      padding: 40px;
-      color: #444;
-      font-size: 14px;
+    .no-data { text-align:center; padding:50px; color:var(--muted); font-size:13px; }
+    .loading-row td { text-align:center; padding:50px; color:var(--muted); }
+
+    /* ──────── MODAL ──────── */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.85);
+      backdrop-filter: blur(4px);
+      z-index: 500;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 14px;
+      width: 100%;
+      max-width: 720px;
+      max-height: 90vh;
+      overflow-y: auto;
+      animation: slideUp 0.22s ease;
+      position: relative;
+    }
+    @keyframes slideUp {
+      from { opacity:0; transform: translateY(16px); }
+      to   { opacity:1; transform: translateY(0); }
     }
 
-    /* ERROR */
-    .error-msg {
-      text-align: center;
-      padding: 40px;
-      color: #ff4d4d;
-      font-size: 13px;
+    .modal-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0;
+      background: var(--surface);
+      z-index: 10;
     }
+    .modal-title { font-size: 14px; font-weight: 700; color: #fff; }
+    .modal-close {
+      margin-left: auto;
+      background: var(--border2);
+      border: none;
+      color: var(--muted);
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+    }
+    .modal-close:hover { background: var(--red); color: #fff; }
+
+    .modal-body { padding: 24px; }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    @media(max-width:500px){ .detail-grid{grid-template-columns:1fr;} }
+
+    .detail-item {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .detail-key {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-bottom: 5px;
+    }
+    .detail-val {
+      font-size: 12px;
+      color: var(--text);
+      font-family: var(--mono);
+      word-break: break-all;
+    }
+
+    .full-content-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+    .full-content-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-bottom: 8px;
+    }
+    .full-content-text {
+      font-size: 11px;
+      color: var(--text);
+      font-family: var(--mono);
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .modal-image {
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid var(--border2);
+      margin-bottom: 16px;
+      display: block;
+    }
+
+    .risk-meter {
+      margin-bottom: 16px;
+    }
+    .risk-label-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-bottom: 6px;
+    }
+    .risk-bar {
+      height: 6px;
+      background: var(--border2);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .risk-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.5s;
+    }
+    .risk-low    { background: var(--green); }
+    .risk-medium { background: var(--yellow); }
+    .risk-high   { background: var(--red); }
   </style>
 </head>
 <body>
 
-  <div class="header">
-    <span>🔍</span>
-    <h1>ScamDekho Dashboard</h1>
-    <span><span class="live-dot"></span>Live — auto refresh every 10s</span>
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="logo">Scam<span>Dekho</span></div>
+  <div style="font-size:11px;color:var(--muted);font-family:var(--mono);">Admin Dashboard</div>
+  <div class="live-pill">
+    <div class="live-dot"></div>
+    Auto-refresh 10s
   </div>
+</div>
+
+<div class="main">
 
   <!-- STATS -->
-  <div class="stats">
-    <div class="card">
-      <div class="card-label">Total Scans</div>
-      <div class="card-value total" id="total">—</div>
-      <div class="card-sub">All time</div>
+  <div class="stats-grid">
+    <div class="stat-card orange">
+      <div class="stat-label">Total Scans</div>
+      <div class="stat-val" id="st-total">—</div>
+      <div class="stat-sub">All time</div>
     </div>
-    <div class="card">
-      <div class="card-label">Scams Detected</div>
-      <div class="card-value scam" id="scam-count">—</div>
-      <div class="card-sub" id="scam-pct">—% of total</div>
+    <div class="stat-card red">
+      <div class="stat-label">Scams Detected</div>
+      <div class="stat-val" id="st-scam">—</div>
+      <div class="stat-sub" id="st-scam-pct">— % of total</div>
     </div>
-    <div class="card">
-      <div class="card-label">Safe Results</div>
-      <div class="card-value safe" id="safe-count">—</div>
-      <div class="card-sub" id="safe-pct">—% of total</div>
+    <div class="stat-card green">
+      <div class="stat-label">Safe Results</div>
+      <div class="stat-val" id="st-safe">—</div>
+      <div class="stat-sub" id="st-safe-pct">— % of total</div>
     </div>
-    <div class="card">
-      <div class="card-label">Scam Rate</div>
-      <div class="card-value" id="scam-rate" style="color:#f97316">—%</div>
-      <div class="rate-bar-wrapper">
-        <div class="rate-bar">
-          <div class="rate-bar-fill" id="rate-bar-fill" style="width:0%"></div>
-        </div>
-      </div>
+    <div class="stat-card yellow">
+      <div class="stat-label">Scam Rate</div>
+      <div class="stat-val" id="st-rate">—%</div>
+      <div class="rate-bar"><div class="rate-fill" id="rate-fill" style="width:0%"></div></div>
     </div>
   </div>
 
-  <!-- TABLE -->
-  <div class="table-section">
-    <div class="table-header">
-      <h2>Recent Scans</h2>
-      <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
-    </div>
+  <!-- FILTER + TABLE -->
+  <div class="section-header">
+    <div class="section-title">Recent Scans</div>
+    <div class="count-badge" id="row-count">0 records</div>
+    <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+  </div>
+
+  <div class="filter-row">
+    <button class="filter-btn active" onclick="setFilter('ALL',this)">All</button>
+    <button class="filter-btn" onclick="setFilter('SCAM',this)">⚠ Scam</button>
+    <button class="filter-btn" onclick="setFilter('SAFE',this)">✓ Safe</button>
+    <button class="filter-btn" onclick="setFilter('text',this)">Text</button>
+    <button class="filter-btn" onclick="setFilter('url',this)">URL</button>
+    <button class="filter-btn" onclick="setFilter('upi',this)">UPI</button>
+    <button class="filter-btn" onclick="setFilter('payment_screenshot',this)">Payment</button>
+    <button class="filter-btn" onclick="setFilter('qr',this)">QR</button>
+    <button class="filter-btn" onclick="setFilter('offer_letter',this)">Offer Letter</button>
+    <button class="filter-btn" onclick="setFilter('image',this)">Image</button>
+  </div>
+
+  <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>Type</th>
-          <th>Content</th>
-          <th>Verdict</th>
-          <th>Time</th>
+          <th style="width:32px">#</th>
+          <th style="width:130px">Type</th>
+          <th>Content / Preview</th>
+          <th style="width:110px">Verdict</th>
+          <th style="width:70px">Risk%</th>
+          <th style="width:140px">Date & Time</th>
         </tr>
       </thead>
-      <tbody id="rows">
-        <tr><td colspan="4" class="loading">Loading...</td></tr>
+      <tbody id="scan-rows">
+        <tr class="loading-row"><td colspan="6">Loading…</td></tr>
       </tbody>
     </table>
   </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal" id="modal-box">
+    <div class="modal-header">
+      <span id="modal-type-badge"></span>
+      <div class="modal-title" id="modal-title">Scan Detail</div>
+      <button class="modal-close" onclick="closeModalDirect()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <!-- filled by JS -->
+    </div>
+  </div>
+</div>
 
 <script>
-  const API = "https://scamdekho-api.onrender.com";
+  const API = 'https://scamdekho-api.onrender.com';
+  let allRows = [];
+  let activeFilter = 'ALL';
 
-  function timeAgo(dateStr) {
-    const now = new Date();
-    const then = new Date(dateStr);
-    const diff = Math.floor((now - then) / 1000);
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
-    return `${Math.floor(diff/86400)}d ago`;
-  }
-
+  // ── Fetch top 100 using extended analytics endpoint ──
   async function loadData() {
     try {
       const res = await fetch(`${API}/analytics/stats`);
@@ -293,44 +569,251 @@
       const total = data.total || 0;
       const scams = data.scam_count || 0;
       const safes = data.safe_count || 0;
-      const rate = total > 0 ? Math.round((scams / total) * 100) : 0;
+      const rate  = total > 0 ? Math.round(scams / total * 100) : 0;
 
-      document.getElementById("total").textContent = total.toLocaleString();
-      document.getElementById("scam-count").textContent = scams.toLocaleString();
-      document.getElementById("safe-count").textContent = safes.toLocaleString();
-      document.getElementById("scam-rate").textContent = `${rate}%`;
-      document.getElementById("scam-pct").textContent = `${rate}% of total`;
-      document.getElementById("safe-pct").textContent = `${100 - rate}% of total`;
-      document.getElementById("rate-bar-fill").style.width = `${rate}%`;
+      document.getElementById('st-total').textContent    = total.toLocaleString();
+      document.getElementById('st-scam').textContent     = scams.toLocaleString();
+      document.getElementById('st-safe').textContent     = safes.toLocaleString();
+      document.getElementById('st-rate').textContent     = rate + '%';
+      document.getElementById('st-scam-pct').textContent = rate + '% of total';
+      document.getElementById('st-safe-pct').textContent = (100-rate) + '% of total';
+      document.getElementById('rate-fill').style.width   = rate + '%';
 
-      // Table
-      const tbody = document.getElementById("rows");
-      if (!data.recent || data.recent.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="loading">No data yet</td></tr>`;
-        return;
-      }
+      allRows = data.recent || [];
+      renderTable();
 
-      tbody.innerHTML = data.recent.map(row => `
-        <tr>
-          <td><span class="type-badge">${row[0]}</span></td>
-          <td class="content-cell" title="${row[1]}">${row[1]}</td>
-          <td>
-            <span class="badge ${row[2] === 'SCAM' ? 'badge-scam' : 'badge-safe'}">
-              ${row[2] === 'SCAM' ? '⚠ SCAM' : '✓ SAFE'}
-            </span>
-          </td>
-          <td class="time-cell">${timeAgo(row[3])}</td>
-        </tr>
-      `).join("");
-
-    } catch (err) {
-      document.getElementById("rows").innerHTML =
-        `<tr><td colspan="4" class="error-msg">Failed to load — ${err.message}</td></tr>`;
+    } catch(e) {
+      document.getElementById('scan-rows').innerHTML =
+        `<tr><td colspan="6" class="no-data">⚠ Failed to load — ${e.message}</td></tr>`;
     }
+  }
+
+  // ── Filter ──
+  function setFilter(f, btn) {
+    activeFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderTable();
+  }
+
+  // ── Render ──
+  function renderTable() {
+    const rows = allRows.filter(r => {
+      if (activeFilter === 'ALL')  return true;
+      if (activeFilter === 'SCAM') return r[2] === 'SCAM';
+      if (activeFilter === 'SAFE') return r[2] === 'SAFE';
+      return (r[0] || '').toLowerCase().includes(activeFilter.toLowerCase());
+    });
+
+    document.getElementById('row-count').textContent = rows.length + ' records';
+
+    if (!rows.length) {
+      document.getElementById('scan-rows').innerHTML =
+        `<tr><td colspan="6" class="no-data">No records found</td></tr>`;
+      return;
+    }
+
+    document.getElementById('scan-rows').innerHTML = rows.map((r, i) => {
+      const [type, content, verdict, time, risk, image_b64, extras] = r;
+      const typeCls  = typeClass(type);
+      const typeDisp = typeLabel(type);
+      const vBadge   = verdictBadge(verdict);
+      const riskNum  = parseInt(risk) || 0;
+      const riskDisp = riskNum > 0 ? riskNum + '%' : '—';
+      const timeDisp = formatDateTime(time);
+      const imgTag   = image_b64
+        ? `<img class="thumb" src="data:image/jpeg;base64,${image_b64}" alt="" />`
+        : '';
+      const preview  = truncate(content, 60);
+
+      return `<tr onclick="openModal(${i})" data-idx="${i}">
+        <td style="color:var(--muted);font-size:10px">${i+1}</td>
+        <td><span class="type-tag ${typeCls}">${typeDisp}</span></td>
+        <td>
+          <div class="content-preview ${image_b64 ? 'has-image' : ''}">
+            ${imgTag}
+            <span title="${escHtml(content)}">${escHtml(preview)}</span>
+          </div>
+        </td>
+        <td>${vBadge}</td>
+        <td style="color:${riskColor(riskNum)};font-size:11px">${riskDisp}</td>
+        <td class="time-cell">${timeDisp}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── Open Modal ──
+  function openModal(idx) {
+    const rows = allRows.filter(r => {
+      if (activeFilter === 'ALL')  return true;
+      if (activeFilter === 'SCAM') return r[2] === 'SCAM';
+      if (activeFilter === 'SAFE') return r[2] === 'SAFE';
+      return (r[0] || '').toLowerCase().includes(activeFilter.toLowerCase());
+    });
+    const r = rows[idx];
+    if (!r) return;
+
+    const [type, content, verdict, time, risk, image_b64, extras] = r;
+    const riskNum = parseInt(risk) || 0;
+
+    // header badge
+    document.getElementById('modal-type-badge').outerHTML =
+      `<span id="modal-type-badge" class="type-tag ${typeClass(type)}">${typeLabel(type)}</span>`;
+    document.getElementById('modal-title').textContent = 'Scan Detail';
+
+    let bodyHtml = '';
+
+    // Image (if any)
+    if (image_b64) {
+      bodyHtml += `
+        <div class="full-content-label">Screenshot / Image</div>
+        <img class="modal-image" src="data:image/jpeg;base64,${image_b64}" alt="Scan screenshot" />
+      `;
+    }
+
+    // Risk meter
+    if (riskNum > 0) {
+      const rClass = riskNum >= 70 ? 'risk-high' : riskNum >= 40 ? 'risk-medium' : 'risk-low';
+      bodyHtml += `
+        <div class="risk-meter">
+          <div class="risk-label-row">
+            <span>Risk Level</span>
+            <span>${riskNum}%</span>
+          </div>
+          <div class="risk-bar"><div class="risk-bar-fill ${rClass}" style="width:${riskNum}%"></div></div>
+        </div>
+      `;
+    }
+
+    // Key details grid
+    bodyHtml += `<div class="detail-grid">
+      <div class="detail-item">
+        <div class="detail-key">Verdict</div>
+        <div class="detail-val">${verdictBadge(verdict)}</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-key">Risk Score</div>
+        <div class="detail-val" style="color:${riskColor(riskNum)}">${riskNum > 0 ? riskNum + '%' : 'N/A'}</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-key">Type</div>
+        <div class="detail-val">${type || '—'}</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-key">Date & Time</div>
+        <div class="detail-val">${formatDateTime(time)}</div>
+      </div>
+    </div>`;
+
+    // Full content
+    if (content) {
+      bodyHtml += `
+        <div class="full-content-box">
+          <div class="full-content-label">Full Content / URL / Message</div>
+          <div class="full-content-text">${escHtml(content)}</div>
+        </div>
+      `;
+    }
+
+    // Extra fields (if backend returns them in extras slot)
+    if (extras && typeof extras === 'object') {
+      const fields = Object.entries(extras).filter(([k, v]) => v && String(v).length < 300);
+      if (fields.length) {
+        bodyHtml += `<div class="detail-grid">` +
+          fields.map(([k, v]) => `
+            <div class="detail-item">
+              <div class="detail-key">${escHtml(k.replace(/_/g,' '))}</div>
+              <div class="detail-val">${escHtml(String(v))}</div>
+            </div>
+          `).join('') +
+          `</div>`;
+      }
+    }
+
+    document.getElementById('modal-body').innerHTML = bodyHtml;
+    document.getElementById('modal-overlay').classList.add('open');
+  }
+
+  function closeModal(e) {
+    if (e.target === document.getElementById('modal-overlay')) closeModalDirect();
+  }
+  function closeModalDirect() {
+    document.getElementById('modal-overlay').classList.remove('open');
+  }
+  document.addEventListener('keydown', e => { if(e.key==='Escape') closeModalDirect(); });
+
+  // ── Helpers ──
+  function typeClass(t) {
+    t = (t||'').toLowerCase();
+    if (t.includes('text'))    return 'type-text';
+    if (t.includes('url'))     return 'type-url';
+    if (t.includes('image'))   return 'type-image';
+    if (t.includes('upi'))     return 'type-upi';
+    if (t.includes('qr'))      return 'type-qr';
+    if (t.includes('offer'))   return 'type-offer';
+    if (t.includes('payment')) return 'type-payment';
+    return 'type-default';
+  }
+  function typeLabel(t) {
+    t = (t||'').toLowerCase();
+    if (t.includes('payment_screenshot')) return 'PAYMENT SS';
+    if (t.includes('offer_letter'))       return 'OFFER LETTER';
+    if (t.includes('text'))   return 'TEXT';
+    if (t.includes('url'))    return 'URL';
+    if (t.includes('image'))  return 'IMAGE';
+    if (t.includes('upi'))    return 'UPI';
+    if (t.includes('qr'))     return 'QR CODE';
+    return (t || 'SCAN').toUpperCase().slice(0,12);
+  }
+  function verdictBadge(v) {
+    v = (v||'').toUpperCase();
+    if (v === 'SCAM')       return `<span class="verdict-scam">⚠ SCAM</span>`;
+    if (v === 'SUSPICIOUS') return `<span class="verdict-suspicious">~ SUSPICIOUS</span>`;
+    return `<span class="verdict-safe">✓ SAFE</span>`;
+  }
+  function riskColor(n) {
+    if (n >= 70) return 'var(--red)';
+    if (n >= 40) return 'var(--yellow)';
+    if (n > 0)   return 'var(--green)';
+    return 'var(--muted)';
+  }
+  function truncate(s, n) { return s && s.length > n ? s.slice(0,n) + '…' : (s||''); }
+  function escHtml(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function formatDateTime(ts) {
+    if (!ts) return '—';
+    try {
+      const d = new Date(ts);
+      if (isNaN(d)) return ts;
+      const pad = n => String(n).padStart(2,'0');
+      const date = `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+      const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      const ago  = timeAgo(d);
+      return `${date} ${time}\n(${ago})`;
+    } catch(e) { return ts; }
+  }
+  function timeAgo(d) {
+    const diff = Math.floor((Date.now() - d) / 1000);
+    if (diff < 60)   return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+    if (diff < 86400)return Math.floor(diff/3600) + 'h ago';
+    return Math.floor(diff/86400) + 'd ago';
   }
 
   loadData();
   setInterval(loadData, 10000);
 </script>
+
+<!--
+  BACKEND CHANGE NEEDED:
+  analytics.py → update the /stats endpoint to:
+  1. .limit(20) → .limit(100)
+  2. Return each row as:
+     [type, content, verdict, created_at, risk_score, image_base64_or_null, extra_fields_dict]
+  
+  Current format:  [type, content[:100], verdict, created_at]
+  New format:      [type, content[:500], verdict, created_at, risk_score, image_b64|null, {}]
+-->
 </body>
 </html>
