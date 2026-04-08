@@ -14,7 +14,7 @@ async def stats():
             {},
             {"type": 1, "content": 1, "verdict": 1, "created_at": 1,
              "risk_score": 1, "_id": 0}
-        ).sort("created_at", -1).allow_disk_use(True).limit(100)
+        ).sort("created_at", -1).limit(100)
 
         recent = []
         async for doc in recent_cursor:
