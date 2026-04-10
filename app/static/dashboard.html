@@ -199,8 +199,6 @@
     .verdict-suspicious { display:inline-flex;align-items:center;gap:5px; background:rgba(251,191,36,0.1); color:var(--yellow); border:1px solid rgba(251,191,36,0.2); padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.5px; }
 
     .content-preview { max-width:300px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#888; font-size:11px; }
-    .content-preview.has-image { display:flex; align-items:center; gap:8px; }
-    .thumb { width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--border2);flex-shrink:0; }
     .time-cell { color:var(--muted); font-size:10px; white-space:nowrap; }
     .no-data { text-align:center; padding:50px; color:var(--muted); font-size:13px; }
     .loading-row td { text-align:center; padding:50px; color:var(--muted); }
@@ -252,7 +250,7 @@
     .full-content-box { background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px; }
     .full-content-label { font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-family:var(--mono);margin-bottom:8px; }
     .full-content-text { font-size:11px;color:var(--text);font-family:var(--mono);line-height:1.7;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto; }
-    .modal-image { width:100%;border-radius:8px;border:1px solid var(--border2);margin-bottom:16px;display:block; }
+
     .risk-meter { margin-bottom:16px; }
     .risk-label-row { display:flex;justify-content:space-between;font-size:10px;color:var(--muted);font-family:var(--mono);margin-bottom:6px; }
     .risk-bar { height:6px;background:var(--border2);border-radius:4px;overflow:hidden; }
@@ -467,20 +465,16 @@
 
     document.getElementById('scan-rows').innerHTML = pageRows.map((r, i) => {
       const globalIdx = start + i;
-      const [type, content, verdict, time, risk, image_b64, extras] = r;
+      const [type, content, verdict, time, risk] = r;
       const riskNum  = parseInt(risk) || 0;
       const riskDisp = riskNum > 0 ? riskNum + '%' : '—';
-      const imgTag   = image_b64
-        ? `<img class="thumb" src="data:image/jpeg;base64,${image_b64}" alt="" />`
-        : '';
       const preview  = truncate(content, 60);
 
       return `<tr onclick="openModal(${globalIdx})" data-idx="${globalIdx}">
         <td style="color:var(--muted);font-size:10px">${globalIdx+1}</td>
         <td><span class="type-tag ${typeClass(type)}">${typeLabel(type)}</span></td>
         <td>
-          <div class="content-preview ${image_b64 ? 'has-image' : ''}">
-            ${imgTag}
+          <div class="content-preview">
             <span title="${escHtml(content)}">${escHtml(preview)}</span>
           </div>
         </td>
@@ -519,7 +513,7 @@
   function openModal(idx) {
     const r = filteredRows[idx];
     if (!r) return;
-    const [type, content, verdict, time, risk, image_b64, extras] = r;
+    const [type, content, verdict, time, risk] = r;
     const riskNum = parseInt(risk) || 0;
 
     document.getElementById('modal-type-badge').outerHTML =
@@ -527,12 +521,7 @@
     document.getElementById('modal-title').textContent = 'Scan Detail';
 
     let bodyHtml = '';
-    if (image_b64) {
-      bodyHtml += `
-        <div class="full-content-label">Screenshot / Image</div>
-        <img class="modal-image" src="data:image/jpeg;base64,${image_b64}" alt="Scan screenshot" />
-      `;
-    }
+
     if (riskNum > 0) {
       const rClass = riskNum >= 70 ? 'risk-high' : riskNum >= 40 ? 'risk-medium' : 'risk-low';
       bodyHtml += `
@@ -555,18 +544,6 @@
           <div class="full-content-text">${escHtml(content)}</div>
         </div>
       `;
-    }
-    if (extras && typeof extras === 'object') {
-      const fields = Object.entries(extras).filter(([k,v]) => v && String(v).length < 300);
-      if (fields.length) {
-        bodyHtml += `<div class="detail-grid">` +
-          fields.map(([k,v]) => `
-            <div class="detail-item">
-              <div class="detail-key">${escHtml(k.replace(/_/g,' '))}</div>
-              <div class="detail-val">${escHtml(String(v))}</div>
-            </div>
-          `).join('') + `</div>`;
-      }
     }
     document.getElementById('modal-body').innerHTML = bodyHtml;
     document.getElementById('modal-overlay').classList.add('open');
