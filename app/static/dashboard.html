@@ -35,7 +35,6 @@
       overflow-x: hidden;
     }
 
-    /* ── Scan-line overlay ── */
     body::before {
       content: '';
       position: fixed;
@@ -51,7 +50,7 @@
       z-index: 999;
     }
 
-    /* ──────── TOPBAR ──────── */
+    /* ── TOPBAR ── */
     .topbar {
       display: flex;
       align-items: center;
@@ -63,39 +62,64 @@
       top: 0;
       z-index: 100;
     }
-    .logo {
-      font-family: var(--sans);
-      font-size: 20px;
-      font-weight: 800;
-      color: #fff;
-      letter-spacing: -0.5px;
-    }
+    .logo { font-family: var(--sans); font-size: 20px; font-weight: 800; color: #fff; letter-spacing: -0.5px; }
     .logo span { color: var(--accent); }
     .live-pill {
-      display: flex;
-      align-items: center;
-      gap: 6px;
+      display: flex; align-items: center; gap: 6px;
       background: rgba(0,232,122,0.08);
       border: 1px solid rgba(0,232,122,0.2);
       border-radius: 20px;
       padding: 4px 10px;
-      font-size: 11px;
-      color: var(--green);
-      font-family: var(--mono);
+      font-size: 11px; color: var(--green); font-family: var(--mono);
       margin-left: auto;
     }
-    .live-dot {
-      width: 6px; height: 6px;
-      background: var(--green);
-      border-radius: 50%;
-      animation: blink 1.4s infinite;
-    }
+    .live-dot { width:6px; height:6px; background:var(--green); border-radius:50%; animation:blink 1.4s infinite; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
-    /* ──────── LAYOUT ──────── */
+    /* ── DATE BAR ── */
+    .date-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 28px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+    .date-bar label { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+    .date-input {
+      background: var(--bg);
+      border: 1px solid var(--border2);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      outline: none;
+      cursor: pointer;
+    }
+    .date-input::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
+    .date-input:focus { border-color: var(--accent); }
+
+    .today-btn {
+      background: rgba(249,115,22,0.1);
+      border: 1px solid rgba(249,115,22,0.3);
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .today-btn:hover { background: rgba(249,115,22,0.2); }
+
+    .date-info { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-left: 6px; }
+    .date-info strong { color: var(--accent); }
+
+    /* ── LAYOUT ── */
     .main { padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
 
-    /* ──────── STAT CARDS ──────── */
+    /* ── STAT CARDS ── */
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -112,355 +136,130 @@
       position: relative;
       overflow: hidden;
     }
-    .stat-card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 2px;
-    }
+    .stat-card::before { content:''; position:absolute; top:0;left:0;right:0; height:2px; }
     .stat-card.orange::before { background: var(--accent); }
     .stat-card.red::before    { background: var(--red); }
     .stat-card.green::before  { background: var(--green); }
     .stat-card.yellow::before { background: var(--yellow); }
 
-    .stat-label {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      color: var(--muted);
-      font-family: var(--mono);
-      margin-bottom: 10px;
-    }
-    .stat-val {
-      font-size: 38px;
-      font-weight: 800;
-      line-height: 1;
-      font-family: var(--mono);
-    }
-    .stat-card.orange .stat-val { color: var(--accent); }
-    .stat-card.red .stat-val    { color: var(--red); }
-    .stat-card.green .stat-val  { color: var(--green); }
-    .stat-card.yellow .stat-val { color: var(--yellow); }
-    .stat-sub { font-size: 11px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
+    .stat-label { font-size:10px; text-transform:uppercase; letter-spacing:1.5px; color:var(--muted); font-family:var(--mono); margin-bottom:10px; }
+    .stat-val { font-size:38px; font-weight:800; line-height:1; font-family:var(--mono); }
+    .stat-card.orange .stat-val { color:var(--accent); }
+    .stat-card.red .stat-val    { color:var(--red); }
+    .stat-card.green .stat-val  { color:var(--green); }
+    .stat-card.yellow .stat-val { color:var(--yellow); }
+    .stat-sub { font-size:11px; color:var(--muted); margin-top:6px; font-family:var(--mono); }
+    .rate-bar { height:3px; background:var(--border2); border-radius:4px; margin-top:10px; overflow:hidden; }
+    .rate-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--red)); border-radius:4px; transition:width 0.6s cubic-bezier(.4,0,.2,1); }
 
-    .rate-bar {
-      height: 3px;
-      background: var(--border2);
-      border-radius: 4px;
-      margin-top: 10px;
-      overflow: hidden;
-    }
-    .rate-fill {
-      height: 100%;
-      background: linear-gradient(90deg, var(--accent), var(--red));
-      border-radius: 4px;
-      transition: width 0.6s cubic-bezier(.4,0,.2,1);
-    }
-
-    /* ──────── TABLE SECTION ──────── */
-    .section-header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .section-title {
-      font-size: 14px;
-      font-weight: 700;
-      color: #fff;
-      letter-spacing: 0.3px;
-    }
-    .count-badge {
-      background: var(--border2);
-      color: var(--muted);
-      font-size: 10px;
-      padding: 2px 8px;
-      border-radius: 20px;
-      font-family: var(--mono);
-    }
+    /* ── TABLE SECTION ── */
+    .section-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+    .section-title { font-size:14px; font-weight:700; color:#fff; letter-spacing:0.3px; }
+    .count-badge { background:var(--border2); color:var(--muted); font-size:10px; padding:2px 8px; border-radius:20px; font-family:var(--mono); }
     .refresh-btn {
-      margin-left: auto;
-      background: var(--surface2);
-      border: 1px solid var(--border2);
-      color: var(--muted);
-      padding: 6px 14px;
-      border-radius: 6px;
-      font-size: 11px;
-      cursor: pointer;
-      font-family: var(--mono);
-      transition: all 0.2s;
+      margin-left:auto; background:var(--surface2); border:1px solid var(--border2);
+      color:var(--muted); padding:6px 14px; border-radius:6px; font-size:11px;
+      cursor:pointer; font-family:var(--mono); transition:all 0.2s;
     }
-    .refresh-btn:hover { color: #fff; border-color: var(--muted); }
+    .refresh-btn:hover { color:#fff; border-color:var(--muted); }
 
-    /* ──────── FILTER TABS ──────── */
-    .filter-row {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 14px;
-      flex-wrap: wrap;
-    }
+    /* ── FILTER TABS ── */
+    .filter-row { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
     .filter-btn {
-      background: transparent;
-      border: 1px solid var(--border2);
-      color: var(--muted);
-      padding: 5px 12px;
-      border-radius: 20px;
-      font-size: 11px;
-      cursor: pointer;
-      font-family: var(--mono);
-      transition: all 0.2s;
+      background:transparent; border:1px solid var(--border2); color:var(--muted);
+      padding:5px 12px; border-radius:20px; font-size:11px; cursor:pointer;
+      font-family:var(--mono); transition:all 0.2s;
     }
-    .filter-btn:hover, .filter-btn.active {
-      background: var(--surface2);
-      border-color: var(--accent);
-      color: var(--accent);
-    }
+    .filter-btn:hover, .filter-btn.active { background:var(--surface2); border-color:var(--accent); color:var(--accent); }
 
-    /* ──────── TABLE ──────── */
-    .table-wrap {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      overflow: hidden;
-    }
-    table { width: 100%; border-collapse: collapse; }
-    thead tr { background: var(--bg); }
-    th {
-      padding: 11px 16px;
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 1.2px;
-      color: var(--muted);
-      font-family: var(--mono);
-      font-weight: 600;
-      text-align: left;
-      border-bottom: 1px solid var(--border);
-    }
-    td {
-      padding: 12px 16px;
-      font-size: 12px;
-      border-bottom: 1px solid var(--border);
-      vertical-align: middle;
-      font-family: var(--mono);
-    }
-    tbody tr:last-child td { border-bottom: none; }
-    tbody tr { transition: background 0.15s; cursor: pointer; }
-    tbody tr:hover { background: var(--surface2); }
+    /* ── TABLE ── */
+    .table-wrap { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+    table { width:100%; border-collapse:collapse; }
+    thead tr { background:var(--bg); }
+    th { padding:11px 16px; font-size:10px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); font-family:var(--mono); font-weight:600; text-align:left; border-bottom:1px solid var(--border); }
+    td { padding:12px 16px; font-size:12px; border-bottom:1px solid var(--border); vertical-align:middle; font-family:var(--mono); }
+    tbody tr:last-child td { border-bottom:none; }
+    tbody tr { transition:background 0.15s; cursor:pointer; }
+    tbody tr:hover { background:var(--surface2); }
 
-    /* ──────── TYPE BADGE ──────── */
-    .type-tag {
-      display: inline-block;
-      padding: 3px 8px;
-      border-radius: 4px;
-      font-size: 9px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .type-text      { background:rgba(96,165,250,0.12); color:var(--blue); }
-    .type-url       { background:rgba(167,139,250,0.12); color:var(--purple); }
-    .type-image     { background:rgba(251,191,36,0.12); color:var(--yellow); }
-    .type-upi       { background:rgba(249,115,22,0.12); color:var(--accent); }
-    .type-qr        { background:rgba(0,232,122,0.1); color:var(--green); }
-    .type-offer     { background:rgba(255,61,61,0.1); color:var(--red); }
-    .type-payment   { background:rgba(192,132,252,0.12); color:#c084fc; }
-    .type-default   { background:var(--border2); color:var(--muted); }
+    /* ── TYPE BADGE ── */
+    .type-tag { display:inline-block; padding:3px 8px; border-radius:4px; font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }
+    .type-text    { background:rgba(96,165,250,0.12); color:var(--blue); }
+    .type-url     { background:rgba(167,139,250,0.12); color:var(--purple); }
+    .type-image   { background:rgba(251,191,36,0.12); color:var(--yellow); }
+    .type-upi     { background:rgba(249,115,22,0.12); color:var(--accent); }
+    .type-qr      { background:rgba(0,232,122,0.1); color:var(--green); }
+    .type-offer   { background:rgba(255,61,61,0.1); color:var(--red); }
+    .type-payment { background:rgba(192,132,252,0.12); color:#c084fc; }
+    .type-default { background:var(--border2); color:var(--muted); }
 
-    /* ──────── VERDICT BADGE ──────── */
-    .verdict-scam {
-      display:inline-flex; align-items:center; gap:5px;
-      background:rgba(255,61,61,0.1);
-      color:var(--red);
-      border:1px solid rgba(255,61,61,0.2);
-      padding:3px 10px; border-radius:20px;
-      font-size:10px; font-weight:700; letter-spacing:0.5px;
-    }
-    .verdict-safe {
-      display:inline-flex; align-items:center; gap:5px;
-      background:rgba(0,232,122,0.08);
-      color:var(--green);
-      border:1px solid rgba(0,232,122,0.15);
-      padding:3px 10px; border-radius:20px;
-      font-size:10px; font-weight:700; letter-spacing:0.5px;
-    }
-    .verdict-suspicious {
-      display:inline-flex; align-items:center; gap:5px;
-      background:rgba(251,191,36,0.1);
-      color:var(--yellow);
-      border:1px solid rgba(251,191,36,0.2);
-      padding:3px 10px; border-radius:20px;
-      font-size:10px; font-weight:700; letter-spacing:0.5px;
-    }
+    /* ── VERDICT BADGE ── */
+    .verdict-scam { display:inline-flex;align-items:center;gap:5px; background:rgba(255,61,61,0.1); color:var(--red); border:1px solid rgba(255,61,61,0.2); padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.5px; }
+    .verdict-safe { display:inline-flex;align-items:center;gap:5px; background:rgba(0,232,122,0.08); color:var(--green); border:1px solid rgba(0,232,122,0.15); padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.5px; }
+    .verdict-suspicious { display:inline-flex;align-items:center;gap:5px; background:rgba(251,191,36,0.1); color:var(--yellow); border:1px solid rgba(251,191,36,0.2); padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.5px; }
 
-    /* ──────── CONTENT CELL ──────── */
-    .content-preview {
-      max-width: 300px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      color: #888;
-      font-size: 11px;
-    }
-    .content-preview.has-image {
-      display: flex; align-items: center; gap: 8px;
-    }
-    .thumb {
-      width: 36px; height: 36px;
-      object-fit: cover;
-      border-radius: 4px;
-      border: 1px solid var(--border2);
-      flex-shrink: 0;
-    }
-
-    .time-cell { color: var(--muted); font-size: 10px; white-space: nowrap; }
-
+    .content-preview { max-width:300px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#888; font-size:11px; }
+    .content-preview.has-image { display:flex; align-items:center; gap:8px; }
+    .thumb { width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--border2);flex-shrink:0; }
+    .time-cell { color:var(--muted); font-size:10px; white-space:nowrap; }
     .no-data { text-align:center; padding:50px; color:var(--muted); font-size:13px; }
     .loading-row td { text-align:center; padding:50px; color:var(--muted); }
 
-    /* ──────── MODAL ──────── */
-    .modal-overlay {
-      display: none;
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0.85);
-      backdrop-filter: blur(4px);
-      z-index: 500;
+    /* ── LOADING SPINNER ── */
+    .spinner { display:inline-block; width:12px; height:12px; border:2px solid var(--border2); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* ── PAGINATION ── */
+    .pagination {
+      display: flex;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      gap: 8px;
+      padding: 16px;
+      border-top: 1px solid var(--border);
     }
-    .modal-overlay.open { display: flex; }
-
-    .modal {
-      background: var(--surface);
+    .page-btn {
+      background: var(--surface2);
       border: 1px solid var(--border2);
-      border-radius: 14px;
-      width: 100%;
-      max-width: 720px;
-      max-height: 90vh;
-      overflow-y: auto;
-      animation: slideUp 0.22s ease;
-      position: relative;
-    }
-    @keyframes slideUp {
-      from { opacity:0; transform: translateY(16px); }
-      to   { opacity:1; transform: translateY(0); }
-    }
-
-    .modal-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 20px 24px;
-      border-bottom: 1px solid var(--border);
-      position: sticky; top: 0;
-      background: var(--surface);
-      z-index: 10;
-    }
-    .modal-title { font-size: 14px; font-weight: 700; color: #fff; }
-    .modal-close {
-      margin-left: auto;
-      background: var(--border2);
-      border: none;
       color: var(--muted);
-      width: 28px; height: 28px;
+      padding: 5px 12px;
       border-radius: 6px;
-      cursor: pointer;
-      font-size: 16px;
-      display: flex; align-items: center; justify-content: center;
-      transition: all 0.15s;
-    }
-    .modal-close:hover { background: var(--red); color: #fff; }
-
-    .modal-body { padding: 24px; }
-
-    .detail-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 20px;
-    }
-    @media(max-width:500px){ .detail-grid{grid-template-columns:1fr;} }
-
-    .detail-item {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px 14px;
-    }
-    .detail-key {
-      font-size: 9px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: var(--muted);
-      font-family: var(--mono);
-      margin-bottom: 5px;
-    }
-    .detail-val {
-      font-size: 12px;
-      color: var(--text);
-      font-family: var(--mono);
-      word-break: break-all;
-    }
-
-    .full-content-box {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 14px;
-      margin-bottom: 16px;
-    }
-    .full-content-label {
-      font-size: 9px;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: var(--muted);
-      font-family: var(--mono);
-      margin-bottom: 8px;
-    }
-    .full-content-text {
       font-size: 11px;
-      color: var(--text);
+      cursor: pointer;
       font-family: var(--mono);
-      line-height: 1.7;
-      white-space: pre-wrap;
-      word-break: break-all;
-      max-height: 200px;
-      overflow-y: auto;
+      transition: all 0.2s;
     }
+    .page-btn:hover:not(:disabled) { color:#fff; border-color:var(--muted); }
+    .page-btn:disabled { opacity:0.3; cursor:not-allowed; }
+    .page-btn.active { background:rgba(249,115,22,0.15); border-color:var(--accent); color:var(--accent); }
+    .page-info { font-size:11px; color:var(--muted); font-family:var(--mono); padding: 0 8px; }
 
-    .modal-image {
-      width: 100%;
-      border-radius: 8px;
-      border: 1px solid var(--border2);
-      margin-bottom: 16px;
-      display: block;
-    }
-
-    .risk-meter {
-      margin-bottom: 16px;
-    }
-    .risk-label-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 10px;
-      color: var(--muted);
-      font-family: var(--mono);
-      margin-bottom: 6px;
-    }
-    .risk-bar {
-      height: 6px;
-      background: var(--border2);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-    .risk-bar-fill {
-      height: 100%;
-      border-radius: 4px;
-      transition: width 0.5s;
-    }
-    .risk-low    { background: var(--green); }
-    .risk-medium { background: var(--yellow); }
-    .risk-high   { background: var(--red); }
+    /* ── MODAL ── */
+    .modal-overlay { display:none; position:fixed;inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(4px); z-index:500; align-items:center; justify-content:center; padding:20px; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:var(--surface); border:1px solid var(--border2); border-radius:14px; width:100%; max-width:720px; max-height:90vh; overflow-y:auto; animation:slideUp 0.22s ease; position:relative; }
+    @keyframes slideUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+    .modal-header { display:flex;align-items:center;gap:12px;padding:20px 24px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:10; }
+    .modal-title { font-size:14px;font-weight:700;color:#fff; }
+    .modal-close { margin-left:auto;background:var(--border2);border:none;color:var(--muted);width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all 0.15s; }
+    .modal-close:hover { background:var(--red);color:#fff; }
+    .modal-body { padding:24px; }
+    .detail-grid { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px; }
+    @media(max-width:500px){ .detail-grid{grid-template-columns:1fr;} }
+    .detail-item { background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px; }
+    .detail-key { font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-family:var(--mono);margin-bottom:5px; }
+    .detail-val { font-size:12px;color:var(--text);font-family:var(--mono);word-break:break-all; }
+    .full-content-box { background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px; }
+    .full-content-label { font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-family:var(--mono);margin-bottom:8px; }
+    .full-content-text { font-size:11px;color:var(--text);font-family:var(--mono);line-height:1.7;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto; }
+    .modal-image { width:100%;border-radius:8px;border:1px solid var(--border2);margin-bottom:16px;display:block; }
+    .risk-meter { margin-bottom:16px; }
+    .risk-label-row { display:flex;justify-content:space-between;font-size:10px;color:var(--muted);font-family:var(--mono);margin-bottom:6px; }
+    .risk-bar { height:6px;background:var(--border2);border-radius:4px;overflow:hidden; }
+    .risk-bar-fill { height:100%;border-radius:4px;transition:width 0.5s; }
+    .risk-low    { background:var(--green); }
+    .risk-medium { background:var(--yellow); }
+    .risk-high   { background:var(--red); }
   </style>
 </head>
 <body>
@@ -475,6 +274,14 @@
   </div>
 </div>
 
+<!-- DATE BAR -->
+<div class="date-bar">
+  <label for="date-picker">📅 Date:</label>
+  <input type="date" id="date-picker" class="date-input" />
+  <button class="today-btn" onclick="goToToday()">Today</button>
+  <div class="date-info">Showing all scans for <strong id="date-display">—</strong></div>
+</div>
+
 <div class="main">
 
   <!-- STATS -->
@@ -482,7 +289,7 @@
     <div class="stat-card orange">
       <div class="stat-label">Total Scans</div>
       <div class="stat-val" id="st-total">—</div>
-      <div class="stat-sub">All time</div>
+      <div class="stat-sub" id="st-date-lbl">Today</div>
     </div>
     <div class="stat-card red">
       <div class="stat-label">Scams Detected</div>
@@ -503,9 +310,9 @@
 
   <!-- FILTER + TABLE -->
   <div class="section-header">
-    <div class="section-title">Recent Scans</div>
+    <div class="section-title">Scans</div>
     <div class="count-badge" id="row-count">0 records</div>
-    <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+    <button class="refresh-btn" id="refresh-btn-el" onclick="loadData()">↻ Refresh</button>
   </div>
 
   <div class="filter-row">
@@ -537,6 +344,7 @@
         <tr class="loading-row"><td colspan="6">Loading…</td></tr>
       </tbody>
     </table>
+    <div class="pagination" id="pagination" style="display:none"></div>
   </div>
 </div>
 
@@ -548,22 +356,53 @@
       <div class="modal-title" id="modal-title">Scan Detail</div>
       <button class="modal-close" onclick="closeModalDirect()">✕</button>
     </div>
-    <div class="modal-body" id="modal-body">
-      <!-- filled by JS -->
-    </div>
+    <div class="modal-body" id="modal-body"></div>
   </div>
 </div>
 
 <script>
   const API = 'https://scamdekho-api.onrender.com';
   let allRows = [];
+  let filteredRows = [];
   let activeFilter = 'ALL';
+  const PAGE_SIZE = 50;   // rows per page for large datasets
+  let currentPage = 1;
 
-  // ── Fetch top 100 using extended analytics endpoint ──
+  // ── Get today's date in YYYY-MM-DD (IST) ──
+  function todayIST() {
+    const now = new Date();
+    const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    return ist.toISOString().slice(0, 10);
+  }
+
+  // ── Initialise date picker ──
+  function initDatePicker() {
+    const picker = document.getElementById('date-picker');
+    picker.value = todayIST();
+    picker.addEventListener('change', () => loadData());
+  }
+
+  function goToToday() {
+    document.getElementById('date-picker').value = todayIST();
+    loadData();
+  }
+
+  // ── Fetch ALL records for the chosen date ──
   async function loadData() {
+    const dateVal = document.getElementById('date-picker').value || todayIST();
+    const btn = document.getElementById('refresh-btn-el');
+    btn.innerHTML = '<span class="spinner"></span>';
+
     try {
-      const res = await fetch(`${API}/analytics/stats`);
+      const res  = await fetch(`${API}/analytics/stats?date=${dateVal}`);
       const data = await res.json();
+
+      // Update date display
+      const [y, m, d] = dateVal.split('-');
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const dateStr = `${d} ${months[parseInt(m)-1]} ${y}`;
+      document.getElementById('date-display').textContent = dateStr;
+      document.getElementById('st-date-lbl').textContent  = dateStr;
 
       // Stats
       const total = data.total || 0;
@@ -580,11 +419,14 @@
       document.getElementById('rate-fill').style.width   = rate + '%';
 
       allRows = data.recent || [];
-      renderTable();
+      currentPage = 1;
+      applyFilter();
 
     } catch(e) {
       document.getElementById('scan-rows').innerHTML =
         `<tr><td colspan="6" class="no-data">⚠ Failed to load — ${e.message}</td></tr>`;
+    } finally {
+      btn.innerHTML = '↻ Refresh';
     }
   }
 
@@ -593,119 +435,119 @@
     activeFilter = f;
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    renderTable();
+    currentPage = 1;
+    applyFilter();
   }
 
-  // ── Render ──
-  function renderTable() {
-    const rows = allRows.filter(r => {
+  function applyFilter() {
+    filteredRows = allRows.filter(r => {
       if (activeFilter === 'ALL')  return true;
       if (activeFilter === 'SCAM') return r[2] === 'SCAM';
       if (activeFilter === 'SAFE') return r[2] === 'SAFE';
       return (r[0] || '').toLowerCase().includes(activeFilter.toLowerCase());
     });
+    renderTable();
+  }
 
-    document.getElementById('row-count').textContent = rows.length + ' records';
+  // ── Render with pagination ──
+  function renderTable() {
+    const total = filteredRows.length;
+    document.getElementById('row-count').textContent = total.toLocaleString() + ' records';
 
-    if (!rows.length) {
+    if (!total) {
       document.getElementById('scan-rows').innerHTML =
-        `<tr><td colspan="6" class="no-data">No records found</td></tr>`;
+        `<tr><td colspan="6" class="no-data">No records found for this filter</td></tr>`;
+      document.getElementById('pagination').style.display = 'none';
       return;
     }
 
-    document.getElementById('scan-rows').innerHTML = rows.map((r, i) => {
+    const totalPages = Math.ceil(total / PAGE_SIZE);
+    const start = (currentPage - 1) * PAGE_SIZE;
+    const pageRows = filteredRows.slice(start, start + PAGE_SIZE);
+
+    document.getElementById('scan-rows').innerHTML = pageRows.map((r, i) => {
+      const globalIdx = start + i;
       const [type, content, verdict, time, risk, image_b64, extras] = r;
-      const typeCls  = typeClass(type);
-      const typeDisp = typeLabel(type);
-      const vBadge   = verdictBadge(verdict);
       const riskNum  = parseInt(risk) || 0;
       const riskDisp = riskNum > 0 ? riskNum + '%' : '—';
-      const timeDisp = formatDateTime(time);
       const imgTag   = image_b64
         ? `<img class="thumb" src="data:image/jpeg;base64,${image_b64}" alt="" />`
         : '';
       const preview  = truncate(content, 60);
 
-      return `<tr onclick="openModal(${i})" data-idx="${i}">
-        <td style="color:var(--muted);font-size:10px">${i+1}</td>
-        <td><span class="type-tag ${typeCls}">${typeDisp}</span></td>
+      return `<tr onclick="openModal(${globalIdx})" data-idx="${globalIdx}">
+        <td style="color:var(--muted);font-size:10px">${globalIdx+1}</td>
+        <td><span class="type-tag ${typeClass(type)}">${typeLabel(type)}</span></td>
         <td>
           <div class="content-preview ${image_b64 ? 'has-image' : ''}">
             ${imgTag}
             <span title="${escHtml(content)}">${escHtml(preview)}</span>
           </div>
         </td>
-        <td>${vBadge}</td>
+        <td>${verdictBadge(verdict)}</td>
         <td style="color:${riskColor(riskNum)};font-size:11px">${riskDisp}</td>
-        <td class="time-cell">${timeDisp}</td>
+        <td class="time-cell">${formatDateTime(time)}</td>
       </tr>`;
     }).join('');
+
+    // Pagination controls
+    renderPagination(totalPages);
+  }
+
+  function renderPagination(totalPages) {
+    const pg = document.getElementById('pagination');
+    if (totalPages <= 1) { pg.style.display = 'none'; return; }
+    pg.style.display = 'flex';
+
+    let html = `
+      <button class="page-btn" onclick="goPage(1)" ${currentPage===1?'disabled':''}>«</button>
+      <button class="page-btn" onclick="goPage(${currentPage-1})" ${currentPage===1?'disabled':''}>‹ Prev</button>
+      <span class="page-info">Page ${currentPage} / ${totalPages}</span>
+      <button class="page-btn" onclick="goPage(${currentPage+1})" ${currentPage===totalPages?'disabled':''}>Next ›</button>
+      <button class="page-btn" onclick="goPage(${totalPages})" ${currentPage===totalPages?'disabled':''}>»</button>
+    `;
+    pg.innerHTML = html;
+  }
+
+  function goPage(p) {
+    currentPage = p;
+    renderTable();
+    window.scrollTo({top:0, behavior:'smooth'});
   }
 
   // ── Open Modal ──
   function openModal(idx) {
-    const rows = allRows.filter(r => {
-      if (activeFilter === 'ALL')  return true;
-      if (activeFilter === 'SCAM') return r[2] === 'SCAM';
-      if (activeFilter === 'SAFE') return r[2] === 'SAFE';
-      return (r[0] || '').toLowerCase().includes(activeFilter.toLowerCase());
-    });
-    const r = rows[idx];
+    const r = filteredRows[idx];
     if (!r) return;
-
     const [type, content, verdict, time, risk, image_b64, extras] = r;
     const riskNum = parseInt(risk) || 0;
 
-    // header badge
     document.getElementById('modal-type-badge').outerHTML =
       `<span id="modal-type-badge" class="type-tag ${typeClass(type)}">${typeLabel(type)}</span>`;
     document.getElementById('modal-title').textContent = 'Scan Detail';
 
     let bodyHtml = '';
-
-    // Image (if any)
     if (image_b64) {
       bodyHtml += `
         <div class="full-content-label">Screenshot / Image</div>
         <img class="modal-image" src="data:image/jpeg;base64,${image_b64}" alt="Scan screenshot" />
       `;
     }
-
-    // Risk meter
     if (riskNum > 0) {
       const rClass = riskNum >= 70 ? 'risk-high' : riskNum >= 40 ? 'risk-medium' : 'risk-low';
       bodyHtml += `
         <div class="risk-meter">
-          <div class="risk-label-row">
-            <span>Risk Level</span>
-            <span>${riskNum}%</span>
-          </div>
+          <div class="risk-label-row"><span>Risk Level</span><span>${riskNum}%</span></div>
           <div class="risk-bar"><div class="risk-bar-fill ${rClass}" style="width:${riskNum}%"></div></div>
         </div>
       `;
     }
-
-    // Key details grid
     bodyHtml += `<div class="detail-grid">
-      <div class="detail-item">
-        <div class="detail-key">Verdict</div>
-        <div class="detail-val">${verdictBadge(verdict)}</div>
-      </div>
-      <div class="detail-item">
-        <div class="detail-key">Risk Score</div>
-        <div class="detail-val" style="color:${riskColor(riskNum)}">${riskNum > 0 ? riskNum + '%' : 'N/A'}</div>
-      </div>
-      <div class="detail-item">
-        <div class="detail-key">Type</div>
-        <div class="detail-val">${type || '—'}</div>
-      </div>
-      <div class="detail-item">
-        <div class="detail-key">Date & Time</div>
-        <div class="detail-val">${formatDateTime(time)}</div>
-      </div>
+      <div class="detail-item"><div class="detail-key">Verdict</div><div class="detail-val">${verdictBadge(verdict)}</div></div>
+      <div class="detail-item"><div class="detail-key">Risk Score</div><div class="detail-val" style="color:${riskColor(riskNum)}">${riskNum > 0 ? riskNum + '%' : 'N/A'}</div></div>
+      <div class="detail-item"><div class="detail-key">Type</div><div class="detail-val">${type || '—'}</div></div>
+      <div class="detail-item"><div class="detail-key">Date & Time</div><div class="detail-val">${formatDateTime(time)}</div></div>
     </div>`;
-
-    // Full content
     if (content) {
       bodyHtml += `
         <div class="full-content-box">
@@ -714,32 +556,24 @@
         </div>
       `;
     }
-
-    // Extra fields (if backend returns them in extras slot)
     if (extras && typeof extras === 'object') {
-      const fields = Object.entries(extras).filter(([k, v]) => v && String(v).length < 300);
+      const fields = Object.entries(extras).filter(([k,v]) => v && String(v).length < 300);
       if (fields.length) {
         bodyHtml += `<div class="detail-grid">` +
-          fields.map(([k, v]) => `
+          fields.map(([k,v]) => `
             <div class="detail-item">
               <div class="detail-key">${escHtml(k.replace(/_/g,' '))}</div>
               <div class="detail-val">${escHtml(String(v))}</div>
             </div>
-          `).join('') +
-          `</div>`;
+          `).join('') + `</div>`;
       }
     }
-
     document.getElementById('modal-body').innerHTML = bodyHtml;
     document.getElementById('modal-overlay').classList.add('open');
   }
 
-  function closeModal(e) {
-    if (e.target === document.getElementById('modal-overlay')) closeModalDirect();
-  }
-  function closeModalDirect() {
-    document.getElementById('modal-overlay').classList.remove('open');
-  }
+  function closeModal(e) { if (e.target === document.getElementById('modal-overlay')) closeModalDirect(); }
+  function closeModalDirect() { document.getElementById('modal-overlay').classList.remove('open'); }
   document.addEventListener('keydown', e => { if(e.key==='Escape') closeModalDirect(); });
 
   // ── Helpers ──
@@ -763,21 +597,21 @@
     if (t.includes('image'))  return 'IMAGE';
     if (t.includes('upi'))    return 'UPI';
     if (t.includes('qr'))     return 'QR CODE';
-    return (t || 'SCAN').toUpperCase().slice(0,12);
+    return (t||'SCAN').toUpperCase().slice(0,12);
   }
   function verdictBadge(v) {
     v = (v||'').toUpperCase();
-    if (v === 'SCAM')       return `<span class="verdict-scam">⚠ SCAM</span>`;
-    if (v === 'SUSPICIOUS') return `<span class="verdict-suspicious">~ SUSPICIOUS</span>`;
+    if (v==='SCAM')       return `<span class="verdict-scam">⚠ SCAM</span>`;
+    if (v==='SUSPICIOUS') return `<span class="verdict-suspicious">~ SUSPICIOUS</span>`;
     return `<span class="verdict-safe">✓ SAFE</span>`;
   }
   function riskColor(n) {
-    if (n >= 70) return 'var(--red)';
-    if (n >= 40) return 'var(--yellow)';
-    if (n > 0)   return 'var(--green)';
+    if (n>=70) return 'var(--red)';
+    if (n>=40) return 'var(--yellow)';
+    if (n>0)   return 'var(--green)';
     return 'var(--muted)';
   }
-  function truncate(s, n) { return s && s.length > n ? s.slice(0,n) + '…' : (s||''); }
+  function truncate(s,n) { return s && s.length>n ? s.slice(0,n)+'…' : (s||''); }
   function escHtml(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
@@ -789,31 +623,21 @@
       const pad = n => String(n).padStart(2,'0');
       const date = `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
       const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-      const ago  = timeAgo(d);
-      return `${date} ${time}\n(${ago})`;
+      return `${date} ${time}\n(${timeAgo(d)})`;
     } catch(e) { return ts; }
   }
   function timeAgo(d) {
-    const diff = Math.floor((Date.now() - d) / 1000);
-    if (diff < 60)   return diff + 's ago';
-    if (diff < 3600) return Math.floor(diff/60) + 'm ago';
-    if (diff < 86400)return Math.floor(diff/3600) + 'h ago';
-    return Math.floor(diff/86400) + 'd ago';
+    const diff = Math.floor((Date.now()-d)/1000);
+    if (diff<60)    return diff+'s ago';
+    if (diff<3600)  return Math.floor(diff/60)+'m ago';
+    if (diff<86400) return Math.floor(diff/3600)+'h ago';
+    return Math.floor(diff/86400)+'d ago';
   }
 
+  // ── Init ──
+  initDatePicker();
   loadData();
   setInterval(loadData, 10000);
 </script>
-
-<!--
-  BACKEND CHANGE NEEDED:
-  analytics.py → update the /stats endpoint to:
-  1. .limit(20) → .limit(100)
-  2. Return each row as:
-     [type, content, verdict, created_at, risk_score, image_base64_or_null, extra_fields_dict]
-  
-  Current format:  [type, content[:100], verdict, created_at]
-  New format:      [type, content[:500], verdict, created_at, risk_score, image_b64|null, {}]
--->
 </body>
 </html>
