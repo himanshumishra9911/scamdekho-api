@@ -10,7 +10,7 @@ playwright
 Pillow
 motor
 httpx
-opencv-python-headless
+opencv-contrib-python
 numpy
 pypdf
 python-docx
