@@ -14,6 +14,21 @@ from concurrent.futures import ThreadPoolExecutor
 # ======================================
 GOOGLE_SAFE_API_KEY = os.getenv("GOOGLE_SAFE_BROWSING_KEY")
 ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY")  # Free 1000/day
+RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY")
+
+
+async def verify_recaptcha(token: str) -> bool:
+    if not token:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                "https://www.google.com/recaptcha/api/siteverify",
+                data={"secret": RECAPTCHA_SECRET_KEY, "response": token}
+            )
+            return response.json().get("success", False)
+    except Exception:
+        return False
 
 executor = ThreadPoolExecutor(max_workers=5)
 
@@ -666,7 +681,11 @@ def build_technical_report(domain: str, url: str, sr: dict) -> str:
 # ======================================
 # MASTER FUNCTION
 # ======================================
-async def analyze_url_full(url: str) -> dict:
+async def analyze_url_full(url: str, recaptcha_token: str = "") -> dict:
+    if recaptcha_token:
+        is_human = await verify_recaptcha(recaptcha_token)
+        if not is_human:
+            raise ValueError("reCAPTCHA verification failed.")
     if not url.startswith("http"):
         url = "https://" + url
     parsed = urlparse(url)
