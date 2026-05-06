@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from app.core.database import db
+from app.services.security import require_admin
 from datetime import datetime, timedelta
 
 router = APIRouter()
 
 
-@router.get("/stats")
+@router.get("/stats", dependencies=[Depends(require_admin)])
 async def stats(date: str = Query(default=None, description="Filter by date YYYY-MM-DD. Defaults to today (IST).")):
     try:
         # ── Build date range ──────────────────────────────────────────────────
@@ -34,7 +35,8 @@ async def stats(date: str = Query(default=None, description="Filter by date YYYY
             date_filter,
             {
                 "type": 1, "content": 1, "verdict": 1,
-                "created_at": 1, "risk_score": 1, "_id": 0
+                "created_at": 1, "risk_score": 1,
+                "client_ip": 1, "user_agent": 1, "_id": 0
             }
         ).sort("created_at", -1)   # newest first, NO limit
 
@@ -45,7 +47,9 @@ async def stats(date: str = Query(default=None, description="Filter by date YYYY
                 doc.get("content", "")[:500],
                 doc.get("verdict", ""),
                 str(doc.get("created_at", "")),
-                doc.get("risk_score", 0)
+                doc.get("risk_score", 0),
+                doc.get("client_ip", ""),
+                doc.get("user_agent", ""),
             ])
 
         return {

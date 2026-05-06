@@ -360,6 +360,7 @@
 
 <script>
   const API = 'https://scamdekho-api.onrender.com';
+  const ADMIN_TOKEN = new URLSearchParams(window.location.search).get('token') || '';
   let allRows = [];
   let filteredRows = [];
   let activeFilter = 'ALL';
@@ -392,7 +393,8 @@
     btn.innerHTML = '<span class="spinner"></span>';
 
     try {
-      const res  = await fetch(`${API}/analytics/stats?date=${dateVal}`);
+      const tokenParam = ADMIN_TOKEN ? `&token=${encodeURIComponent(ADMIN_TOKEN)}` : '';
+      const res  = await fetch(`${API}/analytics/stats?date=${dateVal}${tokenParam}`);
       const data = await res.json();
 
       // Update date display
