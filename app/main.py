@@ -1,5 +1,5 @@
 import logging
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import router as v1_router
@@ -8,6 +8,7 @@ from app.api.feedback import router as feedback_router
 from app.services.cache_service import setup_cache_ttl_index
 from app.services.website_screenshot import setup_screenshot_cache_index
 from app.services.scam_db_service import run_all_syncs
+from app.services.security import require_admin
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -76,8 +77,8 @@ app.include_router(v1_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/analytics")
 app.include_router(feedback_router, prefix="/feedback")
 
-@app.get("/dashboard")
-@app.get("/dashboard/")
+@app.get("/dashboard", dependencies=[Depends(require_admin)])
+@app.get("/dashboard/", dependencies=[Depends(require_admin)])
 def dashboard():
     return FileResponse("app/static/dashboard.html")
 

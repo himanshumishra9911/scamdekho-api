@@ -14,7 +14,8 @@ from app.services.website_screenshot import capture_website_screenshot
 from app.services.db_service import save_scan
 from app.services.url_checker import analyze_url_full
 from app.services.cache_service import get_cached_result, set_cached_result
-from app.services.rate_limiter import check_rate_limit
+from app.services.rate_limiter import check_url_rate_limit
+from app.services.security import get_client_ip, require_public_client
 from app.api.report import router as report_router
 from app.api.contact import router as contact_router
 from app.api.offer_letter import router as offer_letter_router
@@ -29,6 +30,13 @@ router.include_router(report_router, prefix="/report", tags=["Report"])
 router.include_router(contact_router, prefix="/contact", tags=["Contact"])
 router.include_router(offer_letter_router, tags=["Offer Letter"])
 router.include_router(payment_screenshot_router, tags=["Payment Screenshot"])
+
+
+def scan_meta(request: Request) -> dict:
+    return {
+        "client_ip": get_client_ip(request),
+        "user_agent": request.headers.get("user-agent", "")[:300],
+    }
 
 
 # ======================================================
@@ -93,7 +101,8 @@ async def check_image(file: UploadFile = File(...)):
 async def check_url(
     data: UrlCheckRequest,
     request: Request,
-    _: None = Depends(check_rate_limit)   # Rate limit inject
+    _: None = Depends(require_public_client),
+    __: None = Depends(check_url_rate_limit),
 ):
     url = data.url.strip()
     if not url.startswith("http"):
@@ -129,7 +138,7 @@ async def check_url(
                 "explanation": intel["explanation"],
                 "other_info": intel["other_info"],
             }
-            await save_scan("url", url, "SCAM", max(ai["risk_score"], 90))
+            await save_scan("url", url, "SCAM", max(ai["risk_score"], 90), scan_meta(request))
             await set_cached_result(url, response)
             return response
 
@@ -149,7 +158,7 @@ async def check_url(
             "explanation": intel["explanation"],
             "other_info": intel["other_info"],
         }
-        await save_scan("url", url, "SCAM", 95)
+        await save_scan("url", url, "SCAM", 95, scan_meta(request))
         await set_cached_result(url, response)
         return response
 
@@ -175,7 +184,7 @@ async def check_url(
             "explanation": intel["explanation"],
             "other_info": intel["other_info"],
         }
-        await save_scan("url", url, verdict, ai["risk_score"])
+        await save_scan("url", url, verdict, ai["risk_score"], scan_meta(request))
         await set_cached_result(url, response)
         return response
 
@@ -197,7 +206,7 @@ async def check_url(
         "explanation": intel["explanation"],
         "other_info": intel["other_info"],
     }
-    await save_scan("url", url, verdict, 100 - ts)
+    await save_scan("url", url, verdict, 100 - ts, scan_meta(request))
     await set_cached_result(url, response)
     return response
 
