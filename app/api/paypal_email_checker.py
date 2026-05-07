@@ -1,6 +1,5 @@
 """
-PayPal Email Scam Checker API
-Detects fake PayPal phishing emails with 95%+ accuracy
+PayPal Email Scam Checker API - 3-Tier Scoring
 """
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -15,52 +14,20 @@ router = APIRouter(
     tags=["PayPal Email Checker"]
 )
 
-# Initialize engine (singleton)
 email_engine = PayPalEmailEngine()
 
 
-# ═══════════════════════════════════════════════════
-# Request/Response Models
-# ═══════════════════════════════════════════════════
 class EmailCheckRequest(BaseModel):
-    email_content: str = Field(
-        ...,
-        min_length=10,
-        max_length=10000,
-        description="Full email content/body"
-    )
-    sender: Optional[str] = Field(
-        default="",
-        max_length=200,
-        description="Sender email address"
-    )
-    subject: Optional[str] = Field(
-        default="",
-        max_length=300,
-        description="Email subject line"
-    )
+    email_content: str = Field(..., min_length=10, max_length=10000)
+    sender: Optional[str] = Field(default="", max_length=200)
+    subject: Optional[str] = Field(default="", max_length=300)
 
 
-# ═══════════════════════════════════════════════════
-# MAIN ENDPOINT
-# ═══════════════════════════════════════════════════
 @router.post("/check")
 async def check_paypal_email(request: Request, data: EmailCheckRequest):
-    """
-    🔍 Check if a PayPal email is a scam
-    
-    Multi-layer detection:
-    - Sender domain verification
-    - Phishing keyword analysis
-    - Suspicious link detection
-    - Phone number detection
-    - Urgency tactics analysis
-    - GPT-4o-mini AI verification
-    
-    Returns detailed scam analysis with 95%+ accuracy
-    """
+    """🔍 Check PayPal email - Returns: Likely Safe / Suspicious / Likely Scam"""
     try:
-        # ═══════════ Layer 1+2: Rule-based Analysis ═══════════
+        # Rule-based analysis
         rule_analysis = email_engine.analyze(
             email_content=data.email_content,
             sender=data.sender,
@@ -71,7 +38,7 @@ async def check_paypal_email(request: Request, data: EmailCheckRequest):
         red_flags = rule_analysis["red_flags"]
         analysis_data = rule_analysis["analysis"]
 
-        # ═══════════ Layer 3: GPT Analysis ═══════════
+        # GPT analysis
         gpt_result = await PayPalGPTAnalyzer.analyze_email(
             email_content=data.email_content,
             sender=data.sender,
@@ -80,57 +47,65 @@ async def check_paypal_email(request: Request, data: EmailCheckRequest):
             red_flags=red_flags,
         )
 
-        # ═══════════ Combined Final Score ═══════════
-        # Weighted: Rules 40% + GPT 60%
+        # Combined score
         gpt_score = gpt_result.get("confidence", 50)
         if gpt_result.get("is_scam"):
             final_score = (rule_score * 0.4) + (gpt_score * 0.6)
         else:
-            # If GPT says safe, weight it more
             final_score = (rule_score * 0.5) + ((100 - gpt_score) * 0.3)
             final_score = min(final_score, rule_score)
 
         final_score = round(min(final_score, 100), 1)
 
-        # ═══════════ Risk Level ═══════════
-        risk_info = get_risk_level(final_score)
+        # Get 3-tier risk level
+        risk = get_risk_level(final_score)
 
-        # ═══════════ Scam Type Info ═══════════
+        # Scam type info
         scam_type_key = gpt_result.get("scam_type", "unknown")
         scam_type_info = SCAM_TYPES.get(scam_type_key, SCAM_TYPES["unknown"])
 
-        # ═══════════ Build Response ═══════════
         return {
             "status": "success",
             "tool": "PayPal Email Checker",
-            
-            "verdict": {
-                "is_scam": gpt_result.get("is_scam", final_score >= 50),
-                "risk_score": final_score,
-                "risk_level": risk_info["level"],
-                "risk_label": risk_info["label"],
-                "confidence": gpt_result.get("confidence", int(final_score)),
-                "summary": gpt_result.get("verdict", "Analysis complete"),
+
+            # ═══════════ MAIN RESULT (3-Tier) ═══════════
+            "result": {
+                "tier": risk["tier"],
+                "level": risk["level"],
+                "label": risk["label"],
+                "emoji": risk["emoji"],
+                "color": risk["color"],
+                "color_hex": risk["color_hex"],
+                "bg_color_hex": risk["bg_color_hex"],
+                "border_color_hex": risk["border_color_hex"],
+                "score": final_score,
+                "icon": risk["icon"],
+                "short_message": risk["short_message"],
+                "detailed_message": risk["detailed_message"],
+                "user_action": risk["user_action"],
             },
-            
-            "scam_info": {
-                "type": scam_type_info["name"],
-                "type_key": scam_type_key,
-                "description": scam_type_info["description"],
-                "severity_color": scam_type_info["color"],
-            },
-            
+
+            "summary": gpt_result.get("verdict", "Analysis complete"),
             "explanation": gpt_result.get(
                 "explanation",
-                "Comprehensive analysis completed using multi-layer detection"
+                "Multi-layer analysis completed"
             ),
-            
-            "red_flags": {
-                "total_count": len(red_flags),
-                "critical_flags": gpt_result.get("key_red_flags", [])[:5],
-                "all_flags": red_flags[:15],
+
+            # ═══════════ SCAM TYPE ═══════════
+            "scam_type": {
+                "name": scam_type_info["name"],
+                "key": scam_type_key,
+                "description": scam_type_info["description"],
             },
-            
+
+            # ═══════════ RED FLAGS ═══════════
+            "red_flags": {
+                "count": len(red_flags),
+                "critical": gpt_result.get("key_red_flags", [])[:5],
+                "all": red_flags[:15],
+            },
+
+            # ═══════════ DETAILED ANALYSIS ═══════════
             "detailed_analysis": {
                 "sender_check": {
                     "email": analysis_data["sender_analysis"].get("email", ""),
@@ -140,6 +115,11 @@ async def check_paypal_email(request: Request, data: EmailCheckRequest):
                     ),
                     "typosquatting_detected": analysis_data["sender_analysis"].get(
                         "is_known_scam_pattern", False
+                    ),
+                    "verdict": (
+                        "✅ Official PayPal sender"
+                        if analysis_data["sender_analysis"].get("is_official_paypal")
+                        else "🚨 NOT from official PayPal"
                     ),
                 },
                 "content_check": {
@@ -157,7 +137,7 @@ async def check_paypal_email(request: Request, data: EmailCheckRequest):
                     ),
                 },
                 "links_check": {
-                    "total_links_found": len(analysis_data["links_found"]),
+                    "total_links": len(analysis_data["links_found"]),
                     "suspicious_links": [
                         {
                             "url": link["url"],
@@ -178,74 +158,39 @@ async def check_paypal_email(request: Request, data: EmailCheckRequest):
                 },
                 "urgency_score": analysis_data["urgency_score"],
             },
-            
-            "recommendations": {
-                "immediate_actions": gpt_result.get("user_recommendations", [
-                    "Do not click any links in this email",
-                    "Login to PayPal directly at paypal.com",
-                    "Forward this email to phishing@paypal.com",
-                    "Delete the email after reporting",
-                ]),
-                "what_to_do_next": [
-                    "✅ Login to PayPal.com directly (type URL manually)",
-                    "✅ Check your account activity for any unauthorized actions",
-                    "✅ Enable Two-Factor Authentication if not already",
-                    "✅ Update your password if you clicked any link",
-                    "✅ Report to PayPal: phishing@paypal.com",
-                ] if final_score >= 40 else [
-                    "✅ Email appears legitimate",
-                    "✅ Still verify by logging into PayPal directly",
-                    "✅ Never share login credentials via email",
-                ],
-                "risk_action": risk_info["action"],
-            },
-            
+
+            # ═══════════ RECOMMENDATIONS ═══════════
+            "recommendations": gpt_result.get("user_recommendations", [
+                "Do not click any links in this email",
+                "Login to PayPal directly at paypal.com",
+                "Forward this email to phishing@paypal.com",
+                "Delete the email after reporting",
+            ]),
+
+            # ═══════════ SAFETY TIPS ═══════════
+            "safety_tips": [
+                "🔒 PayPal NEVER asks for password via email",
+                "🔒 Always check sender domain (must be @paypal.com)",
+                "🔒 Type paypal.com manually instead of clicking links",
+                "🔒 Enable 2-Factor Authentication on PayPal",
+                "🔒 Report phishing to: phishing@paypal.com",
+            ],
+
+            # ═══════════ OFFICIAL PAYPAL INFO ═══════════
             "official_paypal_info": {
                 "real_website": "https://www.paypal.com",
                 "phishing_report_email": "phishing@paypal.com",
-                "official_support": "Login to PayPal → Help & Contact",
-                "tip": "PayPal NEVER asks you to verify account via email links",
+                "support_url": "https://www.paypal.com/help",
             },
         }
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Analysis failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 
-# ═══════════════════════════════════════════════════
-# HEALTH CHECK
-# ═══════════════════════════════════════════════════
-@router.get("/health")
-async def health_check():
-    """Service health check"""
-    return {
-        "status": "ok",
-        "service": "PayPal Email Checker",
-        "version": "1.0.0",
-        "accuracy": "95%+",
-        "detection_layers": [
-            "Sender domain verification",
-            "Content pattern matching",
-            "Link analysis",
-            "Phone number detection",
-            "Urgency analysis",
-            "GPT-4o-mini AI analysis",
-        ]
-    }
-
-
-# ═══════════════════════════════════════════════════
-# QUICK CHECK (Lightweight - for batch checking)
-# ═══════════════════════════════════════════════════
 @router.post("/quick-check")
 async def quick_check(data: EmailCheckRequest):
-    """
-    ⚡ Quick scam check (no GPT - faster, cheaper)
-    Use for high-volume batch checking
-    """
+    """⚡ Quick check (no GPT, faster)"""
     try:
         rule_analysis = email_engine.analyze(
             email_content=data.email_content,
@@ -254,18 +199,35 @@ async def quick_check(data: EmailCheckRequest):
         )
 
         score = rule_analysis["rule_score"]
-        risk_info = get_risk_level(score)
+        risk = get_risk_level(score)
 
         return {
             "status": "success",
-            "is_scam": score >= 50,
-            "risk_score": score,
-            "risk_level": risk_info["level"],
-            "verdict": risk_info["label"],
+            "result": {
+                "tier": risk["tier"],
+                "level": risk["level"],
+                "label": risk["label"],
+                "emoji": risk["emoji"],
+                "color": risk["color"],
+                "color_hex": risk["color_hex"],
+                "score": score,
+                "short_message": risk["short_message"],
+                "user_action": risk["user_action"],
+            },
             "red_flags_count": len(rule_analysis["red_flags"]),
             "top_red_flags": rule_analysis["red_flags"][:3],
-            "note": "Use /check endpoint for detailed AI analysis",
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "service": "PayPal Email Checker",
+        "version": "2.0.0",
+        "scoring_system": "3-tier (Likely Safe / Suspicious / Likely Scam)",
+        "accuracy": "95%+",
+    }
