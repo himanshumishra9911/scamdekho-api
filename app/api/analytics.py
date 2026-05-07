@@ -23,6 +23,15 @@ def build_date_context(date: str = None):
     return {
         "target": target,
         "date_filter": {"created_at": {"$gte": day_start_utc, "$lte": day_end_utc}},
+        "date_any_filter": {
+            "$or": [
+                {"created_at": {"$gte": day_start_utc, "$lte": day_end_utc}},
+                {"createdAt": {"$gte": day_start_utc, "$lte": day_end_utc}},
+                {"timestamp": {"$gte": day_start_utc, "$lte": day_end_utc}},
+                {"scanned_at": {"$gte": day_start_utc, "$lte": day_end_utc}},
+                {"date": {"$gte": day_start_utc, "$lte": day_end_utc}},
+            ]
+        },
     }
 
 
@@ -58,6 +67,18 @@ def number_value(value, default=0):
         return default
 
 
+def sort_time_value(doc: dict):
+    value = first_value(doc, "created_at", "createdAt", "timestamp", "scanned_at", "date")
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            return datetime.min
+    return datetime.min
+
+
 async def find_docs(date: str, scan_type: str):
     context = build_date_context(date)
     if scan_type == "email":
@@ -86,12 +107,64 @@ async def find_docs(date: str, scan_type: str):
     else:
         type_or_content = {"type": {"$regex": scan_type, "$options": "i"}}
 
-    query = {**context["date_filter"], **type_or_content}
-
     docs = []
-    cursor = db.scam_checks.find(query, {"_id": 0}).sort("created_at", -1)
-    async for doc in cursor:
-        docs.append(doc)
+    seen_collections = set()
+
+    try:
+        db_collections = await db.list_collection_names()
+    except Exception:
+        db_collections = []
+
+    if scan_type == "email":
+        candidate_collections = [
+            "scam_checks",
+            "email_checks",
+            "email_scans",
+            "paypal_email_checks",
+            "paypal_email_scans",
+            "paypal_checks",
+            "emails",
+        ]
+        name_parts = ("email", "paypal")
+    elif scan_type == "invoice":
+        candidate_collections = [
+            "scam_checks",
+            "invoice_checks",
+            "invoice_scans",
+            "paypal_invoice_checks",
+            "paypal_invoice_scans",
+            "paypal_checks",
+            "invoices",
+        ]
+        name_parts = ("invoice", "paypal")
+    else:
+        candidate_collections = ["scam_checks"]
+        name_parts = (scan_type,)
+
+    for collection_name in db_collections:
+        lowered = collection_name.lower()
+        if any(part in lowered for part in name_parts):
+            candidate_collections.append(collection_name)
+
+    for collection_name in candidate_collections:
+        if collection_name in seen_collections:
+            continue
+        seen_collections.add(collection_name)
+
+        collection = db[collection_name]
+        is_specific_collection = collection_name != "scam_checks" and any(
+            part in collection_name.lower() for part in name_parts
+        )
+        query = context["date_any_filter"] if is_specific_collection else {
+            "$and": [context["date_any_filter"], type_or_content]
+        }
+
+        cursor = collection.find(query, {"_id": 0}).sort("created_at", -1)
+        async for doc in cursor:
+            doc["_source_collection"] = collection_name
+            docs.append(doc)
+
+    docs.sort(key=sort_time_value, reverse=True)
 
     return context["target"], docs
 
@@ -182,9 +255,10 @@ async def email_stats(date: str = Query(default=None)):
                 "risk_score": risk,
                 "red_flags": list_value(first_value(doc, "red_flags", "flags", "reasons", "analysis.red_flags", default=[])),
                 "phones": phones,
-                "created_at": str(doc.get("created_at", "")),
+                "created_at": str(first_value(doc, "created_at", "createdAt", "timestamp", "scanned_at", "date", default="")),
                 "analysis": first_value(doc, "analysis", default={}),
                 "email_content": first_value(doc, "email_content", "content", "body", default=""),
+                "source_collection": doc.get("_source_collection", ""),
             })
 
         total = len(docs)
@@ -246,7 +320,8 @@ async def invoice_stats(date: str = Query(default=None)):
                 "red_flags": list_value(first_value(doc, "red_flags", "flags", "reasons", "analysis.red_flags", default=[])),
                 "scam_patterns": patterns,
                 "analysis": first_value(doc, "analysis", default={}),
-                "created_at": str(doc.get("created_at", "")),
+                "created_at": str(first_value(doc, "created_at", "createdAt", "timestamp", "scanned_at", "date", default="")),
+                "source_collection": doc.get("_source_collection", ""),
             })
 
         total = len(docs)
