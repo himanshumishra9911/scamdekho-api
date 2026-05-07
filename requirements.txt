@@ -17,6 +17,14 @@ python-docx
 PyMuPDF
 slowapi==0.1.9
 apscheduler==3.10.4
+librosa==0.10.1
+soundfile==0.12.1
+pydub==0.25.1
+aiofiles==23.2.1
+scipy==1.11.4
+torch==2.1.2
+torchaudio==2.1.2
+transformers==4.36.2
 
 
 
