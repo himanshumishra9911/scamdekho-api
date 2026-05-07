@@ -24,7 +24,7 @@ soundfile==0.12.1
 pydub==0.25.1
 aiofiles==23.2.1
 scipy==1.13.1
-torch==2.2.2+cpu
+torch==2.7.1+cpu
 torchaudio==2.2.2+cpu
-transformers==4.40.2
+transformers==5.0.0rc3
 imageio-ffmpeg==0.4.9
