@@ -107,30 +107,11 @@ def sort_time_value(doc: dict):
 async def find_docs(date: str, scan_type: str):
     context = build_date_context(date)
     if scan_type == "email":
-        type_or_content = {
-            "$or": [
-                {"type": {"$regex": "email|paypal", "$options": "i"}},
-                {"content": {"$regex": "paypal|subject:|from:|@|email", "$options": "i"}},
-                {"sender": {"$exists": True}},
-                {"sender_email": {"$exists": True}},
-                {"email_content": {"$exists": True}},
-                {"subject": {"$exists": True}},
-            ]
-        }
+        type_filter = {"type": "email"}
     elif scan_type == "invoice":
-        type_or_content = {
-            "$or": [
-                {"type": {"$regex": "invoice|paypal", "$options": "i"}},
-                {"content": {"$regex": "invoice|paypal|receipt|amount|subscription|billing", "$options": "i"}},
-                {"invoice_amount": {"$exists": True}},
-                {"amount": {"$exists": True}},
-                {"scam_patterns": {"$exists": True}},
-                {"analysis.amount": {"$exists": True}},
-                {"analysis.amount_check": {"$exists": True}},
-            ]
-        }
+        type_filter = {"type": "invoice"}
     else:
-        type_or_content = {"type": {"$regex": scan_type, "$options": "i"}}
+        type_filter = {"type": {"$regex": scan_type, "$options": "i"}}
 
     docs = []
     seen_collections = set()
@@ -181,7 +162,7 @@ async def find_docs(date: str, scan_type: str):
             part in collection_name.lower() for part in name_parts
         )
         query = context["date_any_filter"] if is_specific_collection else {
-            "$and": [context["date_any_filter"], type_or_content]
+            "$and": [context["date_any_filter"], type_filter]
         }
 
         cursor = collection.find(query, {"_id": 0}).sort("created_at", -1)
