@@ -1,5 +1,3 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-
 fastapi
 uvicorn[standard]
 openai
@@ -13,18 +11,9 @@ Pillow
 motor
 httpx
 opencv-contrib-python
-numpy==1.26.4
+numpy
 pypdf
 python-docx
 PyMuPDF
 slowapi==0.1.9
 apscheduler==3.10.4
-librosa==0.10.2
-soundfile==0.12.1
-pydub==0.25.1
-aiofiles==23.2.1
-scipy==1.13.1
-torch==2.2.2+cpu
-torchaudio==2.2.2+cpu
-transformers==4.40.2
-imageio-ffmpeg==0.4.9
