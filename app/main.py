@@ -7,6 +7,9 @@ from app.api.analytics import router as analytics_router
 from app.api.feedback import router as feedback_router
 from app.services.cache_service import setup_cache_ttl_index
 from app.services.website_screenshot import setup_screenshot_cache_index
+from app.api.paypal_email_checker import router as paypal_email_router  # ← NEW
+from app.api.paypal_link_checker import router as paypal_link_router    # ← NEW
+from app.api.paypal_invoice_checker import router as paypal_invoice_router
 from app.services.scam_db_service import run_all_syncs
 from app.services.security import require_admin
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
