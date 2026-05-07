@@ -60,10 +60,33 @@ def number_value(value, default=0):
 
 async def find_docs(date: str, scan_type: str):
     context = build_date_context(date)
-    query = {
-        **context["date_filter"],
-        "type": {"$regex": scan_type, "$options": "i"},
-    }
+    if scan_type == "email":
+        type_or_content = {
+            "$or": [
+                {"type": {"$regex": "email|paypal", "$options": "i"}},
+                {"content": {"$regex": "paypal|subject:|from:|@|email", "$options": "i"}},
+                {"sender": {"$exists": True}},
+                {"sender_email": {"$exists": True}},
+                {"email_content": {"$exists": True}},
+                {"subject": {"$exists": True}},
+            ]
+        }
+    elif scan_type == "invoice":
+        type_or_content = {
+            "$or": [
+                {"type": {"$regex": "invoice|paypal", "$options": "i"}},
+                {"content": {"$regex": "invoice|paypal|receipt|amount|subscription|billing", "$options": "i"}},
+                {"invoice_amount": {"$exists": True}},
+                {"amount": {"$exists": True}},
+                {"scam_patterns": {"$exists": True}},
+                {"analysis.amount": {"$exists": True}},
+                {"analysis.amount_check": {"$exists": True}},
+            ]
+        }
+    else:
+        type_or_content = {"type": {"$regex": scan_type, "$options": "i"}}
+
+    query = {**context["date_filter"], **type_or_content}
 
     docs = []
     cursor = db.scam_checks.find(query, {"_id": 0}).sort("created_at", -1)
