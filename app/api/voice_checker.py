@@ -4,8 +4,16 @@ import tempfile
 import aiofiles
 import librosa
 import numpy as np
+import imageio_ffmpeg  # ← NEW
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydub import AudioSegment
+
+# ─────── Setup FFmpeg path (NEW) ───────
+os.environ["PATH"] = (
+    os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe()) 
+    + os.pathsep 
+    + os.environ.get("PATH", "")
+)
 
 from app.services.voice_feature_extractor import VoiceFeatureExtractor
 from app.services.voice_ai_detector import VoiceAIDetector
@@ -22,7 +30,7 @@ analyzer = VoiceOpenAIAnalyzer()
 ALLOWED_FORMATS = {"wav", "mp3", "ogg", "m4a", "webm", "flac"}
 MAX_SIZE_MB = 15
 MIN_DURATION = 1.5
-MAX_DURATION = 120.0  # 2 minutes (HF model ke liye optimal)
+MAX_DURATION = 120.0
 
 
 @router.post("/check")
