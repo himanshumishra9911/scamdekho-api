@@ -1,11 +1,36 @@
 from datetime import datetime, timedelta
+from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field
 
 from app.core.database import db
-from app.services.security import require_admin
+from app.services.security import get_client_ip, require_admin, require_public_client
 
 router = APIRouter()
+
+
+class EmailScanRecord(BaseModel):
+    sender: str = ""
+    subject: str = ""
+    email_content: str = ""
+    verdict: str = "UNKNOWN"
+    risk_score: int = Field(default=0, ge=0, le=100)
+    red_flags: list[str] = Field(default_factory=list)
+    phones: list[str] = Field(default_factory=list)
+    analysis: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvoiceScanRecord(BaseModel):
+    sender: str = ""
+    sender_name: str = ""
+    amount: float = 0
+    message: str = ""
+    verdict: str = "UNKNOWN"
+    risk_score: int = Field(default=0, ge=0, le=100)
+    red_flags: list[str] = Field(default_factory=list)
+    scam_patterns: list[str] = Field(default_factory=list)
+    analysis: dict[str, Any] = Field(default_factory=dict)
 
 
 def build_date_context(date: str = None):
@@ -167,6 +192,39 @@ async def find_docs(date: str, scan_type: str):
     docs.sort(key=sort_time_value, reverse=True)
 
     return context["target"], docs
+
+
+@router.post("/email-scan", dependencies=[Depends(require_public_client)])
+async def save_email_scan(record: EmailScanRecord, request: Request):
+    doc = record.dict()
+    doc.update({
+        "type": "email",
+        "content": " | ".join(filter(None, [record.sender, record.subject, record.email_content[:300]]))[:2000],
+        "created_at": datetime.utcnow(),
+        "client_ip": get_client_ip(request),
+        "user_agent": request.headers.get("user-agent", "")[:300],
+    })
+    await db.scam_checks.insert_one(doc)
+    return {"ok": True}
+
+
+@router.post("/invoice-scan", dependencies=[Depends(require_public_client)])
+async def save_invoice_scan(record: InvoiceScanRecord, request: Request):
+    doc = record.dict()
+    doc.update({
+        "type": "invoice",
+        "content": " | ".join(filter(None, [
+            record.sender,
+            record.sender_name,
+            str(record.amount) if record.amount else "",
+            record.message[:300],
+        ]))[:2000],
+        "created_at": datetime.utcnow(),
+        "client_ip": get_client_ip(request),
+        "user_agent": request.headers.get("user-agent", "")[:300],
+    })
+    await db.scam_checks.insert_one(doc)
+    return {"ok": True}
 
 
 @router.get("/stats", dependencies=[Depends(require_admin)])
