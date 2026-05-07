@@ -1,3 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi
 uvicorn[standard]
 openai
@@ -22,11 +24,6 @@ soundfile==0.12.1
 pydub==0.25.1
 aiofiles==23.2.1
 scipy==1.11.4
-torch==2.1.2
-torchaudio==2.1.2
+torch==2.1.2+cpu
+torchaudio==2.1.2+cpu
 transformers==4.36.2
-
-
-
-
-
