@@ -23,10 +23,8 @@
       --mono:      'JetBrains Mono', monospace;
       --sans:      'Syne', sans-serif;
     }
-
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html { scroll-behavior: smooth; }
-
     body {
       background: var(--bg);
       color: var(--text);
@@ -34,33 +32,22 @@
       min-height: 100vh;
       overflow-x: hidden;
     }
-
     body::before {
       content: '';
       position: fixed;
       inset: 0;
-      background: repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 2px,
-        rgba(255,255,255,0.012) 2px,
-        rgba(255,255,255,0.012) 4px
-      );
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.012) 2px, rgba(255,255,255,0.012) 4px);
       pointer-events: none;
       z-index: 999;
     }
 
-    /* ── TOPBAR ── */
+    /* TOPBAR */
     .topbar {
-      display: flex;
-      align-items: center;
-      gap: 14px;
+      display: flex; align-items: center; gap: 14px;
       padding: 18px 28px;
       border-bottom: 1px solid var(--border);
       background: var(--surface);
-      position: sticky;
-      top: 0;
-      z-index: 100;
+      position: sticky; top: 0; z-index: 100;
     }
     .logo { font-family: var(--sans); font-size: 20px; font-weight: 800; color: #fff; letter-spacing: -0.5px; }
     .logo span { color: var(--accent); }
@@ -68,91 +55,99 @@
       display: flex; align-items: center; gap: 6px;
       background: rgba(0,232,122,0.08);
       border: 1px solid rgba(0,232,122,0.2);
-      border-radius: 20px;
-      padding: 4px 10px;
+      border-radius: 20px; padding: 4px 10px;
       font-size: 11px; color: var(--green); font-family: var(--mono);
       margin-left: auto;
     }
     .live-dot { width:6px; height:6px; background:var(--green); border-radius:50%; animation:blink 1.4s infinite; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
-    /* ── DATE BAR ── */
+    /* DATE BAR */
     .date-bar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
+      display: flex; align-items: center; gap: 10px;
       padding: 12px 28px;
       background: var(--surface2);
       border-bottom: 1px solid var(--border);
     }
     .date-bar label { font-size: 11px; color: var(--muted); font-family: var(--mono); }
     .date-input {
-      background: var(--bg);
-      border: 1px solid var(--border2);
-      color: var(--text);
-      font-family: var(--mono);
-      font-size: 12px;
-      padding: 6px 12px;
-      border-radius: 6px;
-      outline: none;
-      cursor: pointer;
+      background: var(--bg); border: 1px solid var(--border2);
+      color: var(--text); font-family: var(--mono); font-size: 12px;
+      padding: 6px 12px; border-radius: 6px; outline: none; cursor: pointer;
     }
     .date-input::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
     .date-input:focus { border-color: var(--accent); }
-
     .today-btn {
-      background: rgba(249,115,22,0.1);
-      border: 1px solid rgba(249,115,22,0.3);
-      color: var(--accent);
-      font-family: var(--mono);
-      font-size: 11px;
-      padding: 6px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      transition: all 0.2s;
+      background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.3);
+      color: var(--accent); font-family: var(--mono); font-size: 11px;
+      padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s;
     }
     .today-btn:hover { background: rgba(249,115,22,0.2); }
-
     .date-info { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-left: 6px; }
     .date-info strong { color: var(--accent); }
 
-    /* ── LAYOUT ── */
-    .main { padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
+    /* MAIN NAV TABS */
+    .nav-tabs {
+      display: flex; gap: 0;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 28px;
+    }
+    .nav-tab {
+      padding: 14px 22px;
+      font-size: 12px; font-family: var(--mono);
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      display: flex; align-items: center; gap: 7px;
+      position: relative;
+    }
+    .nav-tab:hover { color: var(--text); }
+    .nav-tab.active { color: #fff; border-bottom-color: var(--accent); }
+    .nav-tab .tab-count {
+      background: var(--border2); color: var(--muted);
+      font-size: 9px; padding: 1px 6px; border-radius: 10px;
+    }
+    .nav-tab.active .tab-count { background: rgba(249,115,22,0.15); color: var(--accent); }
 
-    /* ── STAT CARDS ── */
+    /* LAYOUT */
+    .main { padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* STAT CARDS */
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 14px;
-      margin-bottom: 24px;
+      gap: 14px; margin-bottom: 24px;
     }
     @media(max-width:900px){ .stats-grid{grid-template-columns:repeat(2,1fr);} }
-
     .stat-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 18px 20px;
-      position: relative;
-      overflow: hidden;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 18px 20px;
+      position: relative; overflow: hidden;
     }
     .stat-card::before { content:''; position:absolute; top:0;left:0;right:0; height:2px; }
     .stat-card.orange::before { background: var(--accent); }
     .stat-card.red::before    { background: var(--red); }
     .stat-card.green::before  { background: var(--green); }
     .stat-card.yellow::before { background: var(--yellow); }
-
+    .stat-card.blue::before   { background: var(--blue); }
+    .stat-card.purple::before { background: var(--purple); }
     .stat-label { font-size:10px; text-transform:uppercase; letter-spacing:1.5px; color:var(--muted); font-family:var(--mono); margin-bottom:10px; }
     .stat-val { font-size:38px; font-weight:800; line-height:1; font-family:var(--mono); }
     .stat-card.orange .stat-val { color:var(--accent); }
     .stat-card.red .stat-val    { color:var(--red); }
     .stat-card.green .stat-val  { color:var(--green); }
     .stat-card.yellow .stat-val { color:var(--yellow); }
+    .stat-card.blue .stat-val   { color:var(--blue); }
+    .stat-card.purple .stat-val { color:var(--purple); }
     .stat-sub { font-size:11px; color:var(--muted); margin-top:6px; font-family:var(--mono); }
     .rate-bar { height:3px; background:var(--border2); border-radius:4px; margin-top:10px; overflow:hidden; }
     .rate-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--red)); border-radius:4px; transition:width 0.6s cubic-bezier(.4,0,.2,1); }
 
-    /* ── TABLE SECTION ── */
+    /* SECTION HEADER */
     .section-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
     .section-title { font-size:14px; font-weight:700; color:#fff; letter-spacing:0.3px; }
     .count-badge { background:var(--border2); color:var(--muted); font-size:10px; padding:2px 8px; border-radius:20px; font-family:var(--mono); }
@@ -163,7 +158,7 @@
     }
     .refresh-btn:hover { color:#fff; border-color:var(--muted); }
 
-    /* ── FILTER TABS ── */
+    /* FILTER TABS */
     .filter-row { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
     .filter-btn {
       background:transparent; border:1px solid var(--border2); color:var(--muted);
@@ -172,7 +167,7 @@
     }
     .filter-btn:hover, .filter-btn.active { background:var(--surface2); border-color:var(--accent); color:var(--accent); }
 
-    /* ── TABLE ── */
+    /* TABLE */
     .table-wrap { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
     table { width:100%; border-collapse:collapse; }
     thead tr { background:var(--bg); }
@@ -182,7 +177,7 @@
     tbody tr { transition:background 0.15s; cursor:pointer; }
     tbody tr:hover { background:var(--surface2); }
 
-    /* ── TYPE BADGE ── */
+    /* TYPE BADGE */
     .type-tag { display:inline-block; padding:3px 8px; border-radius:4px; font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; }
     .type-text    { background:rgba(96,165,250,0.12); color:var(--blue); }
     .type-url     { background:rgba(167,139,250,0.12); color:var(--purple); }
@@ -191,51 +186,47 @@
     .type-qr      { background:rgba(0,232,122,0.1); color:var(--green); }
     .type-offer   { background:rgba(255,61,61,0.1); color:var(--red); }
     .type-payment { background:rgba(192,132,252,0.12); color:#c084fc; }
+    .type-email   { background:rgba(96,165,250,0.15); color:#93c5fd; }
+    .type-invoice { background:rgba(251,191,36,0.15); color:#fde68a; }
     .type-default { background:var(--border2); color:var(--muted); }
 
-    /* ── VERDICT BADGE ── */
+    /* VERDICT BADGE */
     .verdict-scam { display:inline-flex;align-items:center;gap:5px; background:rgba(255,61,61,0.1); color:var(--red); border:1px solid rgba(255,61,61,0.2); padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.5px; }
     .verdict-safe { display:inline-flex;align-items:center;gap:5px; background:rgba(0,232,122,0.08); color:var(--green); border:1px solid rgba(0,232,122,0.15); padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.5px; }
     .verdict-suspicious { display:inline-flex;align-items:center;gap:5px; background:rgba(251,191,36,0.1); color:var(--yellow); border:1px solid rgba(251,191,36,0.2); padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.5px; }
 
-    .content-preview { max-width:300px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#888; font-size:11px; }
+    .content-preview { max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#888; font-size:11px; }
     .time-cell { color:var(--muted); font-size:10px; white-space:nowrap; }
     .no-data { text-align:center; padding:50px; color:var(--muted); font-size:13px; }
     .loading-row td { text-align:center; padding:50px; color:var(--muted); }
 
-    /* ── LOADING SPINNER ── */
+    /* FLAGS LIST */
+    .flag-preview { max-width:240px; font-size:10px; color:var(--red); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .flag-count { display:inline-block; background:rgba(255,61,61,0.12); color:var(--red); border-radius:10px; padding:2px 7px; font-size:9px; font-family:var(--mono); }
+
+    /* SPINNER */
     .spinner { display:inline-block; width:12px; height:12px; border:2px solid var(--border2); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; }
     @keyframes spin { to { transform:rotate(360deg); } }
 
-    /* ── PAGINATION ── */
+    /* PAGINATION */
     .pagination {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 16px;
-      border-top: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 16px; border-top: 1px solid var(--border);
     }
     .page-btn {
-      background: var(--surface2);
-      border: 1px solid var(--border2);
-      color: var(--muted);
-      padding: 5px 12px;
-      border-radius: 6px;
-      font-size: 11px;
-      cursor: pointer;
-      font-family: var(--mono);
-      transition: all 0.2s;
+      background: var(--surface2); border: 1px solid var(--border2);
+      color: var(--muted); padding: 5px 12px; border-radius: 6px;
+      font-size: 11px; cursor: pointer; font-family: var(--mono); transition: all 0.2s;
     }
     .page-btn:hover:not(:disabled) { color:#fff; border-color:var(--muted); }
     .page-btn:disabled { opacity:0.3; cursor:not-allowed; }
     .page-btn.active { background:rgba(249,115,22,0.15); border-color:var(--accent); color:var(--accent); }
     .page-info { font-size:11px; color:var(--muted); font-family:var(--mono); padding: 0 8px; }
 
-    /* ── MODAL ── */
+    /* MODAL */
     .modal-overlay { display:none; position:fixed;inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(4px); z-index:500; align-items:center; justify-content:center; padding:20px; }
     .modal-overlay.open { display:flex; }
-    .modal { background:var(--surface); border:1px solid var(--border2); border-radius:14px; width:100%; max-width:720px; max-height:90vh; overflow-y:auto; animation:slideUp 0.22s ease; position:relative; }
+    .modal { background:var(--surface); border:1px solid var(--border2); border-radius:14px; width:100%; max-width:760px; max-height:90vh; overflow-y:auto; animation:slideUp 0.22s ease; position:relative; }
     @keyframes slideUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
     .modal-header { display:flex;align-items:center;gap:12px;padding:20px 24px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:10; }
     .modal-title { font-size:14px;font-weight:700;color:#fff; }
@@ -250,7 +241,6 @@
     .full-content-box { background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px; }
     .full-content-label { font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-family:var(--mono);margin-bottom:8px; }
     .full-content-text { font-size:11px;color:var(--text);font-family:var(--mono);line-height:1.7;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto; }
-
     .risk-meter { margin-bottom:16px; }
     .risk-label-row { display:flex;justify-content:space-between;font-size:10px;color:var(--muted);font-family:var(--mono);margin-bottom:6px; }
     .risk-bar { height:6px;background:var(--border2);border-radius:4px;overflow:hidden; }
@@ -258,6 +248,13 @@
     .risk-low    { background:var(--green); }
     .risk-medium { background:var(--yellow); }
     .risk-high   { background:var(--red); }
+    .flags-list { margin-top:4px; }
+    .flag-item { font-size:11px; color:var(--red); font-family:var(--mono); padding:5px 0; border-bottom:1px solid var(--border); line-height:1.5; }
+    .flag-item:last-child { border-bottom:none; }
+    .flag-item.warn { color:var(--yellow); }
+    .flag-item.info { color:var(--blue); }
+    .phones-box { display:flex;flex-wrap:wrap;gap:8px;margin-top:8px; }
+    .phone-tag { background:rgba(255,61,61,0.1);border:1px solid rgba(255,61,61,0.2);color:var(--red);font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:6px; }
   </style>
 </head>
 <body>
@@ -277,73 +274,206 @@
   <label for="date-picker">📅 Date:</label>
   <input type="date" id="date-picker" class="date-input" />
   <button class="today-btn" onclick="goToToday()">Today</button>
-  <div class="date-info">Showing all scans for <strong id="date-display">—</strong></div>
+  <div class="date-info">Showing data for <strong id="date-display">—</strong></div>
+</div>
+
+<!-- MAIN NAV TABS -->
+<div class="nav-tabs">
+  <div class="nav-tab active" onclick="switchMainTab('scans',this)">
+    📊 All Scans <span class="tab-count" id="tc-scans">—</span>
+  </div>
+  <div class="nav-tab" onclick="switchMainTab('email',this)">
+    ✉ Email Engine <span class="tab-count" id="tc-email">—</span>
+  </div>
+  <div class="nav-tab" onclick="switchMainTab('invoice',this)">
+    🧾 Invoice Engine <span class="tab-count" id="tc-invoice">—</span>
+  </div>
 </div>
 
 <div class="main">
 
-  <!-- STATS -->
-  <div class="stats-grid">
-    <div class="stat-card orange">
-      <div class="stat-label">Total Scans</div>
-      <div class="stat-val" id="st-total">—</div>
-      <div class="stat-sub" id="st-date-lbl">Today</div>
+  <!-- ══════════════ TAB: ALL SCANS ══════════════ -->
+  <div class="tab-panel active" id="panel-scans">
+    <div class="stats-grid">
+      <div class="stat-card orange">
+        <div class="stat-label">Total Scans</div>
+        <div class="stat-val" id="st-total">—</div>
+        <div class="stat-sub" id="st-date-lbl">Today</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">Scams Detected</div>
+        <div class="stat-val" id="st-scam">—</div>
+        <div class="stat-sub" id="st-scam-pct">— % of total</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">Safe Results</div>
+        <div class="stat-val" id="st-safe">—</div>
+        <div class="stat-sub" id="st-safe-pct">— % of total</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-label">Scam Rate</div>
+        <div class="stat-val" id="st-rate">—%</div>
+        <div class="rate-bar"><div class="rate-fill" id="rate-fill" style="width:0%"></div></div>
+      </div>
     </div>
-    <div class="stat-card red">
-      <div class="stat-label">Scams Detected</div>
-      <div class="stat-val" id="st-scam">—</div>
-      <div class="stat-sub" id="st-scam-pct">— % of total</div>
+
+    <div class="section-header">
+      <div class="section-title">Scans</div>
+      <div class="count-badge" id="scan-row-count">0 records</div>
+      <button class="refresh-btn" id="scan-refresh-btn" onclick="loadScans()">↻ Refresh</button>
     </div>
-    <div class="stat-card green">
-      <div class="stat-label">Safe Results</div>
-      <div class="stat-val" id="st-safe">—</div>
-      <div class="stat-sub" id="st-safe-pct">— % of total</div>
+    <div class="filter-row">
+      <button class="filter-btn active" onclick="setScanFilter('ALL',this)">All</button>
+      <button class="filter-btn" onclick="setScanFilter('SCAM',this)">⚠ Scam</button>
+      <button class="filter-btn" onclick="setScanFilter('SAFE',this)">✓ Safe</button>
+      <button class="filter-btn" onclick="setScanFilter('text',this)">Text</button>
+      <button class="filter-btn" onclick="setScanFilter('url',this)">URL</button>
+      <button class="filter-btn" onclick="setScanFilter('upi',this)">UPI</button>
+      <button class="filter-btn" onclick="setScanFilter('payment_screenshot',this)">Payment</button>
+      <button class="filter-btn" onclick="setScanFilter('qr',this)">QR</button>
+      <button class="filter-btn" onclick="setScanFilter('offer_letter',this)">Offer Letter</button>
+      <button class="filter-btn" onclick="setScanFilter('image',this)">Image</button>
     </div>
-    <div class="stat-card yellow">
-      <div class="stat-label">Scam Rate</div>
-      <div class="stat-val" id="st-rate">—%</div>
-      <div class="rate-bar"><div class="rate-fill" id="rate-fill" style="width:0%"></div></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px">#</th>
+            <th style="width:130px">Type</th>
+            <th>Content / Preview</th>
+            <th style="width:110px">Verdict</th>
+            <th style="width:70px">Risk%</th>
+            <th style="width:140px">Date & Time</th>
+          </tr>
+        </thead>
+        <tbody id="scan-rows">
+          <tr class="loading-row"><td colspan="6">Loading…</td></tr>
+        </tbody>
+      </table>
+      <div class="pagination" id="scan-pagination" style="display:none"></div>
     </div>
   </div>
 
-  <!-- FILTER + TABLE -->
-  <div class="section-header">
-    <div class="section-title">Scans</div>
-    <div class="count-badge" id="row-count">0 records</div>
-    <button class="refresh-btn" id="refresh-btn-el" onclick="loadData()">↻ Refresh</button>
+  <!-- ══════════════ TAB: EMAIL ENGINE ══════════════ -->
+  <div class="tab-panel" id="panel-email">
+    <div class="stats-grid">
+      <div class="stat-card orange">
+        <div class="stat-label">Email Scans Today</div>
+        <div class="stat-val" id="em-total">—</div>
+        <div class="stat-sub">Total submissions</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">Phishing Detected</div>
+        <div class="stat-val" id="em-scam">—</div>
+        <div class="stat-sub" id="em-scam-pct">—% of emails</div>
+      </div>
+      <div class="stat-card blue">
+        <div class="stat-label">Avg Risk Score</div>
+        <div class="stat-val" id="em-avg-risk">—</div>
+        <div class="stat-sub">Out of 100</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-label">With Phone No.</div>
+        <div class="stat-val" id="em-phones">—</div>
+        <div class="stat-sub">Critical red flag</div>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <div class="section-title">Email Submissions</div>
+      <div class="count-badge" id="email-row-count">0 records</div>
+      <button class="refresh-btn" id="email-refresh-btn" onclick="loadEmails()">↻ Refresh</button>
+    </div>
+    <div class="filter-row">
+      <button class="filter-btn active" onclick="setEmailFilter('ALL',this)">All</button>
+      <button class="filter-btn" onclick="setEmailFilter('SCAM',this)">⚠ Phishing</button>
+      <button class="filter-btn" onclick="setEmailFilter('SAFE',this)">✓ Legit</button>
+      <button class="filter-btn" onclick="setEmailFilter('SUSPICIOUS',this)">~ Suspicious</button>
+      <button class="filter-btn" onclick="setEmailFilter('phone',this)">Has Phone #</button>
+      <button class="filter-btn" onclick="setEmailFilter('high_risk',this)">High Risk 70+</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px">#</th>
+            <th style="width:200px">Sender / Subject</th>
+            <th style="width:80px">Verdict</th>
+            <th style="width:70px">Risk Score</th>
+            <th>Top Red Flags</th>
+            <th style="width:90px">Phones Found</th>
+            <th style="width:140px">Time</th>
+          </tr>
+        </thead>
+        <tbody id="email-rows">
+          <tr class="loading-row"><td colspan="7">Loading…</td></tr>
+        </tbody>
+      </table>
+      <div class="pagination" id="email-pagination" style="display:none"></div>
+    </div>
   </div>
 
-  <div class="filter-row">
-    <button class="filter-btn active" onclick="setFilter('ALL',this)">All</button>
-    <button class="filter-btn" onclick="setFilter('SCAM',this)">⚠ Scam</button>
-    <button class="filter-btn" onclick="setFilter('SAFE',this)">✓ Safe</button>
-    <button class="filter-btn" onclick="setFilter('text',this)">Text</button>
-    <button class="filter-btn" onclick="setFilter('url',this)">URL</button>
-    <button class="filter-btn" onclick="setFilter('upi',this)">UPI</button>
-    <button class="filter-btn" onclick="setFilter('payment_screenshot',this)">Payment</button>
-    <button class="filter-btn" onclick="setFilter('qr',this)">QR</button>
-    <button class="filter-btn" onclick="setFilter('offer_letter',this)">Offer Letter</button>
-    <button class="filter-btn" onclick="setFilter('image',this)">Image</button>
+  <!-- ══════════════ TAB: INVOICE ENGINE ══════════════ -->
+  <div class="tab-panel" id="panel-invoice">
+    <div class="stats-grid">
+      <div class="stat-card orange">
+        <div class="stat-label">Invoice Scans Today</div>
+        <div class="stat-val" id="inv-total">—</div>
+        <div class="stat-sub">Total submissions</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">Scam Invoices</div>
+        <div class="stat-val" id="inv-scam">—</div>
+        <div class="stat-sub" id="inv-scam-pct">—% of invoices</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-label">Total Amount at Risk</div>
+        <div class="stat-val" id="inv-amount">—</div>
+        <div class="stat-sub">From scam invoices</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-label">Pattern Detected</div>
+        <div class="stat-val" id="inv-patterns">—</div>
+        <div class="stat-sub">Tech/Crypto/Brand scams</div>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <div class="section-title">Invoice Submissions</div>
+      <div class="count-badge" id="invoice-row-count">0 records</div>
+      <button class="refresh-btn" id="invoice-refresh-btn" onclick="loadInvoices()">↻ Refresh</button>
+    </div>
+    <div class="filter-row">
+      <button class="filter-btn active" onclick="setInvoiceFilter('ALL',this)">All</button>
+      <button class="filter-btn" onclick="setInvoiceFilter('SCAM',this)">⚠ Scam</button>
+      <button class="filter-btn" onclick="setInvoiceFilter('SAFE',this)">✓ Legit</button>
+      <button class="filter-btn" onclick="setInvoiceFilter('tech_support',this)">Tech Support</button>
+      <button class="filter-btn" onclick="setInvoiceFilter('crypto',this)">Crypto</button>
+      <button class="filter-btn" onclick="setInvoiceFilter('brand',this)">Brand Impersonation</button>
+      <button class="filter-btn" onclick="setInvoiceFilter('high_amount',this)">High Amount $1500+</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px">#</th>
+            <th style="width:180px">Sender</th>
+            <th style="width:100px">Amount</th>
+            <th style="width:80px">Verdict</th>
+            <th style="width:70px">Risk Score</th>
+            <th>Description / Flags</th>
+            <th style="width:90px">Scam Pattern</th>
+            <th style="width:140px">Time</th>
+          </tr>
+        </thead>
+        <tbody id="invoice-rows">
+          <tr class="loading-row"><td colspan="8">Loading…</td></tr>
+        </tbody>
+      </table>
+      <div class="pagination" id="invoice-pagination" style="display:none"></div>
+    </div>
   </div>
 
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th style="width:32px">#</th>
-          <th style="width:130px">Type</th>
-          <th>Content / Preview</th>
-          <th style="width:110px">Verdict</th>
-          <th style="width:70px">Risk%</th>
-          <th style="width:140px">Date & Time</th>
-        </tr>
-      </thead>
-      <tbody id="scan-rows">
-        <tr class="loading-row"><td colspan="6">Loading…</td></tr>
-      </tbody>
-    </table>
-    <div class="pagination" id="pagination" style="display:none"></div>
-  </div>
 </div>
 
 <!-- DETAIL MODAL -->
@@ -351,7 +481,7 @@
   <div class="modal" id="modal-box">
     <div class="modal-header">
       <span id="modal-type-badge"></span>
-      <div class="modal-title" id="modal-title">Scan Detail</div>
+      <div class="modal-title" id="modal-title">Detail</div>
       <button class="modal-close" onclick="closeModalDirect()">✕</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
@@ -361,50 +491,148 @@
 <script>
   const API = 'https://scamdekho-api.onrender.com';
   const ADMIN_TOKEN = new URLSearchParams(window.location.search).get('token') || '';
-  let allRows = [];
-  let filteredRows = [];
-  let activeFilter = 'ALL';
-  const PAGE_SIZE = 50;   // rows per page for large datasets
-  let currentPage = 1;
+  const PAGE_SIZE = 50;
 
-  // ── Get today's date in YYYY-MM-DD (IST) ──
+  // State
+  let scanRows = [], filteredScans = [], scanFilter = 'ALL', scanPage = 1;
+  let emailRows = [], filteredEmails = [], emailFilter = 'ALL', emailPage = 1;
+  let invoiceRows = [], filteredInvoices = [], invoiceFilter = 'ALL', invoicePage = 1;
+  let activeMainTab = 'scans';
+  let currentModalData = null;
+
+  // ── Helpers ──
   function todayIST() {
     const now = new Date();
     const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
     return ist.toISOString().slice(0, 10);
   }
 
-  // ── Initialise date picker ──
+  function tokenParam() {
+    return ADMIN_TOKEN ? `&token=${encodeURIComponent(ADMIN_TOKEN)}` : '';
+  }
+
+  function dateVal() {
+    return document.getElementById('date-picker').value || todayIST();
+  }
+
+  function formatDateLabel(dv) {
+    const [y, m, d] = dv.split('-');
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${d} ${months[parseInt(m)-1]} ${y}`;
+  }
+
+  function formatDateTime(ts) {
+    if (!ts) return '—';
+    try {
+      const d = new Date(ts);
+      if (isNaN(d)) return ts;
+      const pad = n => String(n).padStart(2,'0');
+      return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}\n${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } catch(e) { return ts; }
+  }
+
+  function escHtml(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function truncate(s,n) { return s && s.length>n ? s.slice(0,n)+'…' : (s||'—'); }
+
+  function riskColor(n) {
+    if (n>=70) return 'var(--red)';
+    if (n>=40) return 'var(--yellow)';
+    if (n>0)   return 'var(--green)';
+    return 'var(--muted)';
+  }
+
+  function verdictBadge(v) {
+    v = (v||'').toUpperCase();
+    if (v==='SCAM')       return `<span class="verdict-scam">⚠ SCAM</span>`;
+    if (v==='SUSPICIOUS') return `<span class="verdict-suspicious">~ SUSPICIOUS</span>`;
+    return `<span class="verdict-safe">✓ SAFE</span>`;
+  }
+
+  function typeClass(t) {
+    t = (t||'').toLowerCase();
+    if (t.includes('email'))   return 'type-email';
+    if (t.includes('invoice')) return 'type-invoice';
+    if (t.includes('text'))    return 'type-text';
+    if (t.includes('url'))     return 'type-url';
+    if (t.includes('image'))   return 'type-image';
+    if (t.includes('upi'))     return 'type-upi';
+    if (t.includes('qr'))      return 'type-qr';
+    if (t.includes('offer'))   return 'type-offer';
+    if (t.includes('payment')) return 'type-payment';
+    return 'type-default';
+  }
+
+  function typeLabel(t) {
+    t = (t||'').toLowerCase();
+    if (t.includes('payment_screenshot')) return 'PAYMENT SS';
+    if (t.includes('offer_letter'))       return 'OFFER LETTER';
+    if (t.includes('text'))    return 'TEXT';
+    if (t.includes('url'))     return 'URL';
+    if (t.includes('image'))   return 'IMAGE';
+    if (t.includes('upi'))     return 'UPI';
+    if (t.includes('qr'))      return 'QR CODE';
+    if (t.includes('email'))   return 'EMAIL';
+    if (t.includes('invoice')) return 'INVOICE';
+    return (t||'SCAN').toUpperCase().slice(0,12);
+  }
+
+  // ── Pagination helper ──
+  function renderPagination(containerId, totalPages, curPage, goFn) {
+    const pg = document.getElementById(containerId);
+    if (totalPages <= 1) { pg.style.display = 'none'; return; }
+    pg.style.display = 'flex';
+    pg.innerHTML = `
+      <button class="page-btn" onclick="${goFn}(1)" ${curPage===1?'disabled':''}>«</button>
+      <button class="page-btn" onclick="${goFn}(${curPage-1})" ${curPage===1?'disabled':''}>‹ Prev</button>
+      <span class="page-info">Page ${curPage} / ${totalPages}</span>
+      <button class="page-btn" onclick="${goFn}(${curPage+1})" ${curPage===totalPages?'disabled':''}>Next ›</button>
+      <button class="page-btn" onclick="${goFn}(${totalPages})" ${curPage===totalPages?'disabled':''}>»</button>
+    `;
+  }
+
+  // ── Main Tab Switch ──
+  function switchMainTab(tab, el) {
+    activeMainTab = tab;
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + tab).classList.add('active');
+  }
+
+  // ── Init Date ──
   function initDatePicker() {
     const picker = document.getElementById('date-picker');
     picker.value = todayIST();
-    picker.addEventListener('change', () => loadData());
+    picker.addEventListener('change', () => loadAll());
+    document.getElementById('date-display').textContent = formatDateLabel(picker.value);
   }
 
   function goToToday() {
     document.getElementById('date-picker').value = todayIST();
-    loadData();
+    loadAll();
   }
 
-  // ── Fetch ALL records for the chosen date ──
-  async function loadData() {
-    const dateVal = document.getElementById('date-picker').value || todayIST();
-    const btn = document.getElementById('refresh-btn-el');
-    btn.innerHTML = '<span class="spinner"></span>';
+  function loadAll() {
+    const dv = dateVal();
+    document.getElementById('date-display').textContent = formatDateLabel(dv);
+    loadScans();
+    loadEmails();
+    loadInvoices();
+  }
 
+  // ══════════════════════════════════════════
+  // SCANS TAB
+  // ══════════════════════════════════════════
+  async function loadScans() {
+    const btn = document.getElementById('scan-refresh-btn');
+    btn.innerHTML = '<span class="spinner"></span>';
     try {
-      const tokenParam = ADMIN_TOKEN ? `&token=${encodeURIComponent(ADMIN_TOKEN)}` : '';
-      const res  = await fetch(`${API}/analytics/stats?date=${dateVal}${tokenParam}`);
+      const res  = await fetch(`${API}/analytics/stats?date=${dateVal()}${tokenParam()}`);
       const data = await res.json();
 
-      // Update date display
-      const [y, m, d] = dateVal.split('-');
-      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const dateStr = `${d} ${months[parseInt(m)-1]} ${y}`;
-      document.getElementById('date-display').textContent = dateStr;
-      document.getElementById('st-date-lbl').textContent  = dateStr;
-
-      // Stats
       const total = data.total || 0;
       const scams = data.scam_count || 0;
       const safes = data.safe_count || 0;
@@ -417,206 +645,435 @@
       document.getElementById('st-scam-pct').textContent = rate + '% of total';
       document.getElementById('st-safe-pct').textContent = (100-rate) + '% of total';
       document.getElementById('rate-fill').style.width   = rate + '%';
+      document.getElementById('tc-scans').textContent = total.toLocaleString();
 
-      allRows = data.recent || [];
-      currentPage = 1;
-      applyFilter();
-
+      scanRows = data.recent || [];
+      scanPage = 1;
+      applyScanFilter();
     } catch(e) {
-      document.getElementById('scan-rows').innerHTML =
-        `<tr><td colspan="6" class="no-data">⚠ Failed to load — ${e.message}</td></tr>`;
-    } finally {
-      btn.innerHTML = '↻ Refresh';
-    }
+      document.getElementById('scan-rows').innerHTML = `<tr><td colspan="6" class="no-data">⚠ Failed — ${e.message}</td></tr>`;
+    } finally { btn.innerHTML = '↻ Refresh'; }
   }
 
-  // ── Filter ──
-  function setFilter(f, btn) {
-    activeFilter = f;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  function setScanFilter(f, btn) {
+    scanFilter = f;
+    document.querySelectorAll('#panel-scans .filter-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    currentPage = 1;
-    applyFilter();
+    scanPage = 1; applyScanFilter();
   }
 
-  function applyFilter() {
-    filteredRows = allRows.filter(r => {
-      if (activeFilter === 'ALL')  return true;
-      if (activeFilter === 'SCAM') return r[2] === 'SCAM';
-      if (activeFilter === 'SAFE') return r[2] === 'SAFE';
-      return (r[0] || '').toLowerCase().includes(activeFilter.toLowerCase());
+  function applyScanFilter() {
+    filteredScans = scanRows.filter(r => {
+      if (scanFilter === 'ALL')  return true;
+      if (scanFilter === 'SCAM') return r[2] === 'SCAM';
+      if (scanFilter === 'SAFE') return r[2] === 'SAFE';
+      return (r[0] || '').toLowerCase().includes(scanFilter.toLowerCase());
     });
-    renderTable();
+    renderScansTable();
   }
 
-  // ── Render with pagination ──
-  function renderTable() {
-    const total = filteredRows.length;
-    document.getElementById('row-count').textContent = total.toLocaleString() + ' records';
-
+  function renderScansTable() {
+    const total = filteredScans.length;
+    document.getElementById('scan-row-count').textContent = total.toLocaleString() + ' records';
     if (!total) {
-      document.getElementById('scan-rows').innerHTML =
-        `<tr><td colspan="6" class="no-data">No records found for this filter</td></tr>`;
-      document.getElementById('pagination').style.display = 'none';
+      document.getElementById('scan-rows').innerHTML = `<tr><td colspan="6" class="no-data">No records for this filter</td></tr>`;
+      document.getElementById('scan-pagination').style.display = 'none';
       return;
     }
-
     const totalPages = Math.ceil(total / PAGE_SIZE);
-    const start = (currentPage - 1) * PAGE_SIZE;
-    const pageRows = filteredRows.slice(start, start + PAGE_SIZE);
+    const start = (scanPage - 1) * PAGE_SIZE;
+    const pageRows = filteredScans.slice(start, start + PAGE_SIZE);
 
     document.getElementById('scan-rows').innerHTML = pageRows.map((r, i) => {
-      const globalIdx = start + i;
+      const gi = start + i;
       const [type, content, verdict, time, risk] = r;
-      const riskNum  = parseInt(risk) || 0;
-      const riskDisp = riskNum > 0 ? riskNum + '%' : '—';
-      const preview  = truncate(content, 60);
-
-      return `<tr onclick="openModal(${globalIdx})" data-idx="${globalIdx}">
-        <td style="color:var(--muted);font-size:10px">${globalIdx+1}</td>
+      const riskNum = parseInt(risk) || 0;
+      return `<tr onclick="openScanModal(${gi})">
+        <td style="color:var(--muted);font-size:10px">${gi+1}</td>
         <td><span class="type-tag ${typeClass(type)}">${typeLabel(type)}</span></td>
-        <td>
-          <div class="content-preview">
-            <span title="${escHtml(content)}">${escHtml(preview)}</span>
-          </div>
-        </td>
+        <td><div class="content-preview" title="${escHtml(content)}">${escHtml(truncate(content,60))}</div></td>
         <td>${verdictBadge(verdict)}</td>
-        <td style="color:${riskColor(riskNum)};font-size:11px">${riskDisp}</td>
+        <td style="color:${riskColor(riskNum)};font-size:11px">${riskNum>0?riskNum+'%':'—'}</td>
         <td class="time-cell">${formatDateTime(time)}</td>
       </tr>`;
     }).join('');
-
-    // Pagination controls
-    renderPagination(totalPages);
+    renderPagination('scan-pagination', totalPages, scanPage, 'goScanPage');
   }
 
-  function renderPagination(totalPages) {
-    const pg = document.getElementById('pagination');
-    if (totalPages <= 1) { pg.style.display = 'none'; return; }
-    pg.style.display = 'flex';
+  function goScanPage(p) { scanPage = p; renderScansTable(); window.scrollTo({top:0,behavior:'smooth'}); }
 
-    let html = `
-      <button class="page-btn" onclick="goPage(1)" ${currentPage===1?'disabled':''}>«</button>
-      <button class="page-btn" onclick="goPage(${currentPage-1})" ${currentPage===1?'disabled':''}>‹ Prev</button>
-      <span class="page-info">Page ${currentPage} / ${totalPages}</span>
-      <button class="page-btn" onclick="goPage(${currentPage+1})" ${currentPage===totalPages?'disabled':''}>Next ›</button>
-      <button class="page-btn" onclick="goPage(${totalPages})" ${currentPage===totalPages?'disabled':''}>»</button>
-    `;
-    pg.innerHTML = html;
-  }
-
-  function goPage(p) {
-    currentPage = p;
-    renderTable();
-    window.scrollTo({top:0, behavior:'smooth'});
-  }
-
-  // ── Open Modal ──
-  function openModal(idx) {
-    const r = filteredRows[idx];
-    if (!r) return;
+  function openScanModal(idx) {
+    const r = filteredScans[idx]; if (!r) return;
     const [type, content, verdict, time, risk] = r;
     const riskNum = parseInt(risk) || 0;
-
-    document.getElementById('modal-type-badge').outerHTML =
-      `<span id="modal-type-badge" class="type-tag ${typeClass(type)}">${typeLabel(type)}</span>`;
+    currentModalData = {kind:'scan', data: r};
+    document.getElementById('modal-type-badge').outerHTML = `<span id="modal-type-badge" class="type-tag ${typeClass(type)}">${typeLabel(type)}</span>`;
     document.getElementById('modal-title').textContent = 'Scan Detail';
-
-    let bodyHtml = '';
-
-    if (riskNum > 0) {
-      const rClass = riskNum >= 70 ? 'risk-high' : riskNum >= 40 ? 'risk-medium' : 'risk-low';
-      bodyHtml += `
-        <div class="risk-meter">
-          <div class="risk-label-row"><span>Risk Level</span><span>${riskNum}%</span></div>
-          <div class="risk-bar"><div class="risk-bar-fill ${rClass}" style="width:${riskNum}%"></div></div>
-        </div>
-      `;
+    let body = '';
+    if (riskNum>0) {
+      const rc = riskNum>=70?'risk-high':riskNum>=40?'risk-medium':'risk-low';
+      body += `<div class="risk-meter"><div class="risk-label-row"><span>Risk Level</span><span>${riskNum}%</span></div><div class="risk-bar"><div class="risk-bar-fill ${rc}" style="width:${riskNum}%"></div></div></div>`;
     }
-    bodyHtml += `<div class="detail-grid">
+    body += `<div class="detail-grid">
       <div class="detail-item"><div class="detail-key">Verdict</div><div class="detail-val">${verdictBadge(verdict)}</div></div>
-      <div class="detail-item"><div class="detail-key">Risk Score</div><div class="detail-val" style="color:${riskColor(riskNum)}">${riskNum > 0 ? riskNum + '%' : 'N/A'}</div></div>
-      <div class="detail-item"><div class="detail-key">Type</div><div class="detail-val">${type || '—'}</div></div>
+      <div class="detail-item"><div class="detail-key">Risk Score</div><div class="detail-val" style="color:${riskColor(riskNum)}">${riskNum>0?riskNum+'%':'N/A'}</div></div>
+      <div class="detail-item"><div class="detail-key">Type</div><div class="detail-val">${type||'—'}</div></div>
       <div class="detail-item"><div class="detail-key">Date & Time</div><div class="detail-val">${formatDateTime(time)}</div></div>
     </div>`;
-    if (content) {
-      bodyHtml += `
-        <div class="full-content-box">
-          <div class="full-content-label">Full Content / URL / Message</div>
-          <div class="full-content-text">${escHtml(content)}</div>
-        </div>
-      `;
-    }
-    document.getElementById('modal-body').innerHTML = bodyHtml;
+    if (content) body += `<div class="full-content-box"><div class="full-content-label">Full Content</div><div class="full-content-text">${escHtml(content)}</div></div>`;
+    document.getElementById('modal-body').innerHTML = body;
     document.getElementById('modal-overlay').classList.add('open');
   }
 
+  // ══════════════════════════════════════════
+  // EMAIL ENGINE TAB
+  // ══════════════════════════════════════════
+  async function loadEmails() {
+    const btn = document.getElementById('email-refresh-btn');
+    btn.innerHTML = '<span class="spinner"></span>';
+    try {
+      const res  = await fetch(`${API}/analytics/email-stats?date=${dateVal()}${tokenParam()}`);
+      const data = await res.json();
+
+      const total   = data.total || 0;
+      const scams   = data.scam_count || 0;
+      const rate    = total>0 ? Math.round(scams/total*100) : 0;
+      const avgRisk = data.avg_risk_score || 0;
+      const phones  = data.with_phone_count || 0;
+
+      document.getElementById('em-total').textContent    = total.toLocaleString();
+      document.getElementById('em-scam').textContent     = scams.toLocaleString();
+      document.getElementById('em-scam-pct').textContent = rate + '% of emails';
+      document.getElementById('em-avg-risk').textContent = Math.round(avgRisk);
+      document.getElementById('em-phones').textContent   = phones.toLocaleString();
+      document.getElementById('tc-email').textContent    = total.toLocaleString();
+
+      emailRows = data.recent || [];
+      emailPage = 1;
+      applyEmailFilter();
+    } catch(e) {
+      document.getElementById('email-rows').innerHTML = `<tr><td colspan="7" class="no-data">⚠ Failed — ${e.message}</td></tr>`;
+    } finally { btn.innerHTML = '↻ Refresh'; }
+  }
+
+  function setEmailFilter(f, btn) {
+    emailFilter = f;
+    document.querySelectorAll('#panel-email .filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    emailPage = 1; applyEmailFilter();
+  }
+
+  function applyEmailFilter() {
+    filteredEmails = emailRows.filter(r => {
+      if (emailFilter === 'ALL') return true;
+      if (emailFilter === 'SCAM') return (r.verdict||'').toUpperCase() === 'SCAM';
+      if (emailFilter === 'SAFE') return (r.verdict||'').toUpperCase() === 'SAFE';
+      if (emailFilter === 'SUSPICIOUS') return (r.verdict||'').toUpperCase() === 'SUSPICIOUS';
+      if (emailFilter === 'phone') return r.phones && r.phones.length > 0;
+      if (emailFilter === 'high_risk') return (r.risk_score||0) >= 70;
+      return true;
+    });
+    renderEmailTable();
+  }
+
+  function renderEmailTable() {
+    const total = filteredEmails.length;
+    document.getElementById('email-row-count').textContent = total.toLocaleString() + ' records';
+    if (!total) {
+      document.getElementById('email-rows').innerHTML = `<tr><td colspan="7" class="no-data">No records for this filter</td></tr>`;
+      document.getElementById('email-pagination').style.display = 'none';
+      return;
+    }
+    const totalPages = Math.ceil(total / PAGE_SIZE);
+    const start = (emailPage - 1) * PAGE_SIZE;
+    const pageRows = filteredEmails.slice(start, start + PAGE_SIZE);
+
+    document.getElementById('email-rows').innerHTML = pageRows.map((r, i) => {
+      const gi = start + i;
+      const risk = r.risk_score || 0;
+      const topFlag = (r.red_flags||[])[0] || '—';
+      const flagCount = (r.red_flags||[]).length;
+      const phones = r.phones || [];
+      const sender = truncate(r.sender || '—', 28);
+      const subject = truncate(r.subject || '—', 30);
+
+      return `<tr onclick="openEmailModal(${gi})">
+        <td style="color:var(--muted);font-size:10px">${gi+1}</td>
+        <td>
+          <div style="font-size:11px;color:var(--text)">${escHtml(sender)}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(subject)}</div>
+        </td>
+        <td>${verdictBadge(r.verdict)}</td>
+        <td style="color:${riskColor(risk)};font-size:12px;font-weight:700">${risk>0?risk+'%':'—'}</td>
+        <td>
+          <div class="flag-preview" title="${escHtml(topFlag)}">${escHtml(topFlag)}</div>
+          ${flagCount>1?`<span class="flag-count">+${flagCount-1} more</span>`:''}
+        </td>
+        <td>${phones.length>0?`<span class="flag-count">${phones.length} found</span>`:'<span style="color:var(--muted);font-size:10px">none</span>'}</td>
+        <td class="time-cell">${formatDateTime(r.created_at)}</td>
+      </tr>`;
+    }).join('');
+    renderPagination('email-pagination', totalPages, emailPage, 'goEmailPage');
+  }
+
+  function goEmailPage(p) { emailPage = p; renderEmailTable(); window.scrollTo({top:0,behavior:'smooth'}); }
+
+  function openEmailModal(idx) {
+    const r = filteredEmails[idx]; if (!r) return;
+    const risk = r.risk_score || 0;
+    document.getElementById('modal-type-badge').outerHTML = `<span id="modal-type-badge" class="type-tag type-email">EMAIL</span>`;
+    document.getElementById('modal-title').textContent = 'Email Scan Detail';
+
+    const flags = r.red_flags || [];
+    const phones = r.phones || [];
+    const analysis = r.analysis || {};
+
+    let body = '';
+    if (risk>0) {
+      const rc = risk>=70?'risk-high':risk>=40?'risk-medium':'risk-low';
+      body += `<div class="risk-meter"><div class="risk-label-row"><span>Risk Score</span><span>${risk}%</span></div><div class="risk-bar"><div class="risk-bar-fill ${rc}" style="width:${risk}%"></div></div></div>`;
+    }
+    body += `<div class="detail-grid">
+      <div class="detail-item"><div class="detail-key">Verdict</div><div class="detail-val">${verdictBadge(r.verdict)}</div></div>
+      <div class="detail-item"><div class="detail-key">Risk Score</div><div class="detail-val" style="color:${riskColor(risk)}">${risk}%</div></div>
+      <div class="detail-item"><div class="detail-key">Sender</div><div class="detail-val">${escHtml(r.sender||'—')}</div></div>
+      <div class="detail-item"><div class="detail-key">Subject</div><div class="detail-val">${escHtml(r.subject||'—')}</div></div>
+    </div>`;
+
+    // Analysis breakdown
+    const sa = analysis.sender_analysis || {};
+    const ca = analysis.content_analysis || {};
+    body += `<div class="detail-grid">
+      <div class="detail-item">
+        <div class="detail-key">Sender Domain</div>
+        <div class="detail-val">${escHtml(sa.domain||'—')}</div>
+        <div style="margin-top:5px;font-size:10px;color:${sa.is_official_paypal?'var(--green)':'var(--red)'}">${sa.is_official_paypal?'✓ Official PayPal':'✗ Not Official PayPal'}</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-key">Keywords Matched</div>
+        <div class="detail-val" style="color:var(--red)">${ca.high_risk_keyword_count||0} high-risk, ${ca.medium_risk_keyword_count||0} medium</div>
+        <div style="margin-top:5px;font-size:10px;color:var(--muted)">${(ca.matched_keywords||[]).slice(0,3).join(', ')||'none'}</div>
+      </div>
+    </div>`;
+
+    if (phones.length>0) {
+      body += `<div class="full-content-box">
+        <div class="full-content-label">Phone Numbers Found (Critical Red Flag)</div>
+        <div class="phones-box">${phones.map(p=>`<span class="phone-tag">${escHtml(p)}</span>`).join('')}</div>
+      </div>`;
+    }
+
+    if (flags.length>0) {
+      body += `<div class="full-content-box">
+        <div class="full-content-label">Red Flags (${flags.length})</div>
+        <div class="flags-list">${flags.map(f=>{
+          const cls = f.includes('🚨')?'':'warn';
+          return `<div class="flag-item ${cls}">${escHtml(f)}</div>`;
+        }).join('')}</div>
+      </div>`;
+    }
+
+    const links = analysis.links_found || [];
+    if (links.length>0) {
+      body += `<div class="full-content-box">
+        <div class="full-content-label">Links Found (${links.length})</div>
+        <div class="flags-list">${links.map(l=>`<div class="flag-item ${l.is_suspicious?'':'info'}" style="color:${l.is_suspicious?'var(--red)':'var(--blue)'}">
+          ${l.is_suspicious?'⚠':'✓'} ${escHtml(l.domain)} — ${escHtml(l.reason)}
+        </div>`).join('')}</div>
+      </div>`;
+    }
+
+    if (r.email_content) {
+      body += `<div class="full-content-box"><div class="full-content-label">Email Content (Preview)</div><div class="full-content-text">${escHtml(truncate(r.email_content, 800))}</div></div>`;
+    }
+
+    document.getElementById('modal-body').innerHTML = body;
+    document.getElementById('modal-overlay').classList.add('open');
+  }
+
+  // ══════════════════════════════════════════
+  // INVOICE ENGINE TAB
+  // ══════════════════════════════════════════
+  async function loadInvoices() {
+    const btn = document.getElementById('invoice-refresh-btn');
+    btn.innerHTML = '<span class="spinner"></span>';
+    try {
+      const res  = await fetch(`${API}/analytics/invoice-stats?date=${dateVal()}${tokenParam()}`);
+      const data = await res.json();
+
+      const total   = data.total || 0;
+      const scams   = data.scam_count || 0;
+      const rate    = total>0 ? Math.round(scams/total*100) : 0;
+      const amount  = data.total_scam_amount || 0;
+      const patterns= data.pattern_count || 0;
+
+      document.getElementById('inv-total').textContent    = total.toLocaleString();
+      document.getElementById('inv-scam').textContent     = scams.toLocaleString();
+      document.getElementById('inv-scam-pct').textContent = rate + '% of invoices';
+      document.getElementById('inv-amount').textContent   = '$' + Math.round(amount).toLocaleString();
+      document.getElementById('inv-patterns').textContent = patterns.toLocaleString();
+      document.getElementById('tc-invoice').textContent   = total.toLocaleString();
+
+      invoiceRows = data.recent || [];
+      invoicePage = 1;
+      applyInvoiceFilter();
+    } catch(e) {
+      document.getElementById('invoice-rows').innerHTML = `<tr><td colspan="8" class="no-data">⚠ Failed — ${e.message}</td></tr>`;
+    } finally { btn.innerHTML = '↻ Refresh'; }
+  }
+
+  function setInvoiceFilter(f, btn) {
+    invoiceFilter = f;
+    document.querySelectorAll('#panel-invoice .filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    invoicePage = 1; applyInvoiceFilter();
+  }
+
+  function applyInvoiceFilter() {
+    filteredInvoices = invoiceRows.filter(r => {
+      if (invoiceFilter === 'ALL') return true;
+      if (invoiceFilter === 'SCAM') return (r.verdict||'').toUpperCase() === 'SCAM';
+      if (invoiceFilter === 'SAFE') return (r.verdict||'').toUpperCase() === 'SAFE';
+      if (invoiceFilter === 'tech_support') return (r.scam_patterns||[]).includes('tech_support_scam');
+      if (invoiceFilter === 'crypto') return (r.scam_patterns||[]).includes('crypto_scam');
+      if (invoiceFilter === 'brand') return (r.scam_patterns||[]).includes('brand_impersonation');
+      if (invoiceFilter === 'high_amount') return (r.amount||0) >= 1500;
+      return true;
+    });
+    renderInvoiceTable();
+  }
+
+  function renderInvoiceTable() {
+    const total = filteredInvoices.length;
+    document.getElementById('invoice-row-count').textContent = total.toLocaleString() + ' records';
+    if (!total) {
+      document.getElementById('invoice-rows').innerHTML = `<tr><td colspan="8" class="no-data">No records for this filter</td></tr>`;
+      document.getElementById('invoice-pagination').style.display = 'none';
+      return;
+    }
+    const totalPages = Math.ceil(total / PAGE_SIZE);
+    const start = (invoicePage - 1) * PAGE_SIZE;
+    const pageRows = filteredInvoices.slice(start, start + PAGE_SIZE);
+
+    document.getElementById('invoice-rows').innerHTML = pageRows.map((r, i) => {
+      const gi = start + i;
+      const risk = r.risk_score || 0;
+      const amount = r.amount || 0;
+      const patterns = r.scam_patterns || [];
+      const topFlag = (r.red_flags||[])[0] || '—';
+      const flagCount = (r.red_flags||[]).length;
+      const amtColor = amount>=1500?'var(--red)':amount>=500?'var(--yellow)':'var(--green)';
+      const patternBadges = patterns.slice(0,2).map(p=>{
+        const labels = {tech_support_scam:'TECH',crypto_scam:'CRYPTO',brand_impersonation:'BRAND',subscription_scam:'SUB',refund_scam_setup:'REFUND'};
+        return `<span class="type-tag type-offer" style="margin-right:3px">${labels[p]||p.toUpperCase().slice(0,6)}</span>`;
+      }).join('');
+
+      return `<tr onclick="openInvoiceModal(${gi})">
+        <td style="color:var(--muted);font-size:10px">${gi+1}</td>
+        <td>
+          <div style="font-size:11px;color:var(--text)">${escHtml(truncate(r.sender||'—',26))}</div>
+          ${r.sender_name?`<div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(truncate(r.sender_name,26))}</div>`:''}
+        </td>
+        <td style="color:${amtColor};font-weight:700;font-size:13px">$${amount.toFixed(2)}</td>
+        <td>${verdictBadge(r.verdict)}</td>
+        <td style="color:${riskColor(risk)};font-size:12px;font-weight:700">${risk>0?risk+'%':'—'}</td>
+        <td>
+          <div class="flag-preview" title="${escHtml(topFlag)}">${escHtml(truncate(r.message||topFlag,50))}</div>
+          ${flagCount>0?`<span class="flag-count">${flagCount} flag${flagCount>1?'s':''}</span>`:''}
+        </td>
+        <td>${patternBadges||'<span style="color:var(--muted);font-size:10px">none</span>'}</td>
+        <td class="time-cell">${formatDateTime(r.created_at)}</td>
+      </tr>`;
+    }).join('');
+    renderPagination('invoice-pagination', totalPages, invoicePage, 'goInvoicePage');
+  }
+
+  function goInvoicePage(p) { invoicePage = p; renderInvoiceTable(); window.scrollTo({top:0,behavior:'smooth'}); }
+
+  function openInvoiceModal(idx) {
+    const r = filteredInvoices[idx]; if (!r) return;
+    const risk = r.risk_score || 0;
+    const amount = r.amount || 0;
+    document.getElementById('modal-type-badge').outerHTML = `<span id="modal-type-badge" class="type-tag type-invoice">INVOICE</span>`;
+    document.getElementById('modal-title').textContent = 'Invoice Scan Detail';
+
+    const flags = r.red_flags || [];
+    const patterns = r.scam_patterns || [];
+    const analysis = r.analysis || {};
+
+    let body = '';
+    if (risk>0) {
+      const rc = risk>=70?'risk-high':risk>=40?'risk-medium':'risk-low';
+      body += `<div class="risk-meter"><div class="risk-label-row"><span>Risk Score</span><span>${risk}%</span></div><div class="risk-bar"><div class="risk-bar-fill ${rc}" style="width:${risk}%"></div></div></div>`;
+    }
+    body += `<div class="detail-grid">
+      <div class="detail-item"><div class="detail-key">Verdict</div><div class="detail-val">${verdictBadge(r.verdict)}</div></div>
+      <div class="detail-item"><div class="detail-key">Invoice Amount</div><div class="detail-val" style="font-size:20px;color:${amount>=1500?'var(--red)':amount>=500?'var(--yellow)':'var(--green)'}">$${amount.toFixed(2)}</div></div>
+      <div class="detail-item"><div class="detail-key">Sender Email</div><div class="detail-val">${escHtml(r.sender||'—')}</div></div>
+      <div class="detail-item"><div class="detail-key">Sender Name</div><div class="detail-val">${escHtml(r.sender_name||'—')}</div></div>
+    </div>`;
+
+    // Analysis from engine
+    const sc = analysis.sender_check || {};
+    const ac = analysis.amount_check || {};
+    const pc = analysis.phone_check || {};
+    const dc = analysis.description_check || {};
+
+    body += `<div class="detail-grid">
+      <div class="detail-item">
+        <div class="detail-key">Sender Type</div>
+        <div class="detail-val">${sc.is_random_email?'<span style="color:var(--yellow)">Free Email (suspicious)</span>':sc.is_business?'<span style="color:var(--green)">Business Email</span>':'Unknown'}</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-key">Amount Flags</div>
+        <div class="detail-val" style="color:${ac.is_common_scam_amount?'var(--red)':'var(--muted)'}">
+          ${ac.is_common_scam_amount?'Common Scam Amount':'Normal'}
+          ${ac.is_round_number?' · Round Number':''}
+        </div>
+      </div>
+    </div>`;
+
+    const phonesFound = pc.phones_found || [];
+    if (phonesFound.length>0) {
+      body += `<div class="full-content-box">
+        <div class="full-content-label">Phone Numbers in Invoice (Critical — PayPal Never Does This)</div>
+        <div class="phones-box">${phonesFound.map(p=>`<span class="phone-tag">${escHtml(p)}</span>`).join('')}</div>
+        ${pc.phone_country?`<div style="margin-top:8px;font-size:10px;color:var(--yellow)">Country: ${pc.phone_country}</div>`:''}
+      </div>`;
+    }
+
+    if (patterns.length>0) {
+      const patternNames = {tech_support_scam:'Tech Support Scam',crypto_scam:'Crypto Purchase Scam',brand_impersonation:'Brand Impersonation',subscription_scam:'Fake Subscription Scam',refund_scam_setup:'Refund Scam Setup'};
+      body += `<div class="full-content-box">
+        <div class="full-content-label">Scam Patterns Detected</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">${patterns.map(p=>`<span class="type-tag type-offer">${patternNames[p]||p}</span>`).join('')}</div>
+      </div>`;
+    }
+
+    if (flags.length>0) {
+      body += `<div class="full-content-box">
+        <div class="full-content-label">Red Flags (${flags.length})</div>
+        <div class="flags-list">${flags.map(f=>`<div class="flag-item ${f.includes('⚠️')?'warn':''}">${escHtml(f)}</div>`).join('')}</div>
+      </div>`;
+    }
+
+    if (r.message) {
+      body += `<div class="full-content-box"><div class="full-content-label">Invoice Message / Description</div><div class="full-content-text">${escHtml(r.message)}</div></div>`;
+    }
+
+    document.getElementById('modal-body').innerHTML = body;
+    document.getElementById('modal-overlay').classList.add('open');
+  }
+
+  // ── Modal Close ──
   function closeModal(e) { if (e.target === document.getElementById('modal-overlay')) closeModalDirect(); }
   function closeModalDirect() { document.getElementById('modal-overlay').classList.remove('open'); }
   document.addEventListener('keydown', e => { if(e.key==='Escape') closeModalDirect(); });
 
-  // ── Helpers ──
-  function typeClass(t) {
-    t = (t||'').toLowerCase();
-    if (t.includes('text'))    return 'type-text';
-    if (t.includes('url'))     return 'type-url';
-    if (t.includes('image'))   return 'type-image';
-    if (t.includes('upi'))     return 'type-upi';
-    if (t.includes('qr'))      return 'type-qr';
-    if (t.includes('offer'))   return 'type-offer';
-    if (t.includes('payment')) return 'type-payment';
-    return 'type-default';
-  }
-  function typeLabel(t) {
-    t = (t||'').toLowerCase();
-    if (t.includes('payment_screenshot')) return 'PAYMENT SS';
-    if (t.includes('offer_letter'))       return 'OFFER LETTER';
-    if (t.includes('text'))   return 'TEXT';
-    if (t.includes('url'))    return 'URL';
-    if (t.includes('image'))  return 'IMAGE';
-    if (t.includes('upi'))    return 'UPI';
-    if (t.includes('qr'))     return 'QR CODE';
-    return (t||'SCAN').toUpperCase().slice(0,12);
-  }
-  function verdictBadge(v) {
-    v = (v||'').toUpperCase();
-    if (v==='SCAM')       return `<span class="verdict-scam">⚠ SCAM</span>`;
-    if (v==='SUSPICIOUS') return `<span class="verdict-suspicious">~ SUSPICIOUS</span>`;
-    return `<span class="verdict-safe">✓ SAFE</span>`;
-  }
-  function riskColor(n) {
-    if (n>=70) return 'var(--red)';
-    if (n>=40) return 'var(--yellow)';
-    if (n>0)   return 'var(--green)';
-    return 'var(--muted)';
-  }
-  function truncate(s,n) { return s && s.length>n ? s.slice(0,n)+'…' : (s||''); }
-  function escHtml(s) {
-    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-  function formatDateTime(ts) {
-    if (!ts) return '—';
-    try {
-      const d = new Date(ts);
-      if (isNaN(d)) return ts;
-      const pad = n => String(n).padStart(2,'0');
-      const date = `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
-      const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-      return `${date} ${time}\n(${timeAgo(d)})`;
-    } catch(e) { return ts; }
-  }
-  function timeAgo(d) {
-    const diff = Math.floor((Date.now()-d)/1000);
-    if (diff<60)    return diff+'s ago';
-    if (diff<3600)  return Math.floor(diff/60)+'m ago';
-    if (diff<86400) return Math.floor(diff/3600)+'h ago';
-    return Math.floor(diff/86400)+'d ago';
-  }
-
   // ── Init ──
   initDatePicker();
-  loadData();
-  setInterval(loadData, 10000);
+  loadAll();
+  setInterval(loadAll, 10000);
 </script>
 </body>
 </html>
