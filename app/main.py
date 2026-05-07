@@ -1,12 +1,10 @@
 import logging
-from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import router as v1_router
 from app.api.analytics import router as analytics_router
 from app.api.feedback import router as feedback_router
-from app.api.voice_checker import router as voice_checker_router  # ← NEW
 from app.services.cache_service import setup_cache_ttl_index
 from app.services.website_screenshot import setup_screenshot_cache_index
 from app.services.scam_db_service import run_all_syncs
@@ -58,17 +56,6 @@ async def startup():
     except Exception as e:
         logger.error(f"Initial sync failed (non-fatal): {e}")
 
-    # ─────── Voice AI Model Preload (NEW) ───────
-    try:
-        from app.services.voice_hf_model import HuggingFaceVoiceDetector
-        detector = HuggingFaceVoiceDetector()
-        if detector.is_loaded():
-            logger.info("✅ Voice AI model preloaded successfully")
-        else:
-            logger.warning("⚠️ Voice AI model load failed (will use fallback)")
-    except Exception as e:
-        logger.error(f"⚠️ Voice AI model preload error: {e}")
-
     # Daily sync — raat 2 baje
     scheduler.add_job(
         run_all_syncs,
@@ -89,7 +76,6 @@ async def shutdown():
 app.include_router(v1_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/analytics")
 app.include_router(feedback_router, prefix="/feedback")
-app.include_router(voice_checker_router)  # ← NEW (already has /api/v1/voice prefix in router)
 
 @app.get("/dashboard", dependencies=[Depends(require_admin)])
 @app.get("/dashboard/", dependencies=[Depends(require_admin)])
