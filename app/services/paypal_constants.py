@@ -226,39 +226,92 @@ SCAM_TYPES = {
 # RISK LEVELS
 # ═══════════════════════════════════════════════════
 def get_risk_level(score: float) -> dict:
-    """Convert score 0-100 to risk level"""
-    if score >= 85:
+    """
+    Convert score 0-100 to 3-tier risk level
+    Simple and clear for users
+    """
+    if score >= 66:
         return {
-            "level": "critical",
-            "label": "🚨 CRITICAL - Definite Scam",
+            "tier": 3,
+            "level": "likely_scam",
+            "label": "Likely Scam",
+            "emoji": "🚨",
             "color": "red",
-            "action": "DO NOT engage. Report and delete immediately."
+            "color_hex": "#DC2626",
+            "bg_color_hex": "#FEE2E2",
+            "border_color_hex": "#DC2626",
+            "short_message": "High risk - Do NOT engage",
+            "detailed_message": (
+                "This shows strong indicators of being a scam. "
+                "Multiple red flags detected. Avoid all interaction "
+                "and report to authorities."
+            ),
+            "user_action": "🚫 DO NOT click links, call numbers, or share any information",
+            "icon": "🚨",
         }
-    elif score >= 65:
+    elif score >= 36:
         return {
-            "level": "high",
-            "label": "⚠️ HIGH RISK - Likely Scam",
-            "color": "orange",
-            "action": "Strong scam indicators. Avoid interaction."
-        }
-    elif score >= 40:
-        return {
-            "level": "medium",
-            "label": "🟡 MEDIUM RISK - Suspicious",
+            "tier": 2,
+            "level": "suspicious",
+            "label": "Suspicious",
+            "emoji": "⚠️",
             "color": "yellow",
-            "action": "Verify through official PayPal directly."
-        }
-    elif score >= 20:
-        return {
-            "level": "low",
-            "label": "🟢 LOW RISK - Probably Safe",
-            "color": "lightgreen",
-            "action": "Looks okay but stay cautious."
+            "color_hex": "#D97706",
+            "bg_color_hex": "#FEF3C7",
+            "border_color_hex": "#D97706",
+            "short_message": "Be cautious - Verify before action",
+            "detailed_message": (
+                "Some red flags detected but not conclusive. "
+                "Could be legitimate or a sophisticated scam. "
+                "Verify through official PayPal channels before any action."
+            ),
+            "user_action": "⚠️ Verify by logging into PayPal directly (paypal.com)",
+            "icon": "⚠️",
         }
     else:
         return {
-            "level": "safe",
-            "label": "✅ SAFE - Legitimate",
+            "tier": 1,
+            "level": "likely_safe",
+            "label": "Likely Safe",
+            "emoji": "✅",
             "color": "green",
-            "action": "No major red flags detected."
+            "color_hex": "#059669",
+            "bg_color_hex": "#D1FAE5",
+            "border_color_hex": "#059669",
+            "short_message": "Appears legitimate - Low risk",
+            "detailed_message": (
+                "No major red flags detected. This appears to be "
+                "legitimate. However, always stay cautious and verify "
+                "important transactions through official channels."
+            ),
+            "user_action": "✅ Looks safe, but stay alert as always",
+            "icon": "✅",
         }
+
+
+# ═══════════════════════════════════════════════════
+# TIER STATISTICS (For Dashboard/Analytics)
+# ═══════════════════════════════════════════════════
+TIER_INFO = {
+    "likely_safe": {
+        "tier": 1,
+        "label": "Likely Safe",
+        "color": "green",
+        "score_range": "0-35",
+        "description": "Low risk, appears legitimate",
+    },
+    "suspicious": {
+        "tier": 2,
+        "label": "Suspicious",
+        "color": "yellow",
+        "score_range": "36-65",
+        "description": "Some red flags, verify carefully",
+    },
+    "likely_scam": {
+        "tier": 3,
+        "label": "Likely Scam",
+        "color": "red",
+        "score_range": "66-100",
+        "description": "High risk, do not engage",
+    },
+}
