@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Depends, Request
+from fastapi import APIRouter, UploadFile, File, Depends, Request, HTTPException
 from pydantic import BaseModel
 import asyncio
 
@@ -15,7 +15,7 @@ from app.services.db_service import save_scan
 from app.services.url_checker import analyze_url_full
 from app.services.cache_service import get_cached_result, set_cached_result
 from app.services.rate_limiter import check_url_rate_limit
-from app.services.security import get_client_ip, require_public_client
+from app.services.security import get_client_ip, require_public_client, is_scammer_testing_url
 from app.api.report import router as report_router
 from app.api.contact import router as contact_router
 from app.api.offer_letter import router as offer_letter_router
@@ -53,7 +53,7 @@ class UpiCheckRequest(BaseModel):
 
 
 # ======================================================
-# TEXT CHECK (unchanged)
+# TEXT CHECK
 # ======================================================
 @router.post("/check/text")
 async def check_text(data: TextCheckRequest):
@@ -71,7 +71,7 @@ async def check_text(data: TextCheckRequest):
 
 
 # ======================================================
-# IMAGE CHECK (unchanged)
+# IMAGE CHECK
 # ======================================================
 @router.post("/check/image")
 async def check_image(file: UploadFile = File(...)):
@@ -108,7 +108,11 @@ async def check_url(
     if not url.startswith("http"):
         url = "https://" + url
 
-    # ── STEP 1: Cache check — same URL pehle check hua? ──
+    # ── SCAMMER BLOCK — census/nha fake domains ──
+    if is_scammer_testing_url(url):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    # ── STEP 1: Cache check ──
     cached = await get_cached_result(url)
     if cached:
         cached["from_cache"] = True
@@ -142,7 +146,6 @@ async def check_url(
             await set_cached_result(url, response)
             return response
 
-        # AI failed
         response = {
             "verdict": "SCAM",
             "confidence": {"en": "This URL is confirmed dangerous by security databases.", "hi": "यह URL सुरक्षा डेटाबेस में खतरनाक के रूप में सूचीबद्ध है।"},
@@ -212,14 +215,13 @@ async def check_url(
 
 
 # ======================================================
-# UPI CHECK — UPDATED
+# UPI CHECK
 # ======================================================
 @router.post("/check/upi")
 async def check_upi(data: UpiCheckRequest):
     upi_id = data.upi_id.strip()
     intel = await analyze_upi_full(upi_id)
 
-    # Agar govt DB mein confirmed scam hai — AI call waste mat karo
     if intel.get("govt_confirmed"):
         verdict = "SCAM"
         await save_scan("upi", upi_id, verdict, 100)
@@ -238,7 +240,6 @@ async def check_upi(data: UpiCheckRequest):
             "community_reports": intel["community_reports"]
         }
 
-    # AI call — executor mein chalao (blocking call hai)
     prompt = f"""You are analyzing a UPI ID for scam risk in India.
 
 TECHNICAL ANALYSIS REPORT:
@@ -258,7 +259,6 @@ IMPORTANT:
     loop = asyncio.get_running_loop()
     ai = await loop.run_in_executor(None, call_ai_analysis, prompt)
 
-    # 3-state verdict
     risk = ai["risk_score"]
     if risk >= 70:
         verdict = "SCAM"
@@ -287,7 +287,7 @@ IMPORTANT:
 
 
 # ======================================================
-# QR CODE CHECK (unchanged)
+# QR CODE CHECK
 # ======================================================
 @router.post("/check/qr")
 async def check_qr(file: UploadFile = File(...)):
@@ -305,18 +305,14 @@ async def check_qr(file: UploadFile = File(...)):
     content = decoded["content"]
     content_type = decoded["content_type"]
 
-    # UPI QR
     if content_type == "upi":
         upi_id = decoded.get("upi_id", content)
         intel = await analyze_upi_full(upi_id)
         prompt = f"""You are analyzing a UPI QR Code for scam risk in India.
-
 QR Code decoded content: {content}
 Extracted UPI ID: {upi_id}
-
 TECHNICAL ANALYSIS REPORT:
 {intel["technical_report"]}
-
 Analyze this UPI QR code. Is it safe to pay?"""
 
         ai = call_ai_analysis(prompt)
@@ -330,7 +326,6 @@ Analyze this UPI QR code. Is it safe to pay?"""
             "engine": "QR → UPI TECHNICAL + AI"
         }
 
-    # URL QR
     elif content_type == "url":
         qr_url = content
         intel = await analyze_url_full(qr_url)
@@ -363,7 +358,6 @@ Analyze this UPI QR code. Is it safe to pay?"""
             "engine": "QR → TECHNICAL AI FALLBACK"
         }
 
-    # TEXT QR
     else:
         ai = call_ai_analysis(f"QR code content:\n{content}\n\nAnalyze for scam risk.")
         verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
