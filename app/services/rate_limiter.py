@@ -6,9 +6,9 @@ from fastapi import Request, HTTPException
 # CONFIG
 # ======================================
 PER_IP_LIMIT = 20       # requests per minute per IP
-URL_PER_IP_LIMIT = 4    # URL checks are expensive and attract scanners
+URL_PER_IP_LIMIT = 3   # URL checks are expensive and attract scanners
 GLOBAL_LIMIT = 200      # requests per minute total
-URL_GLOBAL_LIMIT = 60   # total URL checks per minute
+URL_GLOBAL_LIMIT = 20   # total URL checks per minute
 WINDOW_SECONDS = 60
 
 # ======================================
