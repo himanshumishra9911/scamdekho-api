@@ -93,6 +93,7 @@ async def require_public_client(request: Request) -> None:
 
 
 async def require_admin(
+    
     request: Request,
     x_admin_token: Optional[str] = Header(default=None),
 ) -> None:
@@ -103,3 +104,22 @@ async def require_admin(
     supplied = x_admin_token or request.query_params.get("token")
     if supplied != admin_token:
         raise HTTPException(status_code=401, detail="Admin token required")
+SCAMMER_TEST_PATTERNS = [
+    "census.gov.",
+    "nha.gov.",
+    "infrandc.",
+    "intranet.census",
+    "punjab.census",
+    "in-ssl",
+    "in-web",
+    "in-portal",
+    "insecure",
+    "sslin.com",
+    "userin.com",
+    "updatein.com",
+    "portalin.com",
+]
+
+def is_scammer_testing_url(url: str) -> bool:
+    url_lower = url.lower()
+    return any(p in url_lower for p in SCAMMER_TEST_PATTERNS)
