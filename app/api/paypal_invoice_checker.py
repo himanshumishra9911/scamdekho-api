@@ -9,6 +9,7 @@ from typing import Optional
 from app.services.paypal_invoice_engine import PayPalInvoiceEngine
 from app.services.paypal_gpt_analyzer import PayPalGPTAnalyzer
 from app.services.paypal_constants import get_risk_level, SCAM_TYPES
+from app.services.cache_service import get_cached_scan, set_cached_scan
 
 router = APIRouter(
     prefix="/api/v1/paypal/invoice",
@@ -74,6 +75,18 @@ async def check_paypal_invoice(data: InvoiceCheckRequest):
     - Come from free email providers
     """
     try:
+        cache_payload = {
+            "sender_email": data.sender_email,
+            "amount": data.amount,
+            "message": data.message,
+            "sender_name": data.sender_name,
+            "invoice_number": data.invoice_number,
+        }
+        cached = await get_cached_scan("paypal_invoice", cache_payload)
+        if cached:
+            cached["from_cache"] = True
+            return cached
+
         # ═══════════ Rule-based Analysis ═══════════
         rule_analysis = invoice_engine.analyze(
             sender=data.sender_email,
@@ -120,7 +133,7 @@ async def check_paypal_invoice(data: InvoiceCheckRequest):
         scam_type_info = SCAM_TYPES.get(scam_type_key, SCAM_TYPES["unknown"])
 
         # ═══════════ Build Response ═══════════
-        return {
+        response = {
             "status": "success",
             "tool": "PayPal Invoice Checker",
 
@@ -332,6 +345,8 @@ async def check_paypal_invoice(data: InvoiceCheckRequest):
                 ),
             },
         }
+        await set_cached_scan("paypal_invoice", cache_payload, response)
+        return response
 
     except Exception as e:
         raise HTTPException(

@@ -11,6 +11,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from app.services.db_service import save_scan
 from app.services.payment_screenshot_engine import analyze_payment_screenshot
+from app.services.cache_service import get_cached_scan, set_cached_scan
 
 logger   = logging.getLogger(__name__)
 router   = APIRouter()
@@ -118,6 +119,13 @@ async def check_payment_screenshot(
             detail="File content does not match an image. Only real image files are accepted."
         )
 
+    cache_payload = {"mime_type": real_mime, "image_bytes": image_bytes}
+    cached = await get_cached_scan("payment_screenshot", cache_payload)
+    if cached:
+        cached["from_cache"] = True
+        cached["_request_id"] = request_id
+        return cached
+
     try:
         result = await asyncio.wait_for(
             analyze_payment_screenshot(image_bytes),
@@ -181,4 +189,6 @@ async def check_payment_screenshot(
         f"risk:{result.get('risk_percentage')}% "
         f"app:{result.get('detected_app', {}).get('name', '?')}"
     )
-    return {**result, "_request_id": request_id}
+    response = {**result, "_request_id": request_id}
+    await set_cached_scan("payment_screenshot", cache_payload, response)
+    return response

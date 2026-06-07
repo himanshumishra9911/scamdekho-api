@@ -8,6 +8,7 @@ from typing import List
 from app.services.paypal_link_engine import PayPalLinkEngine
 from app.services.paypal_gpt_analyzer import PayPalGPTAnalyzer
 from app.services.paypal_constants import get_risk_level
+from app.services.cache_service import get_cached_scan, set_cached_scan
 
 router = APIRouter(
     prefix="/api/v1/paypal/link",
@@ -29,6 +30,12 @@ class BulkLinkCheckRequest(BaseModel):
 async def check_paypal_link(data: LinkCheckRequest):
     """🔗 Check PayPal link - Returns: Likely Safe / Suspicious / Likely Scam"""
     try:
+        cache_payload = {"url": data.url}
+        cached = await get_cached_scan("paypal_link", cache_payload)
+        if cached:
+            cached["from_cache"] = True
+            return cached
+
         # Rule-based analysis
         rule_analysis = link_engine.analyze(data.url)
         rule_score = rule_analysis["rule_score"]
@@ -61,7 +68,7 @@ async def check_paypal_link(data: LinkCheckRequest):
         # Get 3-tier risk
         risk = get_risk_level(final_score)
 
-        return {
+        response = {
             "status": "success",
             "tool": "PayPal Link Checker",
 
@@ -140,6 +147,8 @@ async def check_paypal_link(data: LinkCheckRequest):
                 "🔒 Enable 2FA on your account",
             ],
         }
+        await set_cached_scan("paypal_link", cache_payload, response)
+        return response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")

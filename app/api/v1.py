@@ -13,7 +13,12 @@ from app.services.ocr_engine import extract_text_from_image
 from app.services.website_screenshot import capture_website_screenshot
 from app.services.db_service import save_scan
 from app.services.url_checker import analyze_url_full
-from app.services.cache_service import get_cached_result, set_cached_result
+from app.services.cache_service import (
+    get_cached_result,
+    set_cached_result,
+    get_cached_scan,
+    set_cached_scan,
+)
 from app.services.rate_limiter import check_url_rate_limit
 from app.services.security import get_client_ip, require_public_client, is_scammer_testing_url
 from app.api.report import router as report_router
@@ -58,16 +63,23 @@ class UpiCheckRequest(BaseModel):
 @router.post("/check/text")
 async def check_text(data: TextCheckRequest):
     text = data.text.strip()
+    cached = await get_cached_scan("text", text)
+    if cached:
+        cached["from_cache"] = True
+        return cached
+
     ai = call_ai_analysis(text)
     verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
-    await save_scan("text", text, verdict, ai["risk_score"])
-    return {
+    response = {
         "verdict": verdict,
         "confidence": ai["confidence"],
         "why": ai["why"],
         "what_to_do": ai["what_to_do"],
         "how_to_avoid": ai["how_to_avoid"]
     }
+    await save_scan("text", text, verdict, ai["risk_score"])
+    await set_cached_scan("text", text, response)
+    return response
 
 
 # ======================================================
@@ -76,22 +88,33 @@ async def check_text(data: TextCheckRequest):
 @router.post("/check/image")
 async def check_image(file: UploadFile = File(...)):
     image_bytes = await file.read()
+    cached = await get_cached_scan("image", image_bytes)
+    if cached:
+        cached["from_cache"] = True
+        return cached
+
     extracted_text = extract_text_from_image(image_bytes)
 
     if extracted_text and len(extracted_text.strip()) > 25:
         ai = call_ai_analysis(extracted_text)
         verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
+        response = {"verdict": verdict, "confidence": ai["confidence"], "why": ai["why"], "what_to_do": ai["what_to_do"], "how_to_avoid": ai["how_to_avoid"], "engine": "OCR + TEXT AI"}
         await save_scan("image", extracted_text, verdict, ai["risk_score"])
-        return {"verdict": verdict, "confidence": ai["confidence"], "why": ai["why"], "what_to_do": ai["what_to_do"], "how_to_avoid": ai["how_to_avoid"], "engine": "OCR + TEXT AI"}
+        await set_cached_scan("image", image_bytes, response)
+        return response
 
     vision_ai = call_ai_vision_analysis(image_bytes)
     if vision_ai:
         verdict = "SCAM" if vision_ai["risk_score"] >= 70 else "SAFE"
+        response = {"verdict": verdict, "confidence": vision_ai["confidence"], "why": vision_ai["why"], "what_to_do": vision_ai["what_to_do"], "how_to_avoid": vision_ai["how_to_avoid"], "engine": "VISION AI"}
         await save_scan("image", "vision_image", verdict, vision_ai["risk_score"])
-        return {"verdict": verdict, "confidence": vision_ai["confidence"], "why": vision_ai["why"], "what_to_do": vision_ai["what_to_do"], "how_to_avoid": vision_ai["how_to_avoid"], "engine": "VISION AI"}
+        await set_cached_scan("image", image_bytes, response)
+        return response
 
     await save_scan("image", "unknown", "SAFE", 0)
-    return {"verdict": "SAFE"}
+    response = {"verdict": "SAFE"}
+    await set_cached_scan("image", image_bytes, response)
+    return response
 
 
 # ======================================================
@@ -220,12 +243,17 @@ async def check_url(
 @router.post("/check/upi")
 async def check_upi(data: UpiCheckRequest):
     upi_id = data.upi_id.strip()
+    cached = await get_cached_scan("upi", upi_id)
+    if cached:
+        cached["from_cache"] = True
+        return cached
+
     intel = await analyze_upi_full(upi_id)
 
     if intel.get("govt_confirmed"):
         verdict = "SCAM"
         await save_scan("upi", upi_id, verdict, 100)
-        return {
+        response = {
             "verdict": verdict,
             "verdict_state": "SCAM",
             "confidence": {
@@ -239,6 +267,8 @@ async def check_upi(data: UpiCheckRequest):
             "bank_name": intel["bank_name"],
             "community_reports": intel["community_reports"]
         }
+        await set_cached_scan("upi", upi_id, response)
+        return response
 
     prompt = f"""You are analyzing a UPI ID for scam risk in India.
 
@@ -270,9 +300,7 @@ IMPORTANT:
         verdict = "SAFE"
         verdict_state = "SAFE"
 
-    await save_scan("upi", upi_id, verdict, ai["risk_score"])
-
-    return {
+    response = {
         "verdict": verdict,
         "verdict_state": verdict_state,
         "confidence": ai["confidence"],
@@ -284,6 +312,9 @@ IMPORTANT:
         "community_reports": intel["community_reports"],
         "govt_confirmed": intel["govt_confirmed"],
     }
+    await save_scan("upi", upi_id, verdict, ai["risk_score"])
+    await set_cached_scan("upi", upi_id, response)
+    return response
 
 
 # ======================================================
@@ -292,15 +323,22 @@ IMPORTANT:
 @router.post("/check/qr")
 async def check_qr(file: UploadFile = File(...)):
     image_bytes = await file.read()
+    cached = await get_cached_scan("qr", image_bytes)
+    if cached:
+        cached["from_cache"] = True
+        return cached
+
     decoded = decode_qr_image(image_bytes)
 
     if not decoded["success"]:
-        return {
+        response = {
             "verdict": "UNKNOWN",
             "confidence": {"en": "Could not read QR/Barcode from image", "hi": "QR/Barcode पढ़ने में असमर्थ"},
             "why": [], "what_to_do": [{"en": "Try a clearer image", "hi": "साफ़ तस्वीर लें"}],
             "how_to_avoid": [], "engine": "QR DECODE FAILED"
         }
+        await set_cached_scan("qr", image_bytes, response)
+        return response
 
     content = decoded["content"]
     content_type = decoded["content_type"]
@@ -317,14 +355,16 @@ Analyze this UPI QR code. Is it safe to pay?"""
 
         ai = call_ai_analysis(prompt)
         verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
-        await save_scan("qr", upi_id, verdict, ai["risk_score"])
-        return {
+        response = {
             "verdict": verdict, "decoded_content": content, "content_type": "UPI Payment",
             "upi_id": upi_id, "bank_name": intel["bank_name"],
             "confidence": ai["confidence"], "why": ai["why"],
             "what_to_do": ai["what_to_do"], "how_to_avoid": ai["how_to_avoid"],
             "engine": "QR → UPI TECHNICAL + AI"
         }
+        await save_scan("qr", upi_id, verdict, ai["risk_score"])
+        await set_cached_scan("qr", image_bytes, response)
+        return response
 
     elif content_type == "url":
         qr_url = content
@@ -336,8 +376,7 @@ Analyze this UPI QR code. Is it safe to pay?"""
             if intel["blacklisted"]:
                 ai["risk_score"] = max(ai["risk_score"], 90)
             verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
-            await save_scan("qr", qr_url, verdict, ai["risk_score"])
-            return {
+            response = {
                 "verdict": verdict, "decoded_content": content, "content_type": "URL",
                 "confidence": ai["confidence"], "why": ai["why"],
                 "what_to_do": ai["what_to_do"], "how_to_avoid": ai["how_to_avoid"],
@@ -346,25 +385,32 @@ Analyze this UPI QR code. Is it safe to pay?"""
                 "sources": intel["sources"],
                 "summary": intel["summary"],
             }
+            await save_scan("qr", qr_url, verdict, ai["risk_score"])
+            await set_cached_scan("qr", image_bytes, response)
+            return response
 
         prompt = f"""QR code contains URL. Technical report:\n{intel['technical_report']}"""
         ai = call_ai_analysis(prompt)
         verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
-        await save_scan("qr", qr_url, verdict, ai["risk_score"])
-        return {
+        response = {
             "verdict": verdict, "decoded_content": content, "content_type": "URL",
             "confidence": ai["confidence"], "why": ai["why"],
             "what_to_do": ai["what_to_do"], "how_to_avoid": ai["how_to_avoid"],
             "engine": "QR → TECHNICAL AI FALLBACK"
         }
+        await save_scan("qr", qr_url, verdict, ai["risk_score"])
+        await set_cached_scan("qr", image_bytes, response)
+        return response
 
     else:
         ai = call_ai_analysis(f"QR code content:\n{content}\n\nAnalyze for scam risk.")
         verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
-        await save_scan("qr", content[:200], verdict, ai["risk_score"])
-        return {
+        response = {
             "verdict": verdict, "decoded_content": content, "content_type": content_type.upper(),
             "confidence": ai["confidence"], "why": ai["why"],
             "what_to_do": ai["what_to_do"], "how_to_avoid": ai["how_to_avoid"],
             "engine": "QR → TEXT AI"
         }
+        await save_scan("qr", content[:200], verdict, ai["risk_score"])
+        await set_cached_scan("qr", image_bytes, response)
+        return response

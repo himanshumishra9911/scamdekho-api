@@ -8,6 +8,7 @@ from typing import Optional
 from app.services.paypal_email_engine import PayPalEmailEngine
 from app.services.paypal_gpt_analyzer import PayPalGPTAnalyzer
 from app.services.paypal_constants import get_risk_level, SCAM_TYPES
+from app.services.cache_service import get_cached_scan, set_cached_scan
 
 router = APIRouter(
     prefix="/api/v1/paypal/email",
@@ -27,6 +28,16 @@ class EmailCheckRequest(BaseModel):
 async def check_paypal_email(request: Request, data: EmailCheckRequest):
     """🔍 Check PayPal email - Returns: Likely Safe / Suspicious / Likely Scam"""
     try:
+        cache_payload = {
+            "email_content": data.email_content,
+            "sender": data.sender,
+            "subject": data.subject,
+        }
+        cached = await get_cached_scan("paypal_email", cache_payload)
+        if cached:
+            cached["from_cache"] = True
+            return cached
+
         # Rule-based analysis
         rule_analysis = email_engine.analyze(
             email_content=data.email_content,
@@ -64,7 +75,7 @@ async def check_paypal_email(request: Request, data: EmailCheckRequest):
         scam_type_key = gpt_result.get("scam_type", "unknown")
         scam_type_info = SCAM_TYPES.get(scam_type_key, SCAM_TYPES["unknown"])
 
-        return {
+        response = {
             "status": "success",
             "tool": "PayPal Email Checker",
 
@@ -183,6 +194,8 @@ async def check_paypal_email(request: Request, data: EmailCheckRequest):
                 "support_url": "https://www.paypal.com/help",
             },
         }
+        await set_cached_scan("paypal_email", cache_payload, response)
+        return response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")

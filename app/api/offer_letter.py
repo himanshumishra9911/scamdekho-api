@@ -8,6 +8,7 @@ from app.services.offer_letter_engine import (
     run_vision_analysis,
 )
 from app.services.db_service import save_scan
+from app.services.cache_service import get_cached_scan, set_cached_scan
 
 router = APIRouter()
 
@@ -51,6 +52,14 @@ async def check_offer_letter(
         raise HTTPException(status_code=400, detail="File size must be under 10MB.")
 
     file_type = ALLOWED_TYPES[file.content_type]
+    cache_payload = {
+        "file_type": file_type,
+        "file_bytes": file_bytes,
+    }
+    cached = await get_cached_scan("offer_letter", cache_payload)
+    if cached:
+        cached["from_cache"] = True
+        return cached
 
     if file_type == "pdf":
         extracted_text = extract_text_from_pdf(file_bytes)
@@ -61,8 +70,9 @@ async def check_offer_letter(
         if file_type == "pdf":
             result = run_vision_analysis(file_bytes)
             await save_scan("offer_letter", file.filename or "unknown", result["verdict"], result["trust_score"])
+            await set_cached_scan("offer_letter", cache_payload, result)
             return result
-        return {
+        response = {
             "trust_score": 50,
             "confidence": "low",
             "verdict": "UNKNOWN",
@@ -79,7 +89,10 @@ async def check_offer_letter(
             ],
             "analysis_info": {"engine": "TEXT EXTRACT FAILED", "confidence": "low"}
         }
+        await set_cached_scan("offer_letter", cache_payload, response)
+        return response
 
     result = run_full_analysis(extracted_text, file_bytes, file_type)
     await save_scan("offer_letter", file.filename or "unknown", result["verdict"], result["trust_score"])
+    await set_cached_scan("offer_letter", cache_payload, result)
     return result
