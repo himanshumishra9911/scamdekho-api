@@ -47,28 +47,28 @@ async def set_cached_result(url: str, result: dict) -> None:
     Silently fails agar MongoDB down ho.
     """
     try:
-    key = _url_key(url)
+        key = _url_key(url)
 
-    result_to_cache = {
-        k: v for k, v in result.items()
-        if k != "screenshot_bytes"
-    }
+        result_to_cache = {
+            k: v for k, v in result.items()
+            if k != "screenshot_bytes"
+        }
 
-    await cache_collection.update_one(
-        {"_id": key},
-        {"$set": {
-            "_id": key,
-            "url": url.strip().lower(),
-            "result": result_to_cache,
-            "cached_at": datetime.utcnow()
-        }},
-        upsert=True
-    )
+        await cache_collection.update_one(
+            {"_id": key},
+            {"$set": {
+                "_id": key,
+                "url": url.strip().lower(),
+                "result": result_to_cache,
+                "cached_at": datetime.utcnow()
+            }},
+            upsert=True
+        )
 
-    await save_public_scan(url, result_to_cache)
+        await save_public_scan(url, result_to_cache)
 
-except Exception:
-    pass
+    except Exception:
+        pass
 
 
 async def setup_cache_ttl_index() -> None:
