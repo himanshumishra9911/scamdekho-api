@@ -3,6 +3,8 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 from app.core.database import db
+from app.services.public_pages_service import save_public_scan
+
 
 cache_collection = db["url_cache"]
 scan_cache_collection = db["scan_cache"]
