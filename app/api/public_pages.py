@@ -75,9 +75,14 @@ def build_page_html(doc: dict, related: list) -> str:
             f'<strong style="font-size:13px;color:#334155;">{esc(s.get("name"))}</strong>'
             f'<span style="color:{c};font-weight:800;">{icon}</span></div>'
             f'<div style="font-size:12px;color:#475569;margin-top:4px;">{esc(s.get("message"))}</div>'
-            f'{f"<div style=\'font-size:11px;color:#94a3b8;margin-top:3px;\'>{esc(s.get(\'detail\'))}</div>" if s.get("detail") else ""}'
-            f"</div>"
-        )
+           + (
+            f'<div style="font-size:11px;color:#94a3b8;margin-top:3px;">'
+            f'{esc(s.get("detail"))}</div>'
+            if s.get("detail")
+            else ""
+            )
+            + "</div>"
+            )
 
     # ── Explanation / analysis text ──
     expl_html = "".join(
