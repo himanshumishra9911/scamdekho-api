@@ -59,8 +59,8 @@ async def set_cached_result(url: str, result: dict) -> None:
                 "cached_at": datetime.utcnow()
             }},
             upsert=True
-            await save_public_scan(url, result_to_cache)
         )
+    await save_public_scan(url, result_to_cache)
     except Exception:
         pass  # Silent fail
 
