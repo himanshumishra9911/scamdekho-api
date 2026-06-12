@@ -85,6 +85,7 @@ app.include_router(feedback_router, prefix="/feedback")
 app.include_router(paypal_email_router)
 app.include_router(paypal_link_router)
 app.include_router(paypal_invoice_router)
+app.include_router(public_pages_router)
 
 @app.get("/dashboard", dependencies=[Depends(require_admin)])
 @app.get("/dashboard/", dependencies=[Depends(require_admin)])
