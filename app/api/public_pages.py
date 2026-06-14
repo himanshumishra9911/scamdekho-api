@@ -404,6 +404,8 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
 <link rel="stylesheet" href="{SITE}/style.css">
 <link rel="stylesheet" href="{SITE}/mobile.css">
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-Q4BNB3E2K4"></script>
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3772619201860644"
+crossorigin="anonymous"></script>
 <script>window.dataLayer=window.dataLayer||[];function gtag(){{dataLayer.push(arguments);}}gtag('js',new Date());gtag('config','G-Q4BNB3E2K4');</script>
 {schema}
 <style>
