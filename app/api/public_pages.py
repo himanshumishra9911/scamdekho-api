@@ -1,13 +1,3 @@
-"""
-Public Check Pages Router — ScamDekho
-======================================
-SSR HTML pages: /check/{domain}
-Sitemap:        /sitemap-checks.xml
-Widget API:     /api/v1/recent-checks
-
-File location: app/api/public_pages.py
-"""
-
 import html as html_lib
 from datetime import datetime
 from fastapi import APIRouter
@@ -16,13 +6,21 @@ from fastapi.responses import HTMLResponse, Response, JSONResponse
 from app.services.public_pages_service import (
     get_public_page,
     get_recent_pages,
-    get_indexable_domains_for_sitemap,
     normalize_domain,
+    pages_collection,
 )
+from app.services.seo_content_engine import ensure_seo_content
 
 router = APIRouter()
 
 SITE = "https://scamdekho.in"
+SITEMAP_PAGE_SIZE = 5000
+ADSENSE_CLIENT = "ca-pub-3772619201860644"
+
+# IMPORTANT: AdSense -> apne account me "In-article" ad units banao,
+# unke slot IDs yahan daalo. Tab tak placeholder rahenge (ad nahi dikhega, error nahi).
+AD_SLOT_1 = "0000000001"   # <- replace with real slot id (mid-content #1)
+AD_SLOT_2 = "0000000002"   # <- replace with real slot id (mid-content #2)
 
 
 def esc(s) -> str:
@@ -37,7 +35,210 @@ def verdict_color(ts: int) -> tuple:
     return ("#dc2626", "#fef2f2", "is high risk")
 
 
-def build_page_html(doc: dict, related: list) -> str:
+# ══════════════════════════════════════════════════════════════════
+# UNIQUE CONTENT (template fallback — jab GPT na chale)
+# ══════════════════════════════════════════════════════════════════
+
+def _highlights_from_sources(sources: list):
+    positives, negatives = [], []
+    for s in sources:
+        st = s.get("status")
+        msg = (s.get("message") or "").strip()
+        if not msg:
+            continue
+        if st == "positive":
+            positives.append(msg)
+        elif st == "negative":
+            negatives.append(msg)
+    return positives, negatives
+
+
+def _analysis_paragraphs(doc: dict, ts: int) -> list:
+    r = doc.get("result", {})
+    other = r.get("other_info") or {}
+    sources = {s.get("name"): s for s in (r.get("sources") or [])}
+    domain = doc.get("domain", "this website")
+    paras = []
+
+    da = sources.get("Domain Age", {})
+    created = other.get("domain_created")
+    if created and created not in ("Unknown", "", None):
+        paras.append(
+            f"{domain} was first registered on {created}. " + (da.get("detail") or "")
+            + " Domain age is one of the strongest trust signals: long-established sites are generally "
+            "more reliable, while very new domains are more often linked to scams. Age alone is never a "
+            "guarantee, so we combine it with the checks below."
+        )
+    else:
+        paras.append(
+            f"We could not reliably determine the registration date of {domain}. When domain age is hidden "
+            "or unavailable, extra caution is recommended before sharing any personal or payment information."
+        )
+
+    ssl = sources.get("SSL Certificate", {})
+    if ssl.get("status") == "positive":
+        paras.append(
+            f"A valid SSL certificate was found for {domain} (issuer: {other.get('ssl_issuer', 'a trusted CA')}). "
+            "SSL encrypts the data sent between your browser and the website. Scammers can also install free SSL "
+            "certificates, so a padlock alone does not prove safety — but its absence is a clear warning."
+        )
+    elif ssl.get("status") == "negative":
+        paras.append(
+            f"The SSL certificate check for {domain} raised a concern: {ssl.get('message','SSL issue detected')}. "
+            "Without proper encryption, any data you enter could be exposed. Avoid submitting logins or payment "
+            "details on sites with invalid or missing SSL."
+        )
+
+    bad_sources = [n for n in ["Google Safe Browsing", "VirusTotal", "PhishTank", "OpenPhish",
+                               "URLhaus", "PhishDestroy", "AbuseIPDB"]
+                   if sources.get(n, {}).get("status") == "negative"]
+    if bad_sources:
+        paras.append(
+            f"Reputation databases flagged {domain}: {', '.join(bad_sources)} reported issues. Being listed on "
+            "phishing or malware blacklists is a serious red flag and usually means the site should be avoided."
+        )
+    else:
+        paras.append(
+            f"{domain} was checked against major threat databases including Google Safe Browsing, VirusTotal, "
+            "PhishTank and URLhaus. No active phishing or malware listings were found at the time of scanning. "
+            "Reputation can change, so we re-check sites regularly."
+        )
+
+    ip_src = sources.get("IP & Hosting", {})
+    loc = other.get("server_location")
+    if loc and loc not in ("Unknown", "", None):
+        paras.append(
+            f"{domain} is hosted on a server located in {loc}. {ip_src.get('detail') or ''} Hosting location is "
+            "not proof of fraud by itself, but combined with other signals it helps build the overall risk picture."
+        )
+
+    return [p.strip() for p in paras if p.strip()]
+
+
+def _summary_line(domain: str, ts: int) -> str:
+    if ts >= 70:
+        return (f"In summary, {domain} appears to be legitimate and reliable based on our automated checks "
+                f"(trust score {ts}/100). As always, stay cautious with personal and payment data.")
+    if ts >= 50:
+        return (f"In summary, {domain} shows some mixed signals (trust score {ts}/100). It is not clearly a scam, "
+                f"but verify it through official sources before trusting it fully.")
+    return (f"In summary, {domain} shows several characteristics commonly associated with risky or scam websites "
+            f"(trust score {ts}/100). We strongly recommend not entering personal, login, or payment details.")
+
+
+def _faq_items(domain, ts, verdict, verdict_phrase, total_sources, answer, summary_line, last_str):
+    return [
+        (f"Is {domain} legit or a scam?", answer),
+        (f"Is {domain} safe?",
+         f"{domain} has a trust score of {ts}/100 ({verdict_phrase}) based on {total_sources} automated "
+         f"security checks. {summary_line}"),
+        (f"Is {domain} a real or fake website?",
+         f"Our automated analysis rates {domain} at {ts}/100 ({verdict}). Review the source-by-source "
+         f"breakdown above before trusting it with personal or payment details."),
+        (f"What is the trust score of {domain}?",
+         f"{domain} has a trust score of {ts} out of 100 based on {total_sources} automated checks including "
+         f"phishing databases, SSL, domain age and malware scanning. Last checked {last_str}."),
+    ]
+
+
+# ══════════════════════════════════════════════════════════════════
+# CHROME + ADS
+# ══════════════════════════════════════════════════════════════════
+
+def _ad_slot(slot_id: str) -> str:
+    """AdSense-safe slot: labelled, padded, isolated. Buttons se door."""
+    return f"""
+<div class="ad-wrap" aria-hidden="true">
+  <span class="ad-label">Advertisement</span>
+  <ins class="adsbygoogle" style="display:block"
+       data-ad-client="{ADSENSE_CLIENT}"
+       data-ad-slot="{slot_id}"
+       data-ad-format="fluid"
+       data-ad-layout="in-article"></ins>
+  <script>(adsbygoogle = window.adsbygoogle || []).push({{}});</script>
+</div>"""
+
+
+def _navbar_html() -> str:
+    return f"""
+<nav class="navbar">
+  <a href="{SITE}/"><img src="{SITE}/logo.webp" class="site-logo" alt="ScamDekho Free Scam Checker India"></a>
+  <div class="nav-links" id="navLinks">
+    <a href="{SITE}/">Home</a>
+    <div class="nav-dropdown" id="servicesDropdown">
+      <button class="nav-dropdown-btn" onclick="toggleServicesDropdown()" aria-expanded="false" aria-controls="servicesMenu">
+        Services <i class="fa-solid fa-chevron-down"></i>
+      </button>
+      <div class="nav-dropdown-menu" id="servicesMenu" role="menu">
+        <a href="{SITE}/paypal-email-checker" role="menuitem"><i class="fa-solid fa-envelope"></i> PayPal Email Checker</a>
+        <a href="{SITE}/paypal-invoice-checker" role="menuitem"><i class="fa-solid fa-file-invoice-dollar"></i> PayPal Invoice Checker</a>
+        <a href="{SITE}/scam-message-checker" role="menuitem"><i class="fa-solid fa-comment-dots"></i> Message Scam Checker</a>
+        <a href="{SITE}/url-checker" role="menuitem"><i class="fa-solid fa-globe"></i> Website / URL Checker</a>
+        <a href="{SITE}/fake-payment-screenshot-checker" role="menuitem"><i class="fa-solid fa-image"></i> Screenshot Scam Checker</a>
+        <a href="{SITE}/upi-qr-checker" role="menuitem"><i class="fa-solid fa-qrcode"></i> UPI & QR Code Checker</a>
+        <div class="nav-dropdown-divider"></div>
+        <a href="{SITE}/fake-offer-letter-checker" role="menuitem"><i class="fa-solid fa-file-lines"></i> Job Offer Letter Checker</a>
+      </div>
+    </div>
+    <a href="{SITE}/blog/">Blog</a>
+    <a href="{SITE}/global/">Global</a>
+    <a href="{SITE}/about">About</a>
+  </div>
+  <button class="menu-toggle" aria-label="Toggle Menu" aria-expanded="false" id="menuToggle">
+    <span></span><span></span><span></span>
+  </button>
+</nav>"""
+
+
+def _footer_html() -> str:
+    return f"""
+<footer class="footer">
+  <div class="footer-container">
+    <div class="footer-brand">
+      <h3>ScamDekho</h3>
+      <p>India's free scam checker. Verify suspicious links, messages, and websites instantly before you lose money.</p>
+      <p class="support-email">Support: <a href="mailto:support@scamdekho.in">support@scamdekho.in</a></p>
+    </div>
+    <div class="footer-services">
+      <h4>Our Tools</h4>
+      <a href="{SITE}/paypal-email-checker">PayPal Email Checker</a>
+      <a href="{SITE}/paypal-invoice-checker">PayPal Invoice Checker</a>
+      <a href="{SITE}/scam-message-checker">Message Scam Checker</a>
+      <a href="{SITE}/url-checker">Website / URL Checker</a>
+      <a href="{SITE}/fake-payment-screenshot-checker">Screenshot Scam Checker</a>
+      <a href="{SITE}/upi-qr-checker">UPI & QR Code Checker</a>
+      <a href="{SITE}/fake-offer-letter-checker">Job Offer Letter Checker</a>
+    </div>
+    <div class="footer-links">
+      <h4>Quick Links</h4>
+      <a href="{SITE}/">Home</a>
+      <a href="{SITE}/privacy-policy">Privacy Policy</a>
+      <a href="{SITE}/terms-and-conditions">Terms & Conditions</a>
+      <a href="{SITE}/disclaimer">Disclaimer</a>
+      <a href="{SITE}/contact">Contact Us</a>
+      <a href="{SITE}/about">About</a>
+      <a href="{SITE}/url-checker">Check a Website</a>
+    </div>
+  </div>
+  <div class="footer-bottom">© 2026 ScamDekho. All Rights Reserved.</div>
+</footer>"""
+
+
+def _nav_js() -> str:
+    return """
+<script>
+function toggleServicesDropdown(){var dd=document.getElementById("servicesDropdown");var b=dd.querySelector(".nav-dropdown-btn");var o=dd.classList.toggle("open");b.setAttribute("aria-expanded",o);}
+document.addEventListener("click",function(e){var dd=document.getElementById("servicesDropdown");if(dd&&!dd.contains(e.target)){dd.classList.remove("open");dd.querySelector(".nav-dropdown-btn").setAttribute("aria-expanded",false);}});
+var mt=document.getElementById("menuToggle"),nl=document.getElementById("navLinks");
+if(mt&&nl){mt.addEventListener("click",function(){var o=nl.classList.toggle("active");mt.setAttribute("aria-expanded",o);document.body.style.overflow=o?"hidden":"";});}
+</script>"""
+
+
+# ══════════════════════════════════════════════════════════════════
+# MAIN PAGE BUILDER
+# ══════════════════════════════════════════════════════════════════
+
+def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
     domain = esc(doc["domain"])
     r = doc.get("result", {})
     ts = int(r.get("trust_score", 50))
@@ -46,65 +247,91 @@ def build_page_html(doc: dict, related: list) -> str:
     other = r.get("other_info") or {}
     summary = r.get("summary") or {}
     sources = r.get("sources") or []
-    explanation = r.get("explanation") or []
+    total_sources = summary.get("total_sources_checked", len(sources)) or 14
     last_scanned = doc.get("last_scanned")
     last_str = last_scanned.strftime("%B %d, %Y") if isinstance(last_scanned, datetime) else "Recently"
     last_iso = last_scanned.strftime("%Y-%m-%d") if isinstance(last_scanned, datetime) else ""
     scan_count = int(doc.get("scan_count", 1))
     indexable = bool(doc.get("indexable"))
     robots = "index, follow" if indexable else "noindex, follow"
-
     canonical = f"{SITE}/check/{domain}"
-    title = f"Is {domain} Legit or a Scam? Trust Score: {ts}/100 | ScamDekho"
+
+    # ── AUTO META ──
+    title = f"Is {domain} Legit or a Scam? Trust Score {ts}/100 | ScamDekho"
     meta_desc = (
-        f"{domain} review: trust score {ts}/100 ({verdict}). "
-        f"We checked {summary.get('total_sources_checked', 14)} security sources including phishing "
-        f"blacklists, SSL, domain age and malware databases. Free website safety check."
+        f"Is {domain} safe or a scam? {domain} has a trust score of {ts}/100 ({verdict_phrase}). "
+        f"We checked {total_sources} sources — SSL, domain age, phishing blacklists & malware. "
+        f"Free instant website safety report."
+    )
+    meta_keywords = (
+        f"{domain} review, is {domain} legit, is {domain} safe, {domain} scam or legit, "
+        f"{domain} trust score, {domain} reviews, {domain} fake or real"
+    )
+    og_image = f"{SITE}/og-image.jpg"
+
+    # ── verdict answer (unique) ──
+    if ts >= 70:
+        answer = (f"Based on our automated analysis, {domain} appears legitimate with a trust score of {ts}/100. "
+                  f"It passed {summary.get('positive_signals', 0)} security checks. Stay cautious when sharing payment details online.")
+    elif ts >= 50:
+        answer = (f"Our analysis of {domain} returned a trust score of {ts}/100 with some warning signs. "
+                  f"{summary.get('negative_signals', 0)} checks raised concerns. Verify via official sources first.")
+    else:
+        answer = (f"Warning: {domain} scored {ts}/100, with {summary.get('negative_signals', 0)} checks raising red flags. "
+                  f"This site shows scam-like characteristics. Do not enter personal, login, or payment details.")
+
+    summary_line = _summary_line(domain, ts)
+
+    # ── content (GPT if available, else template) ──
+    template_paras = _analysis_paragraphs(doc, ts)
+    template_html = "".join(f'<p>{esc(p)}</p>' for p in template_paras) + f'<p class="summary-line">{esc(summary_line)}</p>'
+    analysis_html = seo_html if seo_html else template_html
+
+    # ── highlights ──
+    positives, negatives = _highlights_from_sources(sources)
+    pos_html = "".join(
+        f'<li><i class="fa-solid fa-circle-check"></i>{esc(p)}</li>' for p in positives[:10]
+    ) or '<li class="neutral-li">No strong positive signals detected.</li>'
+    neg_html = "".join(
+        f'<li><i class="fa-solid fa-triangle-exclamation"></i>{esc(n)}</li>' for n in negatives[:10]
+    ) or '<li class="neutral-li">No major risk signals detected.</li>'
+
+    # ── facts ──
+    def fact(label, value):
+        return (f'<div class="fact-cell"><div class="fact-k">{label}</div>'
+                f'<div class="fact-v">{esc(value or "Unknown")}</div></div>')
+    facts_html = (
+        fact("Domain Created", other.get("domain_created"))
+        + fact("SSL Issuer", other.get("ssl_issuer"))
+        + fact("Server Location", other.get("server_location"))
+        + fact("IP Address", other.get("ip_address"))
+        + fact("Trust Score", f"{ts}/100")
+        + fact("Verdict", verdict)
     )
 
-    # ── Source cards ──
+    # ── source grid ──
     src_html = ""
     for s in sources:
         st = s.get("status", "neutral")
         icon = "✔" if st == "positive" else "✖" if st == "negative" else "—"
-        c = "#16a34a" if st == "positive" else "#dc2626" if st == "negative" else "#94a3b8"
-        cbg = "#f0fdf4" if st == "positive" else "#fef2f2" if st == "negative" else "#f8fafc"
+        cls = "src-pos" if st == "positive" else "src-neg" if st == "negative" else "src-neu"
         src_html += (
-            f'<div style="background:{cbg};border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">'
-            f'<div style="display:flex;justify-content:space-between;gap:8px;">'
-            f'<strong style="font-size:13px;color:#334155;">{esc(s.get("name"))}</strong>'
-            f'<span style="color:{c};font-weight:800;">{icon}</span></div>'
-            f'<div style="font-size:12px;color:#475569;margin-top:4px;">{esc(s.get("message"))}</div>'
-           + (
-            f'<div style="font-size:11px;color:#94a3b8;margin-top:3px;">'
-            f'{esc(s.get("detail"))}</div>'
-            if s.get("detail")
-            else ""
-            )
-            + "</div>"
-            )
-
-    # ── Explanation / analysis text ──
-    expl_html = "".join(
-        f'<li style="margin-bottom:8px;line-height:1.7;">{esc(e)}</li>' for e in explanation[:10]
-    )
-
-    # ── Info grid ──
-    def info_cell(label, value):
-        return (
-            f'<div style="background:#f8fafc;border:1px solid #eef2f7;border-radius:8px;padding:10px 13px;">'
-            f'<div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;">{label}</div>'
-            f'<div style="font-size:13px;font-weight:600;color:#334155;margin-top:3px;">{esc(value or "Unknown")}</div></div>'
+            f'<div class="src-cell {cls}">'
+            f'<div class="src-top"><strong>{esc(s.get("name"))}</strong><span class="src-icon">{icon}</span></div>'
+            f'<div class="src-msg">{esc(s.get("message"))}</div></div>'
         )
 
-    info_html = (
-        info_cell("Domain Created", other.get("domain_created"))
-        + info_cell("SSL Issuer", other.get("ssl_issuer"))
-        + info_cell("Server Location", other.get("server_location"))
-        + info_cell("Trust Score", f"{ts}/100 — {verdict}")
+    # ── FAQ (visible + schema) ──
+    faqs = _faq_items(domain, ts, verdict, verdict_phrase, total_sources, answer, summary_line, last_str)
+    faq_visible = "".join(
+        f'<div class="faq-item"><h3>{esc(q)}</h3><p>{esc(a)}</p></div>' for q, a in faqs
+    )
+    faq_schema_items = ",".join(
+        f'{{"@type":"Question","name":"{esc(q)}","acceptedAnswer":{{"@type":"Answer","text":"{esc(a)}"}}}}'
+        for q, a in faqs
     )
 
-    # ── Related domains ──
+    # ── related (internal links) ──
     related_html = ""
     for rel in related:
         if rel.get("domain") == doc["domain"]:
@@ -113,36 +340,16 @@ def build_page_html(doc: dict, related: list) -> str:
         rts = int((rel.get("result") or {}).get("trust_score", 50))
         rc, _, _ = verdict_color(rts)
         related_html += (
-            f'<a href="/check/{rd}" style="display:flex;justify-content:space-between;padding:10px 14px;'
-            f'background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;text-decoration:none;margin-bottom:8px;">'
-            f'<span style="color:#334155;font-weight:600;font-size:14px;">{rd}</span>'
-            f'<span style="color:{rc};font-weight:800;font-size:14px;">{rts}/100</span></a>'
+            f'<a href="{SITE}/check/{rd}" class="rel-row">'
+            f'<span class="rel-domain">{rd}</span>'
+            f'<span class="rel-score" style="color:{rc};">{rts}/100</span></a>'
         )
 
-    # ── Verdict-based answer text (unique per page) ──
-    if ts >= 70:
-        answer = (
-            f"Based on our automated analysis, {domain} appears to be legitimate with a trust score of {ts}/100. "
-            f"It passed {summary.get('positive_signals', 0)} of our security checks including phishing blacklists, "
-            f"SSL verification and domain history. As always, stay cautious when sharing personal or payment details online."
-        )
-    elif ts >= 50:
-        answer = (
-            f"Our analysis of {domain} returned a trust score of {ts}/100, which means it shows some warning signs. "
-            f"{summary.get('negative_signals', 0)} security checks raised concerns. We recommend verifying this website "
-            f"through official sources before entering any personal or payment information."
-        )
-    else:
-        answer = (
-            f"Warning: {domain} scored only {ts}/100 in our security analysis, with {summary.get('negative_signals', 0)} "
-            f"checks raising red flags. This website shows characteristics commonly associated with scam or unsafe sites. "
-            f"We strongly recommend not entering any personal, login, or payment details on this website."
-        )
+    ring_pct = ts * 3.39
 
-    # ── Schema ──
     schema = f"""
 <script type="application/ld+json">
-{{"@context":"https://schema.org","@type":"WebPage","name":"Is {domain} Legit or a Scam?","url":"{canonical}","dateModified":"{last_iso}","description":"{esc(meta_desc)}","isPartOf":{{"@type":"WebSite","name":"ScamDekho","url":"{SITE}"}}}}
+{{"@context":"https://schema.org","@type":"WebPage","name":"Is {domain} Legit or a Scam?","url":"{canonical}","dateModified":"{last_iso}","description":"{esc(meta_desc)}","isPartOf":{{"@type":"WebSite","name":"ScamDekho","url":"{SITE}"}},"publisher":{{"@type":"Organization","name":"ScamDekho","url":"{SITE}","logo":{{"@type":"ImageObject","url":"{SITE}/logo.webp"}}}}}}
 </script>
 <script type="application/ld+json">
 {{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[
@@ -151,12 +358,8 @@ def build_page_html(doc: dict, related: list) -> str:
 {{"@type":"ListItem","position":3,"name":"{domain}","item":"{canonical}"}}]}}
 </script>
 <script type="application/ld+json">
-{{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
-{{"@type":"Question","name":"Is {domain} legit or a scam?","acceptedAnswer":{{"@type":"Answer","text":"{esc(answer)}"}}}},
-{{"@type":"Question","name":"What is the trust score of {domain}?","acceptedAnswer":{{"@type":"Answer","text":"{domain} has a trust score of {ts} out of 100 based on {summary.get('total_sources_checked', 14)} automated security checks including phishing databases, SSL analysis, domain age and malware scanning. Last checked: {last_str}."}}}}]}}
+{{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{faq_schema_items}]}}
 </script>"""
-
-    ring_pct = ts * 3.39  # 2*pi*54 ≈ 339
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -165,90 +368,233 @@ def build_page_html(doc: dict, related: list) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{esc(title)}</title>
 <meta name="description" content="{esc(meta_desc)}">
+<meta name="keywords" content="{esc(meta_keywords)}">
+<meta name="author" content="ScamDekho Team">
 <link rel="canonical" href="{canonical}">
 <meta name="robots" content="{robots}">
 <meta property="og:title" content="{esc(title)}">
 <meta property="og:description" content="{esc(meta_desc)}">
 <meta property="og:url" content="{canonical}">
 <meta property="og:type" content="website">
-<link rel="icon" href="{SITE}/favicon/favicon.ico">
+<meta property="og:image" content="{og_image}">
+<meta property="og:site_name" content="ScamDekho">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{esc(title)}">
+<meta name="twitter:description" content="{esc(meta_desc)}">
+<meta name="twitter:image" content="{og_image}">
+<meta name="theme-color" content="#0ea5e9">
+<link rel="icon" type="image/x-icon" href="{SITE}/favicon/favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="{SITE}/favicon/apple-touch-icon.png">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet"/>
+<link rel="stylesheet" href="{SITE}/style.css">
+<link rel="stylesheet" href="{SITE}/mobile.css">
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_CLIENT}" crossorigin="anonymous"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-Q4BNB3E2K4"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){{dataLayer.push(arguments);}}gtag('js',new Date());gtag('config','G-Q4BNB3E2K4');</script>
 {schema}
 <style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:'Segoe UI',system-ui,sans-serif;background:#f8fafc;color:#0f172a;line-height:1.6}}
-.wrap{{max-width:760px;margin:0 auto;padding:24px 16px 60px}}
-.topbar{{background:#0f172a;padding:14px 16px}}
-.topbar a{{color:#fff;text-decoration:none;font-weight:800;font-size:18px}}
-.topbar a span{{color:#0ea5e9}}
-.card{{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:18px}}
-h1{{font-size:clamp(20px,4vw,28px);margin-bottom:6px}}
-h2{{font-size:18px;margin:0 0 14px;color:#0f172a}}
-.cta{{display:block;text-align:center;background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;padding:14px;border-radius:10px;text-decoration:none;font-weight:700;margin-top:16px}}
-.grid2{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}
-.grid-src{{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}}
-@media(max-width:600px){{.grid2{{grid-template-columns:1fr}}}}
-.muted{{color:#64748b;font-size:13px}}
+/* ===== NAVBAR ===== */
+.navbar{{background:rgba(255,255,255,0.95)!important;backdrop-filter:blur(12px);box-shadow:0 2px 12px rgba(0,0,0,0.06)!important;position:fixed!important;top:0;width:100%;z-index:1000!important;display:flex;align-items:center;justify-content:space-between;padding:0 60px;height:80px;}}
+.navbar .site-logo{{height:170px;width:auto;object-fit:contain;}}
+.navbar .nav-links{{display:flex;align-items:center;gap:35px;margin-left:auto;}}
+.navbar .nav-links a{{color:#333!important;text-decoration:none;font-size:14px;font-weight:700;transition:color .2s;}}
+.navbar .nav-links a:hover{{color:#0B5ED7!important;}}
+.nav-dropdown{{position:relative;}}
+.nav-dropdown-btn{{display:flex;align-items:center;gap:5px;color:#333!important;background:none;border:none;font-size:14px;font-weight:700;padding:0;cursor:pointer;font-family:inherit;transition:color .2s;}}
+.nav-dropdown-btn:hover{{color:#0B5ED7!important;}}
+.nav-dropdown-btn i{{font-size:11px;transition:transform .2s;}}
+.nav-dropdown.open .nav-dropdown-btn i{{transform:rotate(180deg);}}
+.nav-dropdown-menu{{display:none;position:absolute;top:calc(100% + 8px);left:0;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.12);min-width:240px;padding:8px;z-index:200;}}
+.nav-dropdown.open .nav-dropdown-menu{{display:block;}}
+.nav-dropdown-menu a{{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;color:#334155!important;text-decoration:none;font-size:13px;font-weight:500;transition:background .15s;}}
+.nav-dropdown-menu a:hover{{background:#f0f9ff;color:#0284c7!important;}}
+.nav-dropdown-menu a i{{color:#0ea5e9;width:16px;text-align:center;}}
+.nav-dropdown-divider{{height:1px;background:#f1f5f9;margin:4px 0;}}
+.menu-toggle{{display:none;background:none;border:none;cursor:pointer;margin-left:auto;}}
+.menu-toggle span{{display:block;width:24px;height:2.5px;margin:5px 0;background:#0a2a52;border-radius:3px;}}
+/* ===== FOOTER ===== */
+.footer{{background:#0f172a;color:#94a3b8;padding:60px 6% 0;margin-top:40px;}}
+.footer-container{{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:40px;max-width:1100px;margin:0 auto;padding-bottom:40px;}}
+.footer-brand h3{{color:#fff;font-size:22px;font-weight:800;margin-bottom:12px;}}
+.footer-brand p{{font-size:13px;line-height:1.8;margin-bottom:8px;}}
+.footer-brand .support-email a{{color:#0ea5e9;text-decoration:none;}}
+.footer-links h4,.footer-services h4{{color:#fff;font-size:14px;font-weight:700;margin-bottom:14px;}}
+.footer-links a,.footer-services a{{display:block;color:#94a3b8;text-decoration:none;font-size:13px;margin-bottom:8px;transition:color .2s;}}
+.footer-links a:hover,.footer-services a:hover{{color:#0ea5e9;}}
+.footer-bottom{{border-top:1px solid rgba(255,255,255,0.08);padding:20px 0;text-align:center;font-size:12px;color:#64748b;}}
+/* ===== BASE ===== */
+*{{box-sizing:border-box;}}
+body{{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#f1f5f9;color:#0f172a;margin:0;line-height:1.65;}}
+.report-wrap{{max-width:760px;margin:0 auto;padding:110px 16px 40px;}}
+.crumb{{font-size:12px;color:#64748b;margin:0 0 14px;}}
+.crumb a{{color:#0284c7;text-decoration:none;}}
+.card{{background:#fff;border:1px solid #e6ebf1;border-radius:16px;padding:28px;margin-bottom:20px;box-shadow:0 1px 3px rgba(15,23,42,0.04);}}
+h1{{font-size:clamp(22px,4.5vw,30px);line-height:1.25;margin:0 0 10px;font-weight:800;letter-spacing:-0.01em;}}
+h2{{font-size:20px;margin:0 0 16px;font-weight:700;color:#0f172a;letter-spacing:-0.01em;}}
+h3{{font-size:15px;margin:0 0 6px;font-weight:700;color:#1e293b;}}
+p{{margin:0 0 14px;color:#334155;}}
+.muted{{color:#64748b;font-size:13px;}}
+.summary-line{{font-weight:600;color:#0f172a;margin-top:6px;}}
+/* hero */
+.hero{{text-align:center;}}
+.ring-wrap{{width:140px;height:140px;position:relative;margin:20px auto;}}
+.ring-num{{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:32px;font-weight:800;}}
+.ring-num small{{font-size:14px;color:#64748b;}}
+.verdict-big{{font-size:23px;font-weight:800;margin-top:4px;}}
+.hero p{{max-width:580px;margin:12px auto 0;font-size:14.5px;}}
+/* highlights */
+.hl-grid{{display:grid;grid-template-columns:1fr 1fr;gap:22px;}}
+.hl-col-title{{font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;}}
+.hl-grid ul{{list-style:none;padding:0;margin:0;font-size:14px;}}
+.hl-grid li{{display:flex;gap:9px;align-items:flex-start;margin-bottom:10px;line-height:1.5;}}
+.hl-grid li i{{margin-top:3px;}}
+.hl-pos .hl-col-title{{color:#15803d;}}
+.hl-pos li{{color:#166534;}} .hl-pos li i{{color:#16a34a;}}
+.hl-neg .hl-col-title{{color:#b91c1c;}}
+.hl-neg li{{color:#991b1b;}} .hl-neg li i{{color:#dc2626;}}
+.neutral-li{{color:#64748b!important;}}
+/* analysis prose */
+.analysis p{{line-height:1.85;font-size:15px;}}
+/* facts */
+.facts-grid{{display:grid;grid-template-columns:1fr 1fr;gap:12px;}}
+.fact-cell{{background:#f8fafc;border:1px solid #eef2f7;border-radius:10px;padding:12px 14px;}}
+.fact-k{{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;}}
+.fact-v{{font-size:14px;font-weight:600;color:#334155;margin-top:4px;word-break:break-all;}}
+/* sources */
+.grid-src{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;}}
+.src-cell{{border:1px solid #e2e8f0;border-radius:10px;padding:13px 15px;}}
+.src-top{{display:flex;justify-content:space-between;gap:8px;align-items:center;}}
+.src-top strong{{font-size:13px;color:#334155;}}
+.src-icon{{font-weight:800;}}
+.src-msg{{font-size:12px;color:#475569;margin-top:5px;line-height:1.5;}}
+.src-pos{{background:#f0fdf4;}} .src-pos .src-icon{{color:#16a34a;}}
+.src-neg{{background:#fef2f2;}} .src-neg .src-icon{{color:#dc2626;}}
+.src-neu{{background:#f8fafc;}} .src-neu .src-icon{{color:#94a3b8;}}
+/* cta */
+.cta{{display:block;text-align:center;background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;padding:15px;border-radius:12px;text-decoration:none;font-weight:700;margin-top:22px;font-size:15px;}}
+.cta:hover{{filter:brightness(1.05);}}
+/* faq */
+.faq-item{{padding:16px 0;border-bottom:1px solid #eef2f7;}}
+.faq-item:last-child{{border-bottom:none;padding-bottom:0;}}
+.faq-item p{{margin:0;font-size:14px;color:#475569;}}
+/* related */
+.rel-row{{display:flex;justify-content:space-between;align-items:center;padding:12px 15px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;text-decoration:none;margin-bottom:9px;}}
+.rel-row:hover{{background:#f0f9ff;}}
+.rel-domain{{color:#334155;font-weight:600;font-size:14px;}}
+.rel-score{{font-weight:800;font-size:14px;}}
+/* ===== AD SLOTS (AdSense-safe) ===== */
+.ad-wrap{{margin:30px 0;padding:10px;background:#fafbfc;border:1px solid #eef2f7;border-radius:12px;text-align:center;min-height:120px;overflow:hidden;}}
+.ad-label{{display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#b6c0cc;margin-bottom:6px;}}
+/* mobile */
+@media(max-width:768px){{
+  .navbar{{height:70px!important;padding:0 12px!important;}}
+  .navbar img.site-logo{{height:100px!important;width:160px!important;}}
+  .navbar .nav-links{{display:none;position:fixed;top:70px;left:0;width:100%;flex-direction:column;background:#fff;border-radius:0 0 18px 18px;box-shadow:0 20px 40px rgba(0,0,0,0.1);z-index:999;padding:0;gap:0;}}
+  .navbar .nav-links.active{{display:flex;}}
+  .navbar .nav-links a{{padding:16px!important;font-size:16px!important;border-bottom:1px solid #eef2f7;}}
+  .menu-toggle{{display:block!important;}}
+  .nav-dropdown{{width:100%;text-align:center;}}
+  .nav-dropdown-btn{{width:100%;padding:16px!important;font-size:16px!important;border-bottom:1px solid #eef2f7;justify-content:center;}}
+  .nav-dropdown-menu{{position:static;box-shadow:none;border:none;border-radius:0;padding:0 0 0 20px;min-width:unset;}}
+  .report-wrap{{padding:90px 12px 30px;}}
+  .card{{padding:20px;}}
+  .hl-grid,.facts-grid{{grid-template-columns:1fr;gap:16px;}}
+  .footer-container{{grid-template-columns:1fr;}}
+}}
 </style>
 </head>
 <body>
-<div class="topbar"><a href="{SITE}/">Scam<span>Dekho</span></a></div>
-<div class="wrap">
 
-<div class="card" style="text-align:center;background:{bg};">
-  <p class="muted" style="margin-bottom:8px;">Website Safety Report · Last checked: {last_str} · Checked {scan_count} time{"s" if scan_count != 1 else ""}</p>
-  <h1>Is <span style="color:#0284c7;">{domain}</span> Legit or a Scam?</h1>
-  <div style="width:130px;height:130px;position:relative;margin:18px auto;">
-    <svg viewBox="0 0 120 120" style="transform:rotate(-90deg);width:130px;height:130px;">
-      <circle cx="60" cy="60" r="54" fill="none" stroke="#e5e7eb" stroke-width="10"/>
-      <circle cx="60" cy="60" r="54" fill="none" stroke="{color}" stroke-width="10" stroke-linecap="round"
-        stroke-dasharray="339" stroke-dashoffset="{339 - ring_pct:.0f}"/>
-    </svg>
-    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:30px;font-weight:800;">{ts}<small style="font-size:13px;color:#64748b;">/100</small></div>
-  </div>
-  <div style="font-size:22px;font-weight:800;color:{color};">{verdict}</div>
-  <p style="font-size:14px;color:#334155;max-width:560px;margin:10px auto 0;">{esc(answer)}</p>
-</div>
+{_navbar_html()}
 
-<div class="card">
-  <h2>Domain Information</h2>
-  <div class="grid2">{info_html}</div>
-</div>
+<main class="report-wrap">
 
-<div class="card">
-  <h2>Security Scan Results ({summary.get('total_sources_checked', len(sources))} Sources Checked)</h2>
-  <p class="muted" style="margin-bottom:12px;">{summary.get('positive_signals',0)} passed · {summary.get('negative_signals',0)} flagged risk · {summary.get('neutral_signals',0)} neutral</p>
-  <div class="grid-src">{src_html}</div>
-</div>
+  <nav class="crumb" aria-label="Breadcrumb">
+    <a href="{SITE}/">Home</a> › <a href="{SITE}/url-checker">Website Checker</a> › <span>{domain}</span>
+  </nav>
 
-<div class="card">
-  <h2>Why {domain} Got This Score</h2>
-  <ul style="padding-left:20px;font-size:14px;color:#334155;">{expl_html}</ul>
-  <a class="cta" href="{SITE}/url-checker">Check Another Website Free →</a>
-</div>
+  <!-- HERO -->
+  <section class="card hero" style="background:{bg};">
+    <p class="muted">Website Safety Report · Last checked {last_str} · Checked {scan_count} time{"s" if scan_count != 1 else ""}</p>
+    <h1>Is {domain} Legit or a Scam?</h1>
+    <div class="ring-wrap">
+      <svg viewBox="0 0 120 120" style="transform:rotate(-90deg);width:140px;height:140px;">
+        <circle cx="60" cy="60" r="54" fill="none" stroke="#e5e7eb" stroke-width="10"/>
+        <circle cx="60" cy="60" r="54" fill="none" stroke="{color}" stroke-width="10" stroke-linecap="round"
+          stroke-dasharray="339" stroke-dashoffset="{339 - ring_pct:.0f}"/>
+      </svg>
+      <div class="ring-num">{ts}<small>/100</small></div>
+    </div>
+    <div class="verdict-big" style="color:{color};">{verdict}</div>
+    <p>{esc(answer)}</p>
+  </section>
 
-<div class="card">
-  <h2>Recently Checked Websites</h2>
-  {related_html if related_html else '<p class="muted">No related checks yet.</p>'}
-</div>
+  <!-- HIGHLIGHTS -->
+  <section class="card">
+    <h2>Is {domain} Safe? Quick Highlights</h2>
+    <div class="hl-grid">
+      <div class="hl-pos"><div class="hl-col-title">Positive Signals</div><ul>{pos_html}</ul></div>
+      <div class="hl-neg"><div class="hl-col-title">Warning Signals</div><ul>{neg_html}</ul></div>
+    </div>
+  </section>
 
-<div class="card">
-  <p class="muted" style="line-height:1.7;">
-    <strong>Disclaimer:</strong> This is an automated AI-generated risk assessment based on publicly available
-    security data at the time of scanning. It may not be 100% accurate and should not be treated as a definitive
-    judgment of any business. Scores can change as new data becomes available.
-    Website owner? <a href="mailto:support@scamdekho.in?subject=Dispute report for {domain}" style="color:#0284c7;">Dispute this result</a>
-    and we will re-review your website.
-  </p>
-</div>
+  {_ad_slot(AD_SLOT_1)}
 
-</div>
+  <!-- ANALYSIS -->
+  <section class="card analysis">
+    <h2>{domain} Review &amp; Detailed Analysis</h2>
+    {analysis_html}
+  </section>
+
+  <!-- FACTS -->
+  <section class="card">
+    <h2>Facts About {domain}</h2>
+    <div class="facts-grid">{facts_html}</div>
+  </section>
+
+  {_ad_slot(AD_SLOT_2)}
+
+  <!-- SOURCES -->
+  <section class="card">
+    <h2>Security Scan Results — {total_sources} Sources Checked</h2>
+    <p class="muted" style="margin-bottom:14px;">{summary.get('positive_signals',0)} passed · {summary.get('negative_signals',0)} flagged · {summary.get('neutral_signals',0)} neutral</p>
+    <div class="grid-src">{src_html}</div>
+    <a class="cta" href="{SITE}/url-checker">Check Another Website for Free →</a>
+  </section>
+
+  <!-- FAQ -->
+  <section class="card">
+    <h2>Frequently Asked Questions</h2>
+    {faq_visible}
+  </section>
+
+  <!-- RELATED -->
+  <section class="card">
+    <h2>Recently Checked Websites</h2>
+    {related_html if related_html else '<p class="muted">No related checks yet.</p>'}
+  </section>
+
+  <!-- DISCLAIMER -->
+  <section class="card">
+    <p class="muted" style="line-height:1.7;margin:0;">
+      <strong>Disclaimer:</strong> This is an automated risk assessment based on publicly available security
+      data at the time of scanning. It may not be 100% accurate and should not be treated as a definitive
+      judgment of any business. Scores can change as new data becomes available.
+      Website owner? <a href="mailto:support@scamdekho.in?subject=Dispute report for {domain}" style="color:#0284c7;">Dispute this result</a>.
+    </p>
+  </section>
+
+</main>
+
+{_footer_html()}
+{_nav_js()}
 </body>
 </html>"""
 
 
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
 # ROUTES
-# ──────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
 
 @router.get("/check/{domain}", response_class=HTMLResponse)
 async def public_check_page(domain: str):
@@ -261,7 +607,6 @@ async def public_check_page(domain: str):
 
     doc = await get_public_page(d)
     if not doc:
-        # Page abhi exist nahi karta — user ko tool par bhejo (scan karne par ban jayega)
         return HTMLResponse(
             f"""<!DOCTYPE html><html><head><title>Check {esc(d)} — ScamDekho</title>
             <meta name="robots" content="noindex"></head>
@@ -274,28 +619,59 @@ async def public_check_page(domain: str):
             status_code=404,
         )
 
+    # generate-once-cache-forever (sirf jab page actually khule)
+    seo_html = await ensure_seo_content(doc)
+
     related = await get_recent_pages(limit=7)
-    page = build_page_html(doc, related)
+    page = build_page_html(doc, related, seo_html)
     return HTMLResponse(page, headers={"Cache-Control": "public, max-age=3600"})
 
 
-@router.get("/sitemap-checks.xml")
-async def sitemap_checks():
-    docs = await get_indexable_domains_for_sitemap(limit=5000)
+@router.get("/sitemap-index.xml")
+async def sitemap_index():
+    try:
+        total = await pages_collection.count_documents({"indexable": True})
+    except Exception:
+        total = 0
+    page_count = max(1, (total + SITEMAP_PAGE_SIZE - 1) // SITEMAP_PAGE_SIZE)
+    items = "".join(
+        f"<sitemap><loc>{SITE}/sitemap-checks-{i}.xml</loc></sitemap>" for i in range(page_count)
+    )
+    xml = (f'<?xml version="1.0" encoding="UTF-8"?>'
+           f'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{items}</sitemapindex>')
+    return Response(content=xml, media_type="application/xml")
+
+
+@router.get("/sitemap-checks-{page}.xml")
+async def sitemap_checks_paginated(page: int):
+    skip = page * SITEMAP_PAGE_SIZE
+    try:
+        cursor = pages_collection.find(
+            {"indexable": True}, {"domain": 1, "last_scanned": 1}
+        ).sort("last_scanned", -1).skip(skip).limit(SITEMAP_PAGE_SIZE)
+        docs = [doc async for doc in cursor]
+    except Exception:
+        docs = []
     items = ""
     for doc in docs:
         lastmod = ""
         ls = doc.get("last_scanned")
         if isinstance(ls, datetime):
             lastmod = f"<lastmod>{ls.strftime('%Y-%m-%d')}</lastmod>"
-        items += f"<url><loc>{SITE}/check/{esc(doc['domain'])}</loc>{lastmod}<changefreq>weekly</changefreq><priority>0.6</priority></url>"
-    xml = f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{items}</urlset>'
+        items += (f"<url><loc>{SITE}/check/{esc(doc['domain'])}</loc>{lastmod}"
+                  f"<changefreq>weekly</changefreq><priority>0.6</priority></url>")
+    xml = (f'<?xml version="1.0" encoding="UTF-8"?>'
+           f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{items}</urlset>')
     return Response(content=xml, media_type="application/xml")
+
+
+@router.get("/sitemap-checks.xml")
+async def sitemap_checks_legacy():
+    return await sitemap_checks_paginated(0)
 
 
 @router.get("/api/v1/recent-checks")
 async def recent_checks():
-    """url-checker page ke 'Recently Checked' widget ke liye."""
     docs = await get_recent_pages(limit=10)
     return JSONResponse({
         "checks": [
