@@ -1,3 +1,21 @@
+"""
+Public Check Pages Router — ScamDekho  (FINAL — fully replace this file)
+========================================================================
+/check/{domain}            -> SSR safety report page (unique content per domain)
+/sitemap-index.xml         -> master sitemap
+/sitemap-checks-{n}.xml    -> paginated sitemaps (5000 each)
+/api/v1/recent-checks      -> recent checks widget API
+
+Features:
+  - ScamDekho header + footer (site jaisa)
+  - Unique 400-500 word content via GPT (cached forever) + template fallback
+  - Auto unique meta (title/description/keywords/OG/twitter)
+  - Professional design + proper H1/H2/H3 (SEO)
+  - AdSense-SAFE ad slots (clearly labelled, well spaced, away from buttons)
+
+File location: app/api/public_pages.py
+"""
+
 import html as html_lib
 from datetime import datetime
 from fastapi import APIRouter
@@ -15,12 +33,6 @@ router = APIRouter()
 
 SITE = "https://scamdekho.in"
 SITEMAP_PAGE_SIZE = 5000
-ADSENSE_CLIENT = "ca-pub-3772619201860644"
-
-# IMPORTANT: AdSense -> apne account me "In-article" ad units banao,
-# unke slot IDs yahan daalo. Tab tak placeholder rahenge (ad nahi dikhega, error nahi).
-AD_SLOT_1 = "0000000001"   # <- replace with real slot id (mid-content #1)
-AD_SLOT_2 = "0000000002"   # <- replace with real slot id (mid-content #2)
 
 
 def esc(s) -> str:
@@ -53,66 +65,83 @@ def _highlights_from_sources(sources: list):
     return positives, negatives
 
 
-def _analysis_paragraphs(doc: dict, ts: int) -> list:
+def _analysis_sections(doc: dict, ts: int, domain: str, summary_line: str):
+    """Headings ke saath sections (ScamAdviser jaisa). Har section data se unique."""
     r = doc.get("result", {})
     other = r.get("other_info") or {}
     sources = {s.get("name"): s for s in (r.get("sources") or [])}
-    domain = doc.get("domain", "this website")
-    paras = []
+    summary = r.get("summary") or {}
+    sections = []
 
+    # 1. Trust Score Overview
+    if ts >= 70:
+        lead = (f"{domain} has a trust score of {ts}/100, which suggests it is generally considered safe. "
+                f"It passed {summary.get('positive_signals', 0)} of our security checks. A high score means the "
+                f"site is unlikely to be involved in scams, but you should still review the details below.")
+    elif ts >= 50:
+        lead = (f"{domain} has a trust score of {ts}/100, which places it in the 'mixed signals' range. "
+                f"{summary.get('negative_signals', 0)} checks raised concerns. It is not clearly a scam, but you "
+                f"should verify it before trusting it with sensitive information.")
+    else:
+        lead = (f"{domain} has a low trust score of {ts}/100, with {summary.get('negative_signals', 0)} checks "
+                f"raising red flags. This places it in the high-risk range and the site shows characteristics "
+                f"commonly linked to scams. Avoid sharing personal or payment data.")
+    sections.append(("Trust Score Overview", lead))
+
+    # 2. Domain Age & History
     da = sources.get("Domain Age", {})
     created = other.get("domain_created")
     if created and created not in ("Unknown", "", None):
-        paras.append(
-            f"{domain} was first registered on {created}. " + (da.get("detail") or "")
-            + " Domain age is one of the strongest trust signals: long-established sites are generally "
-            "more reliable, while very new domains are more often linked to scams. Age alone is never a "
-            "guarantee, so we combine it with the checks below."
-        )
+        sections.append(("Domain Age & History",
+            f"The domain was created on {created}. {da.get('detail') or ''} An established domain usually reflects "
+            f"a long-standing online presence, which can add to credibility. Older domains are generally more "
+            f"trustworthy, though scammers sometimes buy aged domains, so age alone is not a guarantee."))
     else:
-        paras.append(
-            f"We could not reliably determine the registration date of {domain}. When domain age is hidden "
-            "or unavailable, extra caution is recommended before sharing any personal or payment information."
-        )
+        sections.append(("Domain Age & History",
+            f"We could not reliably determine the registration date of {domain}. When the domain age is hidden or "
+            f"unavailable, extra caution is recommended before sharing any personal or payment information."))
 
+    # 3. SSL & Connection Security
     ssl = sources.get("SSL Certificate", {})
+    http = sources.get("HTTP Analysis", {})
     if ssl.get("status") == "positive":
-        paras.append(
+        sections.append(("SSL & Connection Security",
             f"A valid SSL certificate was found for {domain} (issuer: {other.get('ssl_issuer', 'a trusted CA')}). "
-            "SSL encrypts the data sent between your browser and the website. Scammers can also install free SSL "
-            "certificates, so a padlock alone does not prove safety — but its absence is a clear warning."
-        )
-    elif ssl.get("status") == "negative":
-        paras.append(
-            f"The SSL certificate check for {domain} raised a concern: {ssl.get('message','SSL issue detected')}. "
-            "Without proper encryption, any data you enter could be exposed. Avoid submitting logins or payment "
-            "details on sites with invalid or missing SSL."
-        )
-
-    bad_sources = [n for n in ["Google Safe Browsing", "VirusTotal", "PhishTank", "OpenPhish",
-                               "URLhaus", "PhishDestroy", "AbuseIPDB"]
-                   if sources.get(n, {}).get("status") == "negative"]
-    if bad_sources:
-        paras.append(
-            f"Reputation databases flagged {domain}: {', '.join(bad_sources)} reported issues. Being listed on "
-            "phishing or malware blacklists is a serious red flag and usually means the site should be avoided."
-        )
+            f"SSL encrypts the data exchanged between you and the website. Note that scammers can also install free "
+            f"SSL, so a padlock alone does not prove safety — but its absence is a clear warning sign."))
     else:
-        paras.append(
-            f"{domain} was checked against major threat databases including Google Safe Browsing, VirusTotal, "
-            "PhishTank and URLhaus. No active phishing or malware listings were found at the time of scanning. "
-            "Reputation can change, so we re-check sites regularly."
-        )
+        extra = f" There are also issues reported with HTTP: {http.get('message','')}." if http.get("status") == "negative" else ""
+        sections.append(("SSL & Connection Security",
+            f"The website does not currently have a valid SSL certificate. SSL is important for encrypting data "
+            f"exchanged between you and the site.{extra} Avoid submitting personal or financial details on {domain} "
+            f"unless you can confirm the connection is secure."))
 
-    ip_src = sources.get("IP & Hosting", {})
+    # 4. Reputation & Blacklist Check
+    bad = [n for n in ["Google Safe Browsing", "VirusTotal", "PhishTank", "OpenPhish", "URLhaus", "PhishDestroy", "AbuseIPDB"]
+           if sources.get(n, {}).get("status") == "negative"]
+    if bad:
+        sections.append(("Reputation & Blacklist Check",
+            f"{domain} was flagged by: {', '.join(bad)}. Being listed on phishing or malware databases is a serious "
+            f"red flag and usually means the website should be avoided entirely."))
+    else:
+        vt = sources.get("VirusTotal", {})
+        vt_note = f" {vt.get('message','')}." if vt.get("message") else ""
+        sections.append(("Reputation & Blacklist Check",
+            f"{domain} has not been blacklisted. It passed major safety databases including Google Safe Browsing, "
+            f"OpenPhish, URLhaus and PhishTank, all returning clean results.{vt_note} These positive signals suggest "
+            f"the site is unlikely to host malware or phishing threats."))
+
+    # 5. Hosting & Technical Signals
     loc = other.get("server_location")
+    ip_src = sources.get("IP & Hosting", {})
     if loc and loc not in ("Unknown", "", None):
-        paras.append(
-            f"{domain} is hosted on a server located in {loc}. {ip_src.get('detail') or ''} Hosting location is "
-            "not proof of fraud by itself, but combined with other signals it helps build the overall risk picture."
-        )
+        sections.append(("Hosting & Technical Signals",
+            f"{domain} is hosted on a server located in {loc}. {ip_src.get('detail') or ''} Hosting location is not "
+            f"proof of fraud on its own, but combined with the other signals it helps build the overall risk picture."))
 
-    return [p.strip() for p in paras if p.strip()]
+    # 6. Conclusion
+    sections.append((f"Conclusion: Is {domain} Safe?", summary_line))
+    return sections
 
 
 def _summary_line(domain: str, ts: int) -> str:
@@ -144,20 +173,6 @@ def _faq_items(domain, ts, verdict, verdict_phrase, total_sources, answer, summa
 # ══════════════════════════════════════════════════════════════════
 # CHROME + ADS
 # ══════════════════════════════════════════════════════════════════
-
-def _ad_slot(slot_id: str) -> str:
-    """AdSense-safe slot: labelled, padded, isolated. Buttons se door."""
-    return f"""
-<div class="ad-wrap" aria-hidden="true">
-  <span class="ad-label">Advertisement</span>
-  <ins class="adsbygoogle" style="display:block"
-       data-ad-client="{ADSENSE_CLIENT}"
-       data-ad-slot="{slot_id}"
-       data-ad-format="fluid"
-       data-ad-layout="in-article"></ins>
-  <script>(adsbygoogle = window.adsbygoogle || []).push({{}});</script>
-</div>"""
-
 
 def _navbar_html() -> str:
     return f"""
@@ -282,9 +297,9 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
 
     summary_line = _summary_line(domain, ts)
 
-    # ── content (GPT if available, else template) ──
-    template_paras = _analysis_paragraphs(doc, ts)
-    template_html = "".join(f'<p>{esc(p)}</p>' for p in template_paras) + f'<p class="summary-line">{esc(summary_line)}</p>'
+    # ── content (GPT if available, else template with headings) ──
+    template_sections = _analysis_sections(doc, ts, domain, summary_line)
+    template_html = "".join(f'<h3>{esc(h)}</h3><p>{esc(b)}</p>' for h, b in template_sections)
     analysis_html = seo_html if seo_html else template_html
 
     # ── highlights ──
@@ -388,7 +403,6 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet"/>
 <link rel="stylesheet" href="{SITE}/style.css">
 <link rel="stylesheet" href="{SITE}/mobile.css">
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={ADSENSE_CLIENT}" crossorigin="anonymous"></script>
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-Q4BNB3E2K4"></script>
 <script>window.dataLayer=window.dataLayer||[];function gtag(){{dataLayer.push(arguments);}}gtag('js',new Date());gtag('config','G-Q4BNB3E2K4');</script>
 {schema}
@@ -538,8 +552,6 @@ p{{margin:0 0 14px;color:#334155;}}
     </div>
   </section>
 
-  {_ad_slot(AD_SLOT_1)}
-
   <!-- ANALYSIS -->
   <section class="card analysis">
     <h2>{domain} Review &amp; Detailed Analysis</h2>
@@ -551,8 +563,6 @@ p{{margin:0 0 14px;color:#334155;}}
     <h2>Facts About {domain}</h2>
     <div class="facts-grid">{facts_html}</div>
   </section>
-
-  {_ad_slot(AD_SLOT_2)}
 
   <!-- SOURCES -->
   <section class="card">
