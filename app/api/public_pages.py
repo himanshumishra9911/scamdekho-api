@@ -233,6 +233,7 @@ def _footer_html() -> str:
       <a href="{SITE}/contact">Contact Us</a>
       <a href="{SITE}/about">About</a>
       <a href="{SITE}/url-checker">Check a Website</a>
+      <a href="/sitemap">Website Sitemap</a>
     </div>
   </div>
   <div class="footer-bottom">© 2026 ScamDekho. All Rights Reserved.</div>
@@ -546,6 +547,16 @@ p{{margin:0 0 14px;color:#334155;}}
   </section>
 
   <!-- HIGHLIGHTS -->
+  <div class="ad-wrap">
+  <span class="ad-label">Advertisement</span>
+  <ins class="adsbygoogle"
+       style="display:block"
+       data-ad-client="ca-pub-3772619201860644"
+       data-ad-slot="8340491187"
+       data-ad-format="auto"
+       data-full-width-responsive="true"></ins>
+  <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+</div>
   <section class="card">
     <h2>Is {domain} Safe? Quick Highlights</h2>
     <div class="hl-grid">
@@ -559,6 +570,16 @@ p{{margin:0 0 14px;color:#334155;}}
     <h2>{domain} Review &amp; Detailed Analysis</h2>
     {analysis_html}
   </section>
+  <div class="ad-wrap">
+  <span class="ad-label">Advertisement</span>
+  <ins class="adsbygoogle"
+       style="display:block"
+       data-ad-client="ca-pub-3772619201860644"
+       data-ad-slot="3750509483"
+       data-ad-format="auto"
+       data-full-width-responsive="true"></ins>
+  <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+</div>
 
   <!-- FACTS -->
   <section class="card">
