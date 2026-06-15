@@ -28,6 +28,53 @@ BLOCKED_PATTERNS = re.compile(
 IP_PATTERN = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
 LOCALHOST_PATTERN = re.compile(r"localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.|10\.\d+\.")
 
+# ──────────────────────────────────────────────
+# SEO-WORTHLESS DOMAINS
+# Page BANEGA (user ko result milega) par INDEX nahi hoga (sitemap se bahar).
+# ──────────────────────────────────────────────
+FAMOUS_DOMAINS = {
+    "google.com", "youtube.com", "facebook.com", "instagram.com", "twitter.com",
+    "x.com", "spotify.com", "apple.com", "microsoft.com", "amazon.com", "netflix.com",
+    "linkedin.com", "whatsapp.com", "telegram.org", "zoom.us", "github.com",
+    "wikipedia.org", "reddit.com", "paypal.com", "pinterest.com", "tiktok.com",
+    "binance.com", "coinbase.com", "openai.com", "cloudflare.com", "shopify.com",
+    "amazon.in", "flipkart.com", "sbicard.com", "onlinesbi.sbi", "hdfcbank.com",
+    "icicibank.com", "iciciprulife.com", "axisbank.com", "kotak.com", "paytm.com",
+    "phonepe.com", "zerodha.com", "dhan.co", "fyers.in", "groww.in", "upstox.com",
+    "delta.exchange", "angelone.in", "5paisa.com",
+    "swiggy.com", "zomato.com", "myntra.com", "ajio.com", "meesho.com", "nykaa.com",
+    "irctc.co.in", "uidai.gov.in", "incometax.gov.in", "epfindia.gov.in",
+    "clinikally.com", "headphonezone.in", "crazygames.com",
+}
+
+SHORTENER_HOSTS = {
+    "wa.link", "bit.ly", "t.co", "goo.gl", "tinyurl.com", "cutt.ly", "rebrand.ly",
+    "lnkd.in", "rb.gy", "is.gd", "shorturl.at", "ow.ly", "buff.ly", "linktr.ee",
+    "share.google",
+}
+
+TRANSIENT_SUFFIXES = (
+    ".app.goo.gl", ".goo.gl", ".zoom.us", ".archive.org", ".sharepoint.com",
+    ".safelinks.protection.outlook.com", ".google.com", ".googleusercontent.com",
+    ".firebaseapp.com", ".web.app", ".translate.goog", ".blogspot.com",
+)
+
+
+def is_seo_worthless(domain: str) -> bool:
+    """True → page banao par index/sitemap se bahar rakho."""
+    d = (domain or "").lower().strip()
+    if not d:
+        return True
+    if d in SHORTENER_HOSTS or d in FAMOUS_DOMAINS:
+        return True
+    for suf in TRANSIENT_SUFFIXES:
+        if d.endswith(suf):
+            return True
+    for fam in FAMOUS_DOMAINS:
+        if d.endswith("." + fam):
+            return True
+    return False
+
 
 def normalize_domain(url_or_domain: str) -> str | None:
     """URL/domain ko ek canonical domain me convert karo. Invalid → None."""
@@ -120,6 +167,8 @@ async def save_public_scan(url: str, result: dict) -> None:
             return
 
         quality = calculate_page_quality(result)
+        # famous brand / shortener / transient host → page rahe par index na ho
+        indexable = quality["indexable"] and not is_seo_worthless(domain)
 
         # Result se heavy/private cheezein hatao
         clean_result = {
@@ -134,7 +183,7 @@ async def save_public_scan(url: str, result: dict) -> None:
                 "$set": {
                     "domain": domain,
                     "result": clean_result,
-                    "indexable": quality["indexable"],
+                    "indexable": indexable,
                     "quality_score": quality["quality_score"],
                     "quality_reasons": quality["reasons"],
                     "last_scanned": now,
