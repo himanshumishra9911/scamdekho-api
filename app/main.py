@@ -18,6 +18,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from app.api.public_pages import router as public_pages_router
+from app.api.listing_pages import router as listing_router
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ app = FastAPI(title="ScamDekho API")
 app.state.limiter = Limiter(key_func=get_remote_address)
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+app.include_router(listing_router)
 
 scheduler = AsyncIOScheduler()
 
