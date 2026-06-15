@@ -555,7 +555,7 @@ p{{margin:0 0 14px;color:#334155;}}
        data-ad-slot="8340491187"
        data-ad-format="auto"
        data-full-width-responsive="true"></ins>
-  <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+  <script>(adsbygoogle = window.adsbygoogle || []).push({{}});</script>
 </div>
   <section class="card">
     <h2>Is {domain} Safe? Quick Highlights</h2>
@@ -578,7 +578,7 @@ p{{margin:0 0 14px;color:#334155;}}
        data-ad-slot="3750509483"
        data-ad-format="auto"
        data-full-width-responsive="true"></ins>
-  <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+  <script>(adsbygoogle = window.adsbygoogle || []).push({{}});</script>
 </div>
 
   <!-- FACTS -->
