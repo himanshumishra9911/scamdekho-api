@@ -407,7 +407,7 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-Q4BNB3E2K4"></script>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3772619201860644"
 crossorigin="anonymous"></script>
-<script data-grow-initializer="">!(function(){window.growMe||((window.growMe=function(e){window.growMe._.push(e);}),(window.growMe._=[]));var e=document.createElement("script");(e.type="text/javascript"),(e.src="https://faves.grow.me/main.js"),(e.defer=!0),e.setAttribute("data-grow-faves-site-id","U2l0ZTo5NDU1YTI4My03ZjQ2LTQ2MTUtYmExYS0zODQ1ZGQxMmI4MTQ=");var t=document.getElementsByTagName("script")[0];t.parentNode.insertBefore(e,t);})();</script>
+<script data-grow-initializer="">!(function(){{window.growMe||((window.growMe=function(e){{window.growMe._.push(e);}}),(window.growMe._=[]));var e=document.createElement("script");(e.type="text/javascript"),(e.src="https://faves.grow.me/main.js"),(e.defer=!0),e.setAttribute("data-grow-faves-site-id","U2l0ZTo5NDU1YTI4My03ZjQ2LTQ2MTUtYmExYS0zODQ1ZGQxMmI4MTQ=");var t=document.getElementsByTagName("script")[0];t.parentNode.insertBefore(e,t);}})();</script>
 <script>window.dataLayer=window.dataLayer||[];function gtag(){{dataLayer.push(arguments);}}gtag('js',new Date());gtag('config','G-Q4BNB3E2K4');</script>
 {schema}
 <style>
