@@ -22,6 +22,7 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, Response, JSONResponse
 
 from app.services.public_pages_service import (
+    get_domain_category,
     get_public_page,
     get_recent_pages,
     normalize_domain,
@@ -261,6 +262,7 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
     verdict = esc(r.get("verdict", "UNKNOWN"))
     color, bg, verdict_phrase = verdict_color(ts)
     other = r.get("other_info") or {}
+    category_label = r.get("category_label") or r.get("category") or get_domain_category(doc.get("domain"))
     summary = r.get("summary") or {}
     sources = r.get("sources") or []
     total_sources = summary.get("total_sources_checked", len(sources)) or 14
@@ -317,7 +319,8 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
         return (f'<div class="fact-cell"><div class="fact-k">{label}</div>'
                 f'<div class="fact-v">{esc(value or "Unknown")}</div></div>')
     facts_html = (
-        fact("Domain Created", other.get("domain_created"))
+        (fact("Category", category_label) if category_label else "")
+        + fact("Domain Created", other.get("domain_created"))
         + fact("SSL Issuer", other.get("ssl_issuer"))
         + fact("Server Location", other.get("server_location"))
         + fact("IP Address", other.get("ip_address"))

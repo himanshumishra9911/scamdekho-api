@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 pages_collection = db["public_pages"]
 
 # ──────────────────────────────────────────────
-# DOMAINS JINKE PAGES KABHI NAHI BANENGE
+# ADULT DOMAIN TEXT CATEGORY LABELS
 # ──────────────────────────────────────────────
-BLOCKED_PATTERNS = re.compile(
+ADULT_CONTENT_PATTERNS = re.compile(
     r"porn|xxx|sex|hentai|nude|escort|onlyfans|fap|milf|xvideo|xnxx|"
     r"redtube|brazzer|camgirl|chaturbate|stripchat|bongacams",
     re.IGNORECASE,
@@ -76,6 +76,14 @@ def is_seo_worthless(domain: str) -> bool:
     return False
 
 
+def get_domain_category(domain: str) -> str | None:
+    """Return an optional text-only category label for the public report."""
+    d = (domain or "").lower().strip()
+    if ADULT_CONTENT_PATTERNS.search(d):
+        return "Adult Content"
+    return None
+
+
 def normalize_domain(url_or_domain: str) -> str | None:
     """URL/domain ko ek canonical domain me convert karo. Invalid → None."""
     d = (url_or_domain or "").strip().lower()
@@ -87,8 +95,6 @@ def normalize_domain(url_or_domain: str) -> str | None:
     if not d or "." not in d or len(d) > 100:
         return None
     if IP_PATTERN.match(d) or LOCALHOST_PATTERN.search(d):
-        return None
-    if BLOCKED_PATTERNS.search(d):
         return None
     # Sirf valid domain chars
     if not re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", d):
@@ -175,6 +181,9 @@ async def save_public_scan(url: str, result: dict) -> None:
             k: v for k, v in result.items()
             if k not in ("screenshot_bytes", "technical_report", "from_cache")
         }
+        category_label = get_domain_category(domain)
+        if category_label:
+            clean_result["category_label"] = category_label
 
         now = datetime.utcnow()
         await pages_collection.update_one(
