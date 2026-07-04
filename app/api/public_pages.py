@@ -48,6 +48,11 @@ def verdict_color(ts: int) -> tuple:
     return ("#dc2626", "#fef2f2", "is high risk")
 
 
+def is_adult_category_label(category_label) -> bool:
+    label = str(category_label or "").strip().lower()
+    return any(term in label for term in ("adult", "18+", "nsfw"))
+
+
 # ══════════════════════════════════════════════════════════════════
 # UNIQUE CONTENT (template fallback — jab GPT na chale)
 # ══════════════════════════════════════════════════════════════════
@@ -380,6 +385,109 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
 {{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{faq_schema_items}]}}
 </script>"""
 
+    show_age_gate = is_adult_category_label(category_label)
+    body_class = ' class="adult-gated age-gate-active"' if show_age_gate else ""
+    content_open = '<div class="age-gated-content">' if show_age_gate else ""
+    content_close = "</div>" if show_age_gate else ""
+    age_gate_head_script = ""
+    age_gate_css = ""
+    age_gate_html = ""
+    age_gate_script = ""
+
+    if show_age_gate:
+        age_gate_key = f"scamdekho_age_confirmed:{doc['domain']}"
+        age_gate_head_script = f"""
+<script>
+try {{
+  if (sessionStorage.getItem("{age_gate_key}") === "true") {{
+    document.documentElement.classList.add("age-confirmed");
+  }}
+}} catch (e) {{}}
+</script>"""
+        age_gate_css = """
+/* ===== AGE VERIFICATION ===== */
+body.adult-gated {font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;}
+body.adult-gated.age-gate-active {overflow:hidden;}
+html.age-confirmed body.adult-gated,
+body.adult-gated.age-confirmed {overflow:auto;}
+body.adult-gated .age-gated-content {filter:blur(8px);pointer-events:none;user-select:none;transition:filter .22s ease, opacity .22s ease;}
+html.age-confirmed body.adult-gated .age-gated-content,
+body.adult-gated.age-confirmed .age-gated-content {filter:none;pointer-events:auto;user-select:auto;}
+.age-gate-overlay {position:fixed;inset:0;z-index:5000;display:flex;align-items:center;justify-content:center;padding:22px;background:rgba(15,23,42,.74);backdrop-filter:blur(4px);animation:ageGateFade .2s ease-out;}
+html.age-confirmed .age-gate-overlay,
+body.adult-gated.age-confirmed .age-gate-overlay,
+.age-gate-overlay[hidden] {display:none;}
+.age-gate-card {width:min(100%,460px);background:#fff;color:#0f172a;border-radius:16px;padding:30px 28px;text-align:center;box-shadow:0 24px 80px rgba(2,6,23,.35);font-family:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;}
+.age-gate-icon {width:58px;height:58px;margin:0 auto 16px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#fff7ed;color:#d97706;font-size:30px;}
+.age-gate-card h2 {font-size:24px;line-height:1.25;margin:0 0 10px;color:#0f172a;font-weight:800;letter-spacing:0;}
+.age-gate-card p {font-size:15px;line-height:1.7;margin:0 0 22px;color:#475569;}
+.age-gate-actions {display:grid;gap:12px;}
+.age-gate-btn {width:100%;border:0;border-radius:10px;padding:13px 16px;font-size:14px;font-weight:800;line-height:1.35;cursor:pointer;transition:transform .15s ease, box-shadow .15s ease, background .15s ease;font-family:inherit;}
+.age-gate-btn:hover {transform:translateY(-1px);}
+.age-gate-continue {background:#16a34a;color:#fff;box-shadow:0 10px 22px rgba(22,163,74,.24);}
+.age-gate-continue:hover {background:#15803d;}
+.age-gate-back {background:#f1f5f9;color:#991b1b;border:1px solid #e2e8f0;}
+.age-gate-back:hover {background:#e2e8f0;color:#7f1d1d;}
+.age-gate-exit {opacity:0;transition:opacity .18s ease;}
+@keyframes ageGateFade {from {opacity:0;} to {opacity:1;}}
+@media(max-width:480px) {
+  .age-gate-overlay {align-items:flex-start;padding:76px 14px 20px;}
+  .age-gate-card {padding:24px 18px;border-radius:14px;}
+  .age-gate-card h2 {font-size:21px;}
+  .age-gate-card p {font-size:14px;}
+  .age-gate-btn {font-size:13px;padding:12px 13px;}
+}
+"""
+        age_gate_html = """
+<div class="age-gate-overlay" id="ageGate" role="dialog" aria-modal="true" aria-labelledby="ageGateTitle" aria-describedby="ageGateMessage">
+  <div class="age-gate-card">
+    <div class="age-gate-icon" aria-hidden="true">&#9888;&#65039;</div>
+    <h2 id="ageGateTitle">Adult Content Warning</h2>
+    <p id="ageGateMessage">This page contains analysis of a website that may host adult content. Please confirm your age to continue.</p>
+    <div class="age-gate-actions">
+      <button type="button" class="age-gate-btn age-gate-continue" id="ageGateContinue">&#10003; I am 18 or older - Continue</button>
+      <button type="button" class="age-gate-btn age-gate-back" id="ageGateBack">&#10007; Go Back</button>
+    </div>
+  </div>
+</div>"""
+        age_gate_script = f"""
+<script>
+(function () {{
+  var storageKey = "{age_gate_key}";
+  var body = document.body;
+  var gate = document.getElementById("ageGate");
+  if (!body || !gate) return;
+
+  function confirmAge() {{
+    try {{
+      sessionStorage.setItem(storageKey, "true");
+    }} catch (e) {{}}
+    document.documentElement.classList.add("age-confirmed");
+    body.classList.remove("age-gate-active");
+    body.classList.add("age-confirmed");
+    gate.classList.add("age-gate-exit");
+    window.setTimeout(function () {{
+      gate.setAttribute("hidden", "hidden");
+    }}, 180);
+  }}
+
+  try {{
+    if (sessionStorage.getItem(storageKey) === "true") {{
+      confirmAge();
+      return;
+    }}
+  }} catch (e) {{}}
+
+  body.classList.add("age-gate-active");
+  var continueButton = document.getElementById("ageGateContinue");
+  var backButton = document.getElementById("ageGateBack");
+  if (continueButton) continueButton.addEventListener("click", confirmAge);
+  if (backButton) backButton.addEventListener("click", function () {{
+    window.location.href = "/";
+  }});
+}})();
+</script>"""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -413,6 +521,7 @@ crossorigin="anonymous"></script>
 <script data-grow-initializer="">!(function(){{window.growMe||((window.growMe=function(e){{window.growMe._.push(e);}}),(window.growMe._=[]));var e=document.createElement("script");(e.type="text/javascript"),(e.src="https://faves.grow.me/main.js"),(e.defer=!0),e.setAttribute("data-grow-faves-site-id","U2l0ZTo5NDU1YTI4My03ZjQ2LTQ2MTUtYmExYS0zODQ1ZGQxMmI4MTQ=");var t=document.getElementsByTagName("script")[0];t.parentNode.insertBefore(e,t);}})();</script>
 <script>window.dataLayer=window.dataLayer||[];function gtag(){{dataLayer.push(arguments);}}gtag('js',new Date());gtag('config','G-Q4BNB3E2K4');</script>
 {schema}
+{age_gate_head_script}
 <style>
 /* ===== NAVBAR ===== */
 .navbar{{background:rgba(255,255,255,0.95)!important;backdrop-filter:blur(12px);box-shadow:0 2px 12px rgba(0,0,0,0.06)!important;position:fixed!important;top:0;width:100%;z-index:1000!important;display:flex;align-items:center;justify-content:space-between;padding:0 60px;height:80px;}}
@@ -506,6 +615,7 @@ p{{margin:0 0 14px;color:#334155;}}
 /* ===== AD SLOTS (AdSense-safe) ===== */
 .ad-wrap{{margin:30px 0;padding:10px;background:#fafbfc;border:1px solid #eef2f7;border-radius:12px;text-align:center;min-height:120px;overflow:hidden;}}
 .ad-label{{display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#b6c0cc;margin-bottom:6px;}}
+{age_gate_css}
 /* mobile */
 @media(max-width:768px){{
   .navbar{{height:70px!important;padding:0 12px!important;}}
@@ -524,8 +634,10 @@ p{{margin:0 0 14px;color:#334155;}}
 }}
 </style>
 </head>
-<body>
+<body{body_class}>
 
+{age_gate_html}
+{content_open}
 {_navbar_html()}
 
 <main class="report-wrap">
@@ -624,7 +736,9 @@ p{{margin:0 0 14px;color:#334155;}}
 </main>
 
 {_footer_html()}
+{content_close}
 {_nav_js()}
+{age_gate_script}
 </body>
 </html>"""
 
