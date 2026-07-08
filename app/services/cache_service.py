@@ -8,9 +8,11 @@ from app.services.public_pages_service import save_public_scan
 
 cache_collection = db["url_cache"]
 scan_cache_collection = db["scan_cache"]
+message_check_cache_collection = db["message_check_cache"]
 
 URL_CACHE_TTL_HOURS = 24 * 3
 SCAN_CACHE_TTL_HOURS = 24 * 3
+MESSAGE_CHECK_CACHE_TTL_HOURS = 24
 
 
 def _url_key(url: str) -> str:
@@ -112,6 +114,24 @@ async def setup_cache_ttl_index() -> None:
         except Exception:
             pass
 
+    try:
+        await message_check_cache_collection.create_index(
+            "cached_at",
+            expireAfterSeconds=MESSAGE_CHECK_CACHE_TTL_HOURS * 3600,
+            background=True
+        )
+    except Exception:
+        try:
+            await db.command({
+                "collMod": "message_check_cache",
+                "index": {
+                    "keyPattern": {"cached_at": 1},
+                    "expireAfterSeconds": MESSAGE_CHECK_CACHE_TTL_HOURS * 3600,
+                },
+            })
+        except Exception:
+            pass
+
 
 def _normalize_payload(payload: Any) -> Any:
     if isinstance(payload, str):
@@ -167,6 +187,49 @@ async def set_cached_scan(namespace: str, payload: Any, result: dict) -> None:
                 "namespace": namespace,
                 "payload_hash": key,
                 "result": result_to_cache,
+                "cached_at": datetime.utcnow(),
+            }},
+            upsert=True
+        )
+    except Exception:
+        pass
+
+
+def normalize_message_check_text(text: str) -> str:
+    return text.strip().lower()
+
+
+def get_message_check_hash(text: str) -> str:
+    normalized = normalize_message_check_text(text)
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+async def get_cached_message_check(text: str) -> dict | None:
+    try:
+        key = get_message_check_hash(text)
+        doc = await message_check_cache_collection.find_one({"_id": key})
+        if not doc:
+            return None
+        cached_at = doc.get("cached_at")
+        if not cached_at:
+            return None
+        if datetime.utcnow() - cached_at > timedelta(hours=MESSAGE_CHECK_CACHE_TTL_HOURS):
+            await message_check_cache_collection.delete_one({"_id": key})
+            return None
+        return doc.get("result")
+    except Exception:
+        return None
+
+
+async def set_cached_message_check(text: str, result: dict) -> None:
+    try:
+        key = get_message_check_hash(text)
+        await message_check_cache_collection.update_one(
+            {"_id": key},
+            {"$set": {
+                "_id": key,
+                "normalized_text": normalize_message_check_text(text),
+                "result": result,
                 "cached_at": datetime.utcnow(),
             }},
             upsert=True

@@ -18,9 +18,12 @@ from app.services.cache_service import (
     set_cached_result,
     get_cached_scan,
     set_cached_scan,
+    get_cached_message_check,
+    set_cached_message_check,
 )
 from app.services.rate_limiter import check_url_rate_limit
 from app.services.security import get_client_ip, require_public_client, is_scammer_testing_url
+from app.services.turnstile_service import verify_turnstile_token
 from app.api.report import router as report_router
 from app.api.contact import router as contact_router
 from app.api.offer_letter import router as offer_letter_router
@@ -49,6 +52,7 @@ def scan_meta(request: Request) -> dict:
 # ======================================================
 class TextCheckRequest(BaseModel):
     text: str
+    turnstile_token: str | None = None
 
 class UrlCheckRequest(BaseModel):
     url: str
@@ -61,13 +65,25 @@ class UpiCheckRequest(BaseModel):
 # TEXT CHECK
 # ======================================================
 @router.post("/check/text")
-async def check_text(data: TextCheckRequest):
+async def check_text(data: TextCheckRequest, request: Request):
     text = data.text.strip()
-    cached = await get_cached_scan("text", text)
+    turnstile_token = (data.turnstile_token or "").strip()
+
+    # Verify Turnstile before any cache lookup or paid AI call.
+    if not turnstile_token:
+        raise HTTPException(status_code=403, detail="Turnstile verification required")
+
+    is_human = await verify_turnstile_token(turnstile_token, get_client_ip(request))
+    if not is_human:
+        raise HTTPException(status_code=403, detail="Turnstile verification failed")
+
+    # Reuse a 24-hour cached verdict for the normalized text hash.
+    cached = await get_cached_message_check(text)
     if cached:
         cached["from_cache"] = True
         return cached
 
+    # Call the existing AI workflow only after Turnstile and cache checks pass.
     ai = call_ai_analysis(text)
     verdict = "SCAM" if ai["risk_score"] >= 70 else "SAFE"
     response = {
@@ -78,7 +94,7 @@ async def check_text(data: TextCheckRequest):
         "how_to_avoid": ai["how_to_avoid"]
     }
     await save_scan("text", text, verdict, ai["risk_score"])
-    await set_cached_scan("text", text, response)
+    await set_cached_message_check(text, response)
     return response
 
 
