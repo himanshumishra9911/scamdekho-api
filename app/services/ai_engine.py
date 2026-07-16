@@ -8,6 +8,21 @@ load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int((os.getenv(name) or "").strip())
+        return value if value > 0 else default
+    except Exception:
+        return default
+
+
+# Keep caps comfortably above the current JSON response size so verdict behavior
+# stays the same while avoiding unusually long model outputs.
+TEXT_AI_MAX_TOKENS = _env_int("OPENAI_TEXT_MAX_TOKENS", 350)
+VISION_AI_MAX_TOKENS = _env_int("OPENAI_VISION_MAX_TOKENS", 450)
+URL_AI_MAX_TOKENS = _env_int("OPENAI_URL_MAX_TOKENS", 650)
+
 # ===============================
 # SYSTEM PROMPT — TEXT / IMAGE
 # ===============================
@@ -118,6 +133,7 @@ def call_ai_analysis(content: str, language="auto", content_type="text"):
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": content}
             ],
+            max_tokens=TEXT_AI_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
         data = json.loads(response.choices[0].message.content)
@@ -148,6 +164,7 @@ def call_ai_vision_analysis(image_bytes):
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
                 ]}
             ],
+            max_tokens=VISION_AI_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
         data = json.loads(response.choices[0].message.content)
@@ -178,6 +195,7 @@ Remember: Only mark SCAM if there is CLEAR fraud evidence. When in doubt → SAF
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
                 ]}
             ],
+            max_tokens=VISION_AI_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
         data = json.loads(response.choices[0].message.content)
@@ -315,6 +333,7 @@ Your risk_score MUST be within 20 points of {expected_risk} unless screenshot sh
         response = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=messages,
+            max_tokens=URL_AI_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
 
