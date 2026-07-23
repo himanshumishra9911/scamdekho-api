@@ -1,6 +1,7 @@
 import logging
+from pathlib import Path
 from fastapi import Depends, FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import router as v1_router
 from app.api.analytics import router as analytics_router
@@ -100,7 +101,19 @@ app.include_router(public_pages_router)
 @app.get("/dashboard", dependencies=[Depends(require_admin)])
 @app.get("/dashboard/", dependencies=[Depends(require_admin)])
 def dashboard():
-    return FileResponse("app/static/dashboard.html")
+    dashboard_path = Path("app/static/dashboard.html")
+    extension_path = Path("app/static/partner_dashboard_extension.js")
+    try:
+        html = dashboard_path.read_text(encoding="utf-8")
+        extension = extension_path.read_text(encoding="utf-8")
+        if "partner_dashboard_extension.js" not in html:
+            html = html.replace(
+                "</body>",
+                f"<script data-source=\"partner_dashboard_extension.js\">\n{extension}\n</script>\n</body>",
+            )
+        return HTMLResponse(html)
+    except Exception:
+        return FileResponse(dashboard_path)
 
 @app.get("/")
 def root():
