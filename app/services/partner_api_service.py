@@ -3,7 +3,8 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pymongo import ReturnDocument
 
 from app.core.database import db
@@ -13,6 +14,7 @@ partner_api_keys_collection = db["partner_api_keys"]
 partner_api_usage_collection = db["partner_api_usage"]
 
 DEFAULT_MONTHLY_LIMIT = 350
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 @dataclass
@@ -118,16 +120,15 @@ def _unauthorized(detail: str) -> HTTPException:
 
 
 async def require_partner_api_key(
-    authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> PartnerRequestContext:
-    if not authorization:
+    if not credentials:
         raise _unauthorized("Missing Authorization header")
 
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
+    if credentials.scheme.lower() != "bearer" or not credentials.credentials.strip():
         raise _unauthorized("Invalid Authorization header")
 
-    api_key = token.strip()
+    api_key = credentials.credentials.strip()
     partner = await partner_api_keys_collection.find_one(
         {"api_key": api_key, "is_active": True}
     )
