@@ -1,7 +1,7 @@
 from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.services.partner_api_service import (
     PartnerRequestContext,
@@ -42,7 +42,14 @@ PARTNER_CONFIDENCE_MAP = {
 
 
 class PartnerUrlCheckRequest(BaseModel):
-    url: str | None = None
+    url: str | None = Field(
+        default=None,
+        description=(
+            "Full URL or bare domain. example.com, www.example.com, and "
+            "https://example.com all work."
+        ),
+        examples=["example.com"],
+    )
 
 
 def _normalized_scan_url(raw_url: str) -> tuple[str, str] | tuple[None, None]:
@@ -88,7 +95,10 @@ def _full_report_url(domain: str, scan_url: str) -> str:
 @router.post("/url-check")
 async def partner_url_check(
     response: Response,
-    payload: PartnerUrlCheckRequest | None = Body(default=None),
+    payload: PartnerUrlCheckRequest | None = Body(
+        default=None,
+        example={"url": "example.com"},
+    ),
     partner: PartnerRequestContext = Depends(require_partner_api_key),
 ):
     headers = rate_limit_headers(partner.monthly_limit, partner.remaining, partner.reset_at)
