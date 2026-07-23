@@ -1,18 +1,22 @@
+import logging
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.services.partner_api_service import (
     PartnerRequestContext,
+    log_partner_api_event,
     rate_limit_headers,
     require_partner_api_key,
 )
 from app.services.public_pages_service import normalize_domain, save_public_scan
+from app.services.security import get_client_ip
 from app.services.url_checker import analyze_url_full
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 SITE = "https://scamdekho.in"
 
@@ -49,6 +53,11 @@ class PartnerUrlCheckRequest(BaseModel):
             "https://example.com all work."
         ),
         examples=["example.com"],
+    )
+    user_id: str | None = Field(
+        default=None,
+        description="Optional partner-side user identifier for analytics.",
+        examples=["user_123"],
     )
 
 
@@ -94,6 +103,7 @@ def _full_report_url(domain: str, scan_url: str) -> str:
 
 @router.post("/url-check")
 async def partner_url_check(
+    request: Request,
     response: Response,
     payload: PartnerUrlCheckRequest | None = Body(
         default=None,
@@ -132,16 +142,40 @@ async def partner_url_check(
     await save_public_scan(scan_url, scan_result)
 
     partner_verdict = _partner_verdict(scan_result)
+    confidence = _partner_confidence(scan_result)
+    sources_checked = int(
+        (scan_result.get("summary") or {}).get(
+            "total_sources_checked", len(scan_result.get("sources") or [])
+        )
+        or 14
+    )
+    full_report_url = _full_report_url(domain, scan_url)
+
+    # Analytics logging must never break partner responses.
+    try:
+        await log_partner_api_event(
+            api_key=partner.api_key,
+            partner_name=partner.partner_name,
+            raw_url=raw_url or "",
+            scan_url=scan_url,
+            domain=domain,
+            trust_score=int(scan_result.get("trust_score", 50)),
+            verdict=partner_verdict,
+            confidence=confidence,
+            sources_checked=sources_checked,
+            full_report_url=full_report_url,
+            user_id=(payload.user_id if payload else None),
+            client_ip=get_client_ip(request),
+            user_agent=request.headers.get("user-agent", ""),
+        )
+    except Exception:
+        logger.exception("Failed to log partner API analytics event")
+
     return {
         "trust_score": int(scan_result.get("trust_score", 50)),
         "verdict": partner_verdict,
-        "confidence": _partner_confidence(scan_result),
+        "confidence": confidence,
         "summary": PARTNER_SUMMARY_MAP[partner_verdict],
-        "sources_checked": int(
-            (scan_result.get("summary") or {}).get(
-                "total_sources_checked", len(scan_result.get("sources") or [])
-            )
-            or 14
-        ),
-        "full_report_url": _full_report_url(domain, scan_url),
+        "sources_checked": sources_checked,
+        "full_report_url": full_report_url,
     }
