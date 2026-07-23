@@ -29,6 +29,12 @@ Authorization: Bearer YOUR_API_KEY
 Content-Type: application/json
 ```
 
+When testing in Swagger UI at `/docs`, use the **Authorize** button and paste:
+
+```text
+Bearer YOUR_API_KEY
+```
+
 Each partner has its own API key record in the `partner_api_keys` collection with:
 
 - `api_key`
@@ -48,9 +54,15 @@ ASKEAL_PARTNER_MONTHLY_LIMIT
 
 ```json
 {
-  "url": "https://example.com"
+  "url": "example.com"
 }
 ```
+
+The API accepts:
+
+- `example.com`
+- `www.example.com`
+- `https://example.com`
 
 ## Success Response
 
