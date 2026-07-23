@@ -192,6 +192,36 @@ class PartnerUrlCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"]["message"], "Invalid or missing URL")
 
+    def test_bare_domain_without_scheme_is_accepted(self):
+        scan_result = {
+            "trust_score": 88,
+            "verdict": "VERY LIKELY SAFE",
+            "confidence": "HIGH",
+            "summary": {"total_sources_checked": 14},
+            "sources": [],
+        }
+
+        analyze_mock = AsyncMock(return_value=scan_result)
+        with patch(
+            "app.api.partner_url_check.analyze_url_full",
+            new=analyze_mock,
+        ), patch(
+            "app.api.partner_url_check.save_public_scan",
+            new=AsyncMock(return_value=None),
+        ):
+            response = self.client.post(
+                "/api/v1/url-check",
+                headers={"Authorization": "Bearer askeal-test-key"},
+                json={"url": "example.com"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        analyze_mock.assert_awaited_once_with("https://example.com")
+        self.assertEqual(
+            response.json()["full_report_url"],
+            "https://scamdekho.in/check/example.com",
+        )
+
     def test_missing_or_invalid_api_key_returns_401(self):
         response = self.client.post("/api/v1/url-check", json={"url": "https://example.com"})
         self.assertEqual(response.status_code, 401)
