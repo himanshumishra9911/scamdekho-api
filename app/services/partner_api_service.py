@@ -12,6 +12,7 @@ from app.core.database import db
 
 partner_api_keys_collection = db["partner_api_keys"]
 partner_api_usage_collection = db["partner_api_usage"]
+partner_api_events_collection = db["partner_api_events"]
 
 DEFAULT_MONTHLY_LIMIT = 350
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -73,6 +74,10 @@ async def setup_partner_api_indexes() -> None:
         unique=True,
         background=True,
     )
+    await partner_api_events_collection.create_index("created_at", background=True)
+    await partner_api_events_collection.create_index("partner_name", background=True)
+    await partner_api_events_collection.create_index("domain", background=True)
+    await partner_api_events_collection.create_index("user_id", background=True)
 
 
 async def upsert_partner_api_key(
@@ -108,6 +113,42 @@ async def seed_default_partner_keys() -> None:
         partner_name="Askeal",
         monthly_limit=_env_int("ASKEAL_PARTNER_MONTHLY_LIMIT", DEFAULT_MONTHLY_LIMIT),
         is_active=True,
+    )
+
+
+async def log_partner_api_event(
+    *,
+    api_key: str,
+    partner_name: str,
+    raw_url: str,
+    scan_url: str,
+    domain: str,
+    trust_score: int,
+    verdict: str,
+    confidence: str,
+    sources_checked: int,
+    full_report_url: str,
+    user_id: str | None = None,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+) -> None:
+    await partner_api_events_collection.insert_one(
+        {
+            "api_key": api_key,
+            "partner_name": partner_name,
+            "raw_url": raw_url,
+            "scan_url": scan_url,
+            "domain": domain,
+            "trust_score": int(trust_score),
+            "verdict": verdict,
+            "confidence": confidence,
+            "sources_checked": int(sources_checked),
+            "full_report_url": full_report_url,
+            "user_id": (user_id or "").strip()[:120] or None,
+            "client_ip": (client_ip or "").strip()[:120] or "",
+            "user_agent": (user_agent or "").strip()[:300] or "",
+            "created_at": _utcnow(),
+        }
     )
 
 
