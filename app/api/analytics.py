@@ -383,3 +383,162 @@ async def invoice_stats(date: str = Query(default=None)):
             "recent": [],
             "error": str(e),
         }
+
+
+@router.get("/partner-stats", dependencies=[Depends(require_admin)])
+async def partner_stats(
+    date: str = Query(default=None),
+    partner: str = Query(default=None, description="Optional partner name filter."),
+):
+    try:
+        context = build_date_context(date)
+        target = context["target"]
+        query = context["date_filter"].copy()
+
+        partner_name_filter = (partner or "").strip()
+        if partner_name_filter and partner_name_filter.lower() != "all":
+            query["partner_name"] = partner_name_filter
+
+        collection = db["partner_api_events"]
+        recent_cursor = collection.find(query, {"_id": 0}).sort("created_at", -1)
+
+        docs = []
+        async for doc in recent_cursor:
+            docs.append(doc)
+
+        active_partner_names = {
+            str(doc.get("partner_name") or "").strip()
+            for doc in docs
+            if str(doc.get("partner_name") or "").strip()
+        }
+        unique_domains = {
+            str(doc.get("domain") or "").strip()
+            for doc in docs
+            if str(doc.get("domain") or "").strip()
+        }
+        tracked_users = {
+            str(doc.get("user_id") or "").strip()
+            for doc in docs
+            if str(doc.get("user_id") or "").strip()
+        }
+
+        configured_partners_query = {"is_active": True}
+        if partner_name_filter and partner_name_filter.lower() != "all":
+            configured_partners_query["partner_name"] = partner_name_filter
+        configured_partner_count = await db["partner_api_keys"].count_documents(configured_partners_query)
+
+        total = len(docs)
+        trust_score_total = 0
+        safe_count = 0
+        risky_count = 0
+        partner_buckets: dict[str, dict[str, Any]] = {}
+        recent = []
+
+        safe_verdicts = {"very_likely_safe", "likely_safe"}
+
+        for doc in docs:
+            partner_name_value = str(doc.get("partner_name") or "Partner")
+            verdict = str(doc.get("verdict") or "")
+            trust_score = int(number_value(doc.get("trust_score"), 0))
+            trust_score_total += trust_score
+
+            if verdict in safe_verdicts:
+                safe_count += 1
+            else:
+                risky_count += 1
+
+            bucket = partner_buckets.setdefault(
+                partner_name_value,
+                {
+                    "partner_name": partner_name_value,
+                    "total_checks": 0,
+                    "safe_count": 0,
+                    "risky_count": 0,
+                    "trust_score_total": 0,
+                    "domains": set(),
+                    "user_ids": set(),
+                    "last_checked_at": "",
+                },
+            )
+            bucket["total_checks"] += 1
+            bucket["trust_score_total"] += trust_score
+
+            domain = str(doc.get("domain") or "").strip()
+            if domain:
+                bucket["domains"].add(domain)
+
+            user_id = str(doc.get("user_id") or "").strip()
+            if user_id:
+                bucket["user_ids"].add(user_id)
+
+            if verdict in safe_verdicts:
+                bucket["safe_count"] += 1
+            else:
+                bucket["risky_count"] += 1
+
+            created_at = str(doc.get("created_at") or "")
+            if not bucket["last_checked_at"]:
+                bucket["last_checked_at"] = created_at
+
+            recent.append(
+                {
+                    "partner_name": partner_name_value,
+                    "domain": domain,
+                    "raw_url": str(doc.get("raw_url") or ""),
+                    "scan_url": str(doc.get("scan_url") or ""),
+                    "verdict": verdict,
+                    "trust_score": trust_score,
+                    "confidence": str(doc.get("confidence") or ""),
+                    "sources_checked": int(number_value(doc.get("sources_checked"), 0)),
+                    "user_id": user_id,
+                    "full_report_url": str(doc.get("full_report_url") or ""),
+                    "created_at": created_at,
+                }
+            )
+
+        partners = []
+        for bucket in partner_buckets.values():
+            total_checks = int(bucket["total_checks"])
+            partners.append(
+                {
+                    "partner_name": bucket["partner_name"],
+                    "total_checks": total_checks,
+                    "unique_domains": len(bucket["domains"]),
+                    "tracked_users": len(bucket["user_ids"]),
+                    "avg_trust_score": round(bucket["trust_score_total"] / total_checks, 2) if total_checks else 0,
+                    "safe_count": bucket["safe_count"],
+                    "risky_count": bucket["risky_count"],
+                    "risk_rate": round((bucket["risky_count"] / total_checks) * 100, 2) if total_checks else 0,
+                    "last_checked_at": bucket["last_checked_at"],
+                }
+            )
+
+        partners.sort(key=lambda item: (-item["total_checks"], item["partner_name"].lower()))
+
+        return {
+            "total": total,
+            "active_partner_count": len(active_partner_names),
+            "configured_partner_count": configured_partner_count,
+            "unique_domains": len(unique_domains),
+            "tracked_users": len(tracked_users),
+            "safe_count": safe_count,
+            "risky_count": risky_count,
+            "avg_trust_score": round(trust_score_total / total, 2) if total else 0,
+            "partners": partners,
+            "recent": recent,
+            "date": target.strftime("%Y-%m-%d"),
+        }
+    except Exception as e:
+        return {
+            "total": 0,
+            "active_partner_count": 0,
+            "configured_partner_count": 0,
+            "unique_domains": 0,
+            "tracked_users": 0,
+            "safe_count": 0,
+            "risky_count": 0,
+            "avg_trust_score": 0,
+            "partners": [],
+            "recent": [],
+            "error": str(e),
+        }
