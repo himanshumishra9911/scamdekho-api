@@ -11,7 +11,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 SITE = "https://scamdekho.in"
-SITEMAP_PAGE_SIZE = 1000
+SITEMAP_PAGE_SIZE = 50000
 SITEMAP_HEADERS = {"Cache-Control": "no-store, max-age=0"}
 
 
@@ -40,7 +40,7 @@ async def _fetch_sitemap_docs(skip: int, limit: int) -> list:
 
     # recent-checks is proven live in production; use it as a final page-0 fallback.
     if skip == 0:
-        for fallback_limit in (min(limit, 1000), 100, 10):
+        for fallback_limit in (min(limit, 50000), 1000, 100, 10):
             try:
                 docs = await get_recent_pages(limit=fallback_limit)
                 if docs:
@@ -76,7 +76,7 @@ async def sitemap_index():
 
     if total <= 0:
         try:
-            total = len(await get_recent_pages(limit=1000))
+            total = len(await get_recent_pages(limit=SITEMAP_PAGE_SIZE))
         except Exception as exc:
             logger.warning("Sitemap count fallback failed: %s", exc)
             total = 0
