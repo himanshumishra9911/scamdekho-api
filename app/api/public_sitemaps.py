@@ -19,9 +19,9 @@ def esc(value) -> str:
     return html_lib.escape(str(value or ""))
 
 
-async def _find_indexable_docs(skip: int, limit: int, sort_field: str | None) -> list:
+async def _find_sitemap_docs(skip: int, limit: int, sort_field: str | None) -> list:
     projection = {"domain": 1, "last_scanned": 1, "first_scanned": 1}
-    cursor = pages_collection.find({"indexable": True}, projection)
+    cursor = pages_collection.find({}, projection)
     if sort_field:
         cursor = cursor.sort(sort_field, -1)
     cursor = cursor.skip(skip).limit(limit)
@@ -32,7 +32,7 @@ async def _fetch_sitemap_docs(skip: int, limit: int) -> list:
     """Fetch sitemap docs with fallbacks so the XML is never empty while pages exist."""
     for sort_field in ("last_scanned", "first_scanned", None):
         try:
-            docs = await _find_indexable_docs(skip, limit, sort_field)
+            docs = await _find_sitemap_docs(skip, limit, sort_field)
             if docs or skip > 0:
                 return docs
         except Exception as exc:
@@ -69,7 +69,7 @@ def _urlset_xml(items: str) -> str:
 @router.get("/sitemap-index.xml", include_in_schema=False)
 async def sitemap_index():
     try:
-        total = await pages_collection.count_documents({"indexable": True})
+        total = await pages_collection.count_documents({})
     except Exception as exc:
         logger.warning("Sitemap count failed: %s", exc)
         total = 0
