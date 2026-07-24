@@ -11,40 +11,51 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 SITE = "https://scamdekho.in"
-SITEMAP_PAGE_SIZE = 5000
+SITEMAP_PAGE_SIZE = 1000
+SITEMAP_HEADERS = {"Cache-Control": "no-store, max-age=0"}
 
 
 def esc(value) -> str:
     return html_lib.escape(str(value or ""))
 
 
-async def _fetch_sitemap_docs(skip: int, limit: int) -> list:
-    """Fetch sitemap docs; fallback keeps XML populated if the primary query is empty."""
+async def _find_indexable_docs(skip: int, limit: int, sort_field: str | None) -> list:
     projection = {"domain": 1, "last_scanned": 1, "first_scanned": 1}
-    try:
-        cursor = pages_collection.find({"indexable": True}, projection).sort(
-            "last_scanned", -1
-        ).skip(skip).limit(limit)
-        docs = [doc async for doc in cursor]
-        if docs or skip > 0:
-            return docs
-    except Exception as exc:
-        logger.warning("Primary sitemap query failed: %s", exc)
+    cursor = pages_collection.find({"indexable": True}, projection)
+    if sort_field:
+        cursor = cursor.sort(sort_field, -1)
+    cursor = cursor.skip(skip).limit(limit)
+    return [doc async for doc in cursor]
 
-    # The recent-checks path is already working in production, so reuse it as a safe fallback.
+
+async def _fetch_sitemap_docs(skip: int, limit: int) -> list:
+    """Fetch sitemap docs with fallbacks so the XML is never empty while pages exist."""
+    for sort_field in ("last_scanned", "first_scanned", None):
+        try:
+            docs = await _find_indexable_docs(skip, limit, sort_field)
+            if docs or skip > 0:
+                return docs
+        except Exception as exc:
+            logger.warning("Sitemap query failed using %s sort: %s", sort_field, exc)
+
+    # recent-checks is proven live in production; use it as a final page-0 fallback.
     if skip == 0:
-        docs = await get_recent_pages(limit=limit)
-        if docs:
-            return docs
+        for fallback_limit in (min(limit, 1000), 100, 10):
+            try:
+                docs = await get_recent_pages(limit=fallback_limit)
+                if docs:
+                    return docs
+            except Exception as exc:
+                logger.warning("Recent sitemap fallback failed at limit %s: %s", fallback_limit, exc)
 
-    try:
-        cursor = pages_collection.find({"indexable": True}, projection).sort(
-            "first_scanned", -1
-        ).skip(skip).limit(limit)
-        return [doc async for doc in cursor]
-    except Exception as exc:
-        logger.error("Fallback sitemap query failed: %s", exc)
-        return []
+    return []
+
+
+def _lastmod(doc: dict) -> str:
+    scanned_at = doc.get("last_scanned") or doc.get("first_scanned")
+    if isinstance(scanned_at, datetime):
+        return f"<lastmod>{scanned_at.strftime('%Y-%m-%d')}</lastmod>"
+    return ""
 
 
 def _urlset_xml(items: str) -> str:
@@ -63,6 +74,13 @@ async def sitemap_index():
         logger.warning("Sitemap count failed: %s", exc)
         total = 0
 
+    if total <= 0:
+        try:
+            total = len(await get_recent_pages(limit=1000))
+        except Exception as exc:
+            logger.warning("Sitemap count fallback failed: %s", exc)
+            total = 0
+
     page_count = max(1, (total + SITEMAP_PAGE_SIZE - 1) // SITEMAP_PAGE_SIZE)
     items = "".join(
         f"<sitemap><loc>{SITE}/sitemap-checks-{page}.xml</loc></sitemap>"
@@ -73,14 +91,17 @@ async def sitemap_index():
         '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
         f"{items}</sitemapindex>"
     )
-    return Response(content=xml, media_type="application/xml")
+    return Response(content=xml, media_type="application/xml", headers=SITEMAP_HEADERS)
 
 
 @router.get("/sitemap-checks-{page}.xml", include_in_schema=False)
 async def sitemap_checks_paginated(page: int):
     if page < 0:
         return Response(
-            content=_urlset_xml(""), media_type="application/xml", status_code=404
+            content=_urlset_xml(""),
+            media_type="application/xml",
+            status_code=404,
+            headers=SITEMAP_HEADERS,
         )
 
     docs = await _fetch_sitemap_docs(page * SITEMAP_PAGE_SIZE, SITEMAP_PAGE_SIZE)
@@ -89,18 +110,16 @@ async def sitemap_checks_paginated(page: int):
         domain = doc.get("domain") or doc.get("_id")
         if not domain:
             continue
-
-        lastmod = ""
-        last_scanned = doc.get("last_scanned") or doc.get("first_scanned")
-        if isinstance(last_scanned, datetime):
-            lastmod = f"<lastmod>{last_scanned.strftime('%Y-%m-%d')}</lastmod>"
-
         items += (
-            f"<url><loc>{SITE}/check/{esc(domain)}</loc>{lastmod}"
+            f"<url><loc>{SITE}/check/{esc(domain)}</loc>{_lastmod(doc)}"
             "<changefreq>weekly</changefreq><priority>0.6</priority></url>"
         )
 
-    return Response(content=_urlset_xml(items), media_type="application/xml")
+    return Response(
+        content=_urlset_xml(items),
+        media_type="application/xml",
+        headers=SITEMAP_HEADERS,
+    )
 
 
 @router.get("/sitemap-checks.xml", include_in_schema=False)
