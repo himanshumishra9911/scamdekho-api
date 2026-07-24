@@ -23,6 +23,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from app.api.public_sitemaps import router as public_sitemaps_router
 from app.api.public_pages import router as public_pages_router
 from app.api.listing_pages import router as listing_router
 
@@ -96,6 +97,7 @@ app.include_router(feedback_router, prefix="/feedback")
 app.include_router(paypal_email_router)
 app.include_router(paypal_link_router)
 app.include_router(paypal_invoice_router)
+app.include_router(public_sitemaps_router)
 app.include_router(public_pages_router)
 
 @app.get("/dashboard", dependencies=[Depends(require_admin)])
