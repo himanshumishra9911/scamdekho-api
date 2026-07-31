@@ -145,7 +145,7 @@ Return only a JSON object with this shape:
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=3800,
+            max_completion_tokens=3800,
             response_format={"type": "json_object"},
         )
         data = json.loads(response.choices[0].message.content)
