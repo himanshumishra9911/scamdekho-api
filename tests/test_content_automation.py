@@ -14,7 +14,7 @@ from app.content_automation.integrations import (
 )
 from app.content_automation.models import ArticleDraft, SourceReference, TopicCandidate
 from app.content_automation.payloads import build_wordpress_draft_payload
-from app.content_automation.pipeline import _target_quotas, build_candidate_pools
+from app.content_automation.pipeline import _can_retry_topic, _target_quotas, build_candidate_pools
 from app.content_automation.quality import QualityGate
 from app.content_automation.topic_engine import consolidate_candidates, score_candidate, similarity
 
@@ -66,6 +66,21 @@ class ContentAutomationTests(unittest.TestCase):
         self.assertEqual(_target_quotas(3), {"gsc": 2, "news": 1})
         self.assertEqual(len(pools["gsc"]), 2)
         self.assertEqual(len(pools["news"]), 1)
+
+    def test_source_skip_can_retry_same_day_without_retrying_ai_quality_failure(self):
+        run_key = "daily:2026-08-01"
+        self.assertTrue(_can_retry_topic(
+            {"status": "skipped_insufficient_sources", "run_key": run_key},
+            run_key,
+        ))
+        self.assertFalse(_can_retry_topic(
+            {"status": "quality_failed", "run_key": run_key},
+            run_key,
+        ))
+        self.assertTrue(_can_retry_topic(
+            {"status": "quality_failed", "run_key": "daily:2026-07-31"},
+            run_key,
+        ))
 
     def test_gsc_decline_increases_opportunity_score(self):
         stable = TopicCandidate(
@@ -228,4 +243,3 @@ class ContentAutomationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
