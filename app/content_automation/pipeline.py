@@ -137,7 +137,7 @@ async def _claim_topic(candidate: TopicCandidate, run_key: str) -> bool:
         if status in {"claimed", "generated"}:
             return True
         retryable_statuses = {"failed", "skipped_insufficient_sources", "quality_failed"}
-        retryable_now = status == "failed" or existing.get("run_key") != run_key
+        retryable_now = _can_retry_topic(existing, run_key)
         if status in retryable_statuses and retryable_now and int(existing.get("attempts", 1)) < 3:
             await TOPICS.update_one(
                 {"_id": candidate.key, "status": status},
@@ -172,6 +172,13 @@ def _restore_article(value: dict) -> ArticleDraft:
 
 def _selection_bucket(candidate: TopicCandidate) -> str:
     return "gsc" if candidate.source_type == "gsc" else "news"
+
+
+def _can_retry_topic(existing: dict, run_key: str) -> bool:
+    status = existing.get("status")
+    if status in {"failed", "skipped_insufficient_sources"}:
+        return True
+    return status == "quality_failed" and existing.get("run_key") != run_key
 
 
 def _target_quotas(limit: int) -> dict[str, int]:
