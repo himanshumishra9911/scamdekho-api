@@ -26,7 +26,7 @@ DEFAULT_RSS_FEEDS = (
 
 DEFAULT_TRUSTED_DOMAINS = (
     "cert-in.org.in,cybercrime.gov.in,rbi.org.in,sebi.gov.in,pib.gov.in,"
-    "mha.gov.in,consumerhelpline.gov.in,google.com,microsoft.com,cloudflare.com,"
+    "mha.gov.in,consumerhelpline.gov.in,npci.org.in,google.com,microsoft.com,cloudflare.com,"
     "krebsonsecurity.com,bleepingcomputer.com,thehackernews.com,indiatoday.in,"
     "indianexpress.com,thehindu.com,livemint.com,business-standard.com,"
     "economictimes.indiatimes.com"
@@ -75,7 +75,7 @@ class ContentAutomationConfig:
     request_timeout_seconds: int = 20
     minimum_sources: int = 2
     maximum_sources: int = 4
-    minimum_opportunity_score: int = 55
+    minimum_opportunity_score: int = 45
     max_candidates_per_source: int = 25
     voice_notes: str = ""
 
@@ -126,7 +126,7 @@ class ContentAutomationConfig:
             request_timeout_seconds=max(5, _int("CONTENT_REQUEST_TIMEOUT_SECONDS", 20)),
             minimum_sources=max(2, min(4, _int("CONTENT_MINIMUM_SOURCES", 2))),
             maximum_sources=max(2, min(4, _int("CONTENT_MAXIMUM_SOURCES", 4))),
-            minimum_opportunity_score=max(0, min(100, _int("CONTENT_MIN_OPPORTUNITY_SCORE", 55))),
+            minimum_opportunity_score=max(0, min(100, _int("CONTENT_MIN_OPPORTUNITY_SCORE", 45))),
             max_candidates_per_source=max(5, _int("CONTENT_MAX_CANDIDATES_PER_SOURCE", 25)),
             voice_notes=os.getenv("CONTENT_VOICE_NOTES", "").strip(),
         )
@@ -142,4 +142,14 @@ class ContentAutomationConfig:
                 errors.append("WORDPRESS_USERNAME is required")
             if not self.wordpress_application_password:
                 errors.append("WORDPRESS_APPLICATION_PASSWORD is required")
+            if not self.google_service_account_info:
+                errors.append(
+                    "GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 or GOOGLE_SERVICE_ACCOUNT_JSON "
+                    "must contain valid service-account JSON for GSC and Google Sheets"
+                )
+            if not self.google_sheet_id:
+                errors.append("GOOGLE_SHEET_ID is required")
+            if not self.gsc_property:
+                errors.append("GSC_PROPERTY is required")
         return errors
+

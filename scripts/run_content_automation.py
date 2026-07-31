@@ -46,6 +46,11 @@ async def async_main() -> int:
             if not config.google_sheet_id:
                 raise RuntimeError("GOOGLE_SHEET_ID is required for --bootstrap-sheet")
             sheets = GoogleSheetsClient(config, GoogleTokenProvider(config.google_service_account_info))
+            if not sheets.configured:
+                raise RuntimeError(
+                    "Valid GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 or "
+                    "GOOGLE_SERVICE_ACCOUNT_JSON is required for --bootstrap-sheet"
+                )
             await sheets.bootstrap()
             print(f"Google Sheet ready: https://docs.google.com/spreadsheets/d/{config.google_sheet_id}")
             return 0
@@ -64,3 +69,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

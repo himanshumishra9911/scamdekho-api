@@ -24,11 +24,110 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
+OFFICIAL_REFERENCE_LIBRARY = {
+    "payment": [
+        SourceReference(
+            title="Unified Payments Interface Safety Shield",
+            url="https://www.npci.org.in/safety-feature",
+            publisher="NPCI",
+            excerpt="Official UPI safety guidance for consumers making digital payments.",
+        ),
+        SourceReference(
+            title="Customer Protection - Limiting Liability in Unauthorised Electronic Banking Transactions",
+            url="https://www.rbi.org.in/commonman/English/scripts/Notification.aspx?Id=2623",
+            publisher="Reserve Bank of India",
+            excerpt="Official RBI guidance on electronic payment safety and reporting unauthorised transactions.",
+        ),
+    ],
+    "website": [
+        SourceReference(
+            title="Google Safe Browsing",
+            url="https://safebrowsing.google.com/",
+            publisher="Google",
+            excerpt="Official guidance on phishing, malware, unwanted software, and unsafe websites.",
+        ),
+        SourceReference(
+            title="What is a phishing attack?",
+            url="https://www.cloudflare.com/learning/security/phishing-attack/",
+            publisher="Cloudflare",
+            excerpt="Security guidance about phishing, fake websites, spoofed domains, and suspicious links.",
+        ),
+    ],
+    "message": [
+        SourceReference(
+            title="What is smishing?",
+            url="https://www.cloudflare.com/learning/security/smishing/",
+            publisher="Cloudflare",
+            excerpt="Security guidance about scam text messages, suspicious links, and social engineering.",
+        ),
+        SourceReference(
+            title="National Cyber Crime Reporting Portal",
+            url="https://www.cybercrime.gov.in/",
+            publisher="Government of India",
+            excerpt="Official Indian cybercrime reporting and citizen-safety information.",
+        ),
+    ],
+    "general": [
+        SourceReference(
+            title="National Cyber Crime Reporting Portal",
+            url="https://www.cybercrime.gov.in/",
+            publisher="Government of India",
+            excerpt="Official Indian cybercrime reporting and citizen-safety information.",
+        ),
+        SourceReference(
+            title="Common cyber attacks: detection and prevention",
+            url="https://www.cloudflare.com/learning/security/threats/common-cyber-attacks/",
+            publisher="Cloudflare",
+            excerpt="Security guidance covering phishing and common online attack methods.",
+        ),
+    ],
+}
+
+
+def official_references_for_query(query: str) -> list[SourceReference]:
+    value = (query or "").lower()
+    if any(term in value for term in ("upi", "payment", "gpay", "google pay", "phonepe", "paytm", "utr", "bank")):
+        category = "payment"
+    elif any(term in value for term in ("url", "website", "domain", "link", "phish", "browser")):
+        category = "website"
+    elif any(term in value for term in ("sms", "message", "whatsapp", "otp", "kyc", "email")):
+        category = "message"
+    else:
+        category = "general"
+    return [SourceReference(**vars(item)) for item in OFFICIAL_REFERENCE_LIBRARY[category]]
+
+
+def product_links_for_query(query: str, site_url: str = "https://scamdekho.in") -> list[dict[str, str]]:
+    value = (query or "").lower()
+    groups = [
+        (("upi", "payment", "gpay", "google pay", "phonepe", "paytm", "utr", "screenshot"),
+         "Fake Payment Screenshot Checker", "/fake-payment-screenshot-checker"),
+        (("url", "website", "domain", "link", "phish", "browser"),
+         "URL Checker", "/url-checker"),
+        (("sms", "message", "whatsapp", "otp", "kyc", "email"),
+         "Scam Message Checker", "/scam-message-checker"),
+        (("qr", "vpa", "upi id"), "UPI and QR Checker", "/upi-qr-checker"),
+        (("job", "offer", "recruit", "employment"),
+         "Fake Offer Letter Checker", "/fake-offer-letter-checker"),
+    ]
+    matched = [
+        {"title": title, "url": site_url.rstrip("/") + path}
+        for terms, title, path in groups
+        if any(term in value for term in terms)
+    ]
+    if not matched:
+        matched = [
+            {"title": "URL Checker", "url": site_url.rstrip("/") + "/url-checker"},
+            {"title": "Scam Message Checker", "url": site_url.rstrip("/") + "/scam-message-checker"},
+        ]
+    return matched
+
 
 class GoogleTokenProvider:
     def __init__(self, service_account_info: dict | None):
         self.service_account_info = service_account_info
         self._credentials = None
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def configured(self) -> bool:
@@ -55,8 +154,11 @@ class GoogleTokenProvider:
             self._credentials.refresh(Request())
         return self._credentials.token
 
-    async def access_token(self) -> str:
-        return await asyncio.to_thread(self._refresh_sync)
+    async def access_token(self, *, force_refresh: bool = False) -> str:
+        async with self._refresh_lock:
+            if force_refresh:
+                self._credentials = None
+            return await asyncio.to_thread(self._refresh_sync)
 
 
 class GoogleSearchConsoleClient:
@@ -73,7 +175,6 @@ class GoogleSearchConsoleClient:
     ) -> list[dict]:
         if not self.tokens.configured or not self.config.gsc_property:
             return []
-        token = await self.tokens.access_token()
         site = quote(self.config.gsc_property, safe="")
         url = f"https://www.googleapis.com/webmasters/v3/sites/{site}/searchAnalytics/query"
         payload = {
@@ -84,11 +185,16 @@ class GoogleSearchConsoleClient:
             "dataState": "final",
         }
         async with httpx.AsyncClient(timeout=self.config.request_timeout_seconds) as client:
-            response = await client.post(
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                json=payload,
-            )
+            response = None
+            for attempt in range(2):
+                token = await self.tokens.access_token(force_refresh=attempt == 1)
+                response = await client.post(
+                    url,
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=payload,
+                )
+                if response.status_code != 401 or attempt == 1:
+                    break
             response.raise_for_status()
             return response.json().get("rows", [])
 
@@ -108,7 +214,10 @@ class GoogleSearchConsoleClient:
             return []
 
         previous_by_query = {
-            (row.get("keys") or [""])[0].lower(): float(row.get("impressions", 0))
+            (row.get("keys") or [""])[0].lower(): {
+                "impressions": float(row.get("impressions", 0)),
+                "clicks": float(row.get("clicks", 0)),
+            }
             for row in previous
         }
         candidates = []
@@ -117,7 +226,10 @@ class GoogleSearchConsoleClient:
             if not query_value:
                 continue
             current_impressions = float(row.get("impressions", 0))
-            old_impressions = previous_by_query.get(query_value.lower(), 0.0)
+            previous_metrics = previous_by_query.get(query_value.lower(), {})
+            old_impressions = float(previous_metrics.get("impressions", 0))
+            current_clicks = float(row.get("clicks", 0))
+            old_clicks = float(previous_metrics.get("clicks", 0))
             growth = 0.0
             if old_impressions:
                 growth = max(-1.0, min(3.0, (current_impressions - old_impressions) / old_impressions))
@@ -131,10 +243,15 @@ class GoogleSearchConsoleClient:
                     url=self.config.site_url,
                     primary_keyword=query_value,
                     impressions=current_impressions,
-                    clicks=float(row.get("clicks", 0)),
+                    clicks=current_clicks,
+                    previous_impressions=old_impressions,
+                    previous_clicks=old_clicks,
+                    impression_change=current_impressions - old_impressions,
+                    click_change=current_clicks - old_clicks,
                     ctr=float(row.get("ctr", 0)),
                     position=float(row.get("position", 0)),
                     growth=growth,
+                    source_references=official_references_for_query(query_value),
                 )
             )
         return candidates
@@ -192,11 +309,15 @@ class GoogleSheetsClient:
         return bool(self.config.google_sheet_id and self.tokens.configured)
 
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        token = await self.tokens.access_token()
         headers = dict(kwargs.pop("headers", {}))
-        headers["Authorization"] = f"Bearer {token}"
         async with httpx.AsyncClient(timeout=self.config.request_timeout_seconds) as client:
-            response = await client.request(method, url, headers=headers, **kwargs)
+            response = None
+            for attempt in range(2):
+                token = await self.tokens.access_token(force_refresh=attempt == 1)
+                headers["Authorization"] = f"Bearer {token}"
+                response = await client.request(method, url, headers=headers, **kwargs)
+                if response.status_code != 401 or attempt == 1:
+                    break
             response.raise_for_status()
             return response
 
@@ -416,6 +537,7 @@ class WordPressClient:
 
     async def internal_links(self, query: str, limit: int = 6) -> list[dict[str, str]]:
         url = f"{self.config.wordpress_url}/wp-json/wp/v2/search"
+        links = product_links_for_query(query, self.config.site_url)
         try:
             async with httpx.AsyncClient(timeout=self.config.request_timeout_seconds) as client:
                 response = await client.get(
@@ -424,14 +546,20 @@ class WordPressClient:
                     params={"search": query, "subtype": "post", "per_page": limit},
                 )
                 response.raise_for_status()
-                return [
+                links.extend([
                     {"title": html.unescape(item.get("title", "")), "url": item.get("url", "")}
                     for item in response.json()
                     if item.get("url")
-                ]
+                ])
         except Exception as exc:
             logger.warning("WordPress internal link lookup failed: %s", exc)
-            return []
+        unique = []
+        seen = set()
+        for item in links:
+            if item["url"] not in seen:
+                unique.append(item)
+                seen.add(item["url"])
+        return unique[:limit]
 
     async def find_post_by_slug(self, slug: str) -> dict | None:
         url = f"{self.config.wordpress_url}/wp-json/wp/v2/posts"
@@ -461,3 +589,4 @@ class WordPressClient:
             )
             response.raise_for_status()
             return response.json()
+

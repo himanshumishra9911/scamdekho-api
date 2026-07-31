@@ -6,7 +6,7 @@ This isolated command collects topic opportunities, creates at most three source
 
 1. Collect Google Search Console queries, configured RSS feeds, Google News RSS, and Google Trends RSS.
 2. Keep only ScamDekho-relevant topics and merge near-duplicates.
-3. Score recency, source type, GSC impressions, CTR opportunity, position, and growth.
+3. Score recency, source type, GSC traffic drops, impressions, clicks, CTR opportunity, position, and growth.
 4. Claim each topic once in MongoDB so retries cannot create duplicate drafts.
 5. Research two to four allowlisted sources.
 6. Generate one source-grounded draft per accepted topic.
@@ -15,6 +15,18 @@ This isolated command collects topic opportunities, creates at most three source
 9. Log opportunities, drafts, and GSC performance in Google Sheets.
 
 The daily maximum is hard-capped at three even if a larger value is supplied.
+The default daily mix is exactly two GSC recovery topics plus one current news topic. GSC
+recovery topics are ordered by lost clicks, then lost impressions, then opportunity score. If a
+candidate fails source or quality checks, the next eligible candidate in the same bucket is
+tried. Unselected and source-skipped topics can be reconsidered on a later day.
+
+GSC topics receive a small official-source research pack (for example RBI/NPCI for payment
+queries and Google Safe Browsing/Cloudflare for website queries). The existing requirement
+for at least two independent trusted sources is not lowered.
+
+Internal links prioritize the matching ScamDekho product page before related blog posts,
+including the Fake Payment Screenshot Checker, URL Checker, Scam Message Checker, UPI/QR
+Checker, and Fake Offer Letter Checker.
 
 ## Article writer
 
@@ -48,6 +60,8 @@ The normal WordPress password is not used.
 ```bash
 python scripts/run_content_automation.py --bootstrap-sheet
 ```
+
+The bootstrap command now fails clearly when the service-account JSON is missing or invalid. A successful message means the configured spreadsheet was actually reached and initialized.
 
 The tabs are:
 
@@ -95,3 +109,4 @@ Before publishing each draft:
 - Publish manually, then submit the final URL through Search Console when appropriate.
 
 The pipeline intentionally does not auto-publish. This keeps the human review step that protects quality, voice, and search compliance.
+
