@@ -55,6 +55,13 @@ def score_candidate(candidate: TopicCandidate) -> float:
         score += 10
     if candidate.growth > 0:
         score += min(12, candidate.growth * 12)
+    if candidate.source_type == "gsc":
+        lost_impressions = max(0.0, -candidate.impression_change)
+        lost_clicks = max(0.0, -candidate.click_change)
+        if lost_impressions:
+            score += min(14, math.log10(lost_impressions + 1) * 5)
+        if lost_clicks:
+            score += min(14, math.log10(lost_clicks + 1) * 8)
     score += min(8, max(0, len(candidate.source_references) - 1) * 4)
     return round(min(100, score), 1)
 
@@ -108,6 +115,10 @@ def consolidate_candidates(
             reasons.append(f"confirmed across {len(source_types)} source types")
         if winner.impressions:
             reasons.append(f"{int(winner.impressions)} GSC impressions")
+        if winner.source_type == "gsc" and winner.impression_change < 0:
+            reasons.append(f"impressions fell by {int(abs(winner.impression_change))}")
+        if winner.source_type == "gsc" and winner.click_change < 0:
+            reasons.append(f"clicks fell by {int(abs(winner.click_change))}")
         if winner.impressions >= 20 and winner.ctr < 0.03:
             reasons.append("high impressions with CTR improvement opportunity")
         if winner.growth > 0:
@@ -133,3 +144,4 @@ def find_related_candidates(
             scored.append((value, candidate))
     scored.sort(key=lambda item: item[0], reverse=True)
     return [item[1] for item in scored[:limit]]
+
