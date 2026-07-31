@@ -1,14 +1,22 @@
+import asyncio
 import os
+import time
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
 
 from app.content_automation.collectors import parse_feed
 from app.content_automation.config import ContentAutomationConfig
+from app.content_automation.integrations import (
+    GoogleTokenProvider,
+    official_references_for_query,
+    product_links_for_query,
+)
 from app.content_automation.models import ArticleDraft, SourceReference, TopicCandidate
 from app.content_automation.payloads import build_wordpress_draft_payload
+from app.content_automation.pipeline import _target_quotas, build_candidate_pools
 from app.content_automation.quality import QualityGate
-from app.content_automation.topic_engine import consolidate_candidates, similarity
+from app.content_automation.topic_engine import consolidate_candidates, score_candidate, similarity
 
 
 class ContentAutomationTests(unittest.TestCase):
@@ -16,6 +24,107 @@ class ContentAutomationTests(unittest.TestCase):
         with patch.dict(os.environ, {"CONTENT_MAX_DRAFTS_PER_DAY": "99"}, clear=False):
             config = ContentAutomationConfig.from_env()
         self.assertEqual(config.max_drafts_per_day, 3)
+
+    def test_live_run_requires_google_credentials_and_sheet(self):
+        config = ContentAutomationConfig(
+            enabled=True,
+            openai_api_key="test-key",
+            wordpress_username="automation",
+            wordpress_application_password="application-password",
+        )
+        errors = config.validate_for_run(dry_run=False)
+        self.assertTrue(any("GOOGLE_SERVICE_ACCOUNT" in error for error in errors))
+        self.assertIn("GOOGLE_SHEET_ID is required", errors)
+
+    def test_default_threshold_accepts_fresh_news_opportunities(self):
+        config = ContentAutomationConfig(
+            relevance_terms=["scam"],
+            maximum_sources=4,
+        )
+        candidate = TopicCandidate(
+            title="New online scam warning for Indian users",
+            source_type="news",
+            source_name="Trusted News",
+            url="https://example.org/scam-warning",
+            published_at=datetime.now(timezone.utc),
+        )
+        ranked = consolidate_candidates([candidate], config)
+        self.assertEqual(len(ranked), 1)
+        self.assertGreaterEqual(
+            ranked[0].opportunity_score,
+            config.minimum_opportunity_score,
+        )
+
+    def test_daily_mix_is_two_gsc_topics_and_one_news_topic(self):
+        candidates = [
+            TopicCandidate("fake payment checker", "gsc", "GSC", "https://scamdekho.in"),
+            TopicCandidate("scam website checker", "gsc", "GSC", "https://scamdekho.in"),
+            TopicCandidate("scam dekho", "gsc", "GSC", "https://scamdekho.in"),
+            TopicCandidate("New UPI fraud warning in India", "news", "News", "https://example.com/news"),
+        ]
+        pools = build_candidate_pools(candidates)
+        self.assertEqual(_target_quotas(3), {"gsc": 2, "news": 1})
+        self.assertEqual(len(pools["gsc"]), 2)
+        self.assertEqual(len(pools["news"]), 1)
+
+    def test_gsc_decline_increases_opportunity_score(self):
+        stable = TopicCandidate(
+            "fake payment checker", "gsc", "GSC", "https://scamdekho.in",
+            impressions=500, clicks=10, position=8,
+        )
+        declining = TopicCandidate(
+            "fake payment checker", "gsc", "GSC", "https://scamdekho.in",
+            impressions=500, clicks=10, position=8,
+            impression_change=-400, click_change=-15,
+        )
+        self.assertGreater(score_candidate(declining), score_candidate(stable))
+
+    def test_gsc_pool_prioritizes_largest_traffic_decline(self):
+        small_drop = TopicCandidate(
+            "scam website checker", "gsc", "GSC", "https://scamdekho.in",
+            impressions=1000, click_change=-2, impression_change=-100,
+            opportunity_score=95,
+        )
+        large_drop = TopicCandidate(
+            "fake payment checker", "gsc", "GSC", "https://scamdekho.in",
+            impressions=500, click_change=-20, impression_change=-400,
+            opportunity_score=70,
+        )
+        pools = build_candidate_pools([small_drop, large_drop])
+        self.assertEqual(pools["gsc"][0].title, "fake payment checker")
+
+    def test_gsc_queries_receive_two_independent_official_sources(self):
+        references = official_references_for_query("fake payment upi gpay")
+        hosts = {reference.url.split("/")[2] for reference in references}
+        self.assertGreaterEqual(len(hosts), 2)
+        self.assertTrue(any("npci.org.in" in host for host in hosts))
+
+    def test_google_token_refresh_is_serialized(self):
+        provider = GoogleTokenProvider({"client_email": "test@example.com"})
+        refresh_count = 0
+
+        def fake_refresh():
+            nonlocal refresh_count
+            if provider._credentials is None:
+                refresh_count += 1
+                time.sleep(0.05)
+                provider._credentials = object()
+            return "test-token"
+
+        provider._refresh_sync = fake_refresh
+
+        async def run_concurrently():
+            return await asyncio.gather(provider.access_token(), provider.access_token())
+
+        tokens = asyncio.run(run_concurrently())
+        self.assertEqual(tokens, ["test-token", "test-token"])
+        self.assertEqual(refresh_count, 1)
+
+    def test_product_pages_are_prioritized_for_internal_links(self):
+        payment = product_links_for_query("fake PhonePe payment screenshot")
+        website = product_links_for_query("scam website checker")
+        self.assertTrue(payment[0]["url"].endswith("/fake-payment-screenshot-checker"))
+        self.assertTrue(website[0]["url"].endswith("/url-checker"))
 
     def test_rss_parser_extracts_topic(self):
         xml = """<?xml version="1.0"?>
@@ -119,3 +228,4 @@ class ContentAutomationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
