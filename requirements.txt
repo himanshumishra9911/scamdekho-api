@@ -17,3 +17,4 @@ python-docx
 PyMuPDF
 slowapi==0.1.9
 apscheduler==3.10.4
+google-auth>=2.29,<3
