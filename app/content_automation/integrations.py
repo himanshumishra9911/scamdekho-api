@@ -463,6 +463,25 @@ def _trusted_url(url: str, trusted_domains: list[str]) -> bool:
     return any(host == domain or host.endswith("." + domain) for domain in trusted_domains)
 
 
+def research_references_for_candidate(
+    candidate: TopicCandidate,
+    related: list[TopicCandidate],
+) -> list[SourceReference]:
+    references = list(candidate.source_references)
+    for item in related:
+        references.extend(item.source_references)
+    references.extend(
+        official_references_for_query(f"{candidate.title} {candidate.excerpt}")
+    )
+    unique = []
+    seen = set()
+    for reference in references:
+        if reference.url and reference.url not in seen:
+            unique.append(reference)
+            seen.add(reference.url)
+    return unique
+
+
 class ResearchClient:
     def __init__(self, config: ContentAutomationConfig):
         self.config = config
@@ -472,15 +491,7 @@ class ResearchClient:
         candidate: TopicCandidate,
         related: list[TopicCandidate],
     ) -> list[SourceReference]:
-        references = list(candidate.source_references)
-        for item in related:
-            references.extend(item.source_references)
-        unique = []
-        seen = set()
-        for reference in references:
-            if reference.url and reference.url not in seen:
-                unique.append(reference)
-                seen.add(reference.url)
+        unique = research_references_for_candidate(candidate, related)
 
         headers = {"User-Agent": "ScamDekhoContentResearch/1.0 (+https://scamdekho.in)"}
         timeout = httpx.Timeout(self.config.request_timeout_seconds)
@@ -589,4 +600,3 @@ class WordPressClient:
             )
             response.raise_for_status()
             return response.json()
-
