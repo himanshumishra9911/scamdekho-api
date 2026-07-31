@@ -18,7 +18,8 @@ The daily maximum is hard-capped at three even if a larger value is supplied.
 The default daily mix is exactly two GSC recovery topics plus one current news topic. GSC
 recovery topics are ordered by lost clicks, then lost impressions, then opportunity score. If a
 candidate fails source or quality checks, the next eligible candidate in the same bucket is
-tried. Unselected and source-skipped topics can be reconsidered on a later day.
+tried. Unselected topics can be reconsidered later, and source-only skips can retry safely
+without repeatedly paying for same-day AI quality failures.
 
 GSC topics receive a small official-source research pack (for example RBI/NPCI for payment
 queries and Google Safe Browsing/Cloudflare for website queries). The existing requirement
@@ -109,4 +110,3 @@ Before publishing each draft:
 - Publish manually, then submit the final URL through Search Console when appropriate.
 
 The pipeline intentionally does not auto-publish. This keeps the human review step that protects quality, voice, and search compliance.
-
