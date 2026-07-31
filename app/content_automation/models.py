@@ -50,6 +50,10 @@ class TopicCandidate:
     secondary_keywords: list[str] = field(default_factory=list)
     impressions: float = 0.0
     clicks: float = 0.0
+    previous_impressions: float = 0.0
+    previous_clicks: float = 0.0
+    impression_change: float = 0.0
+    click_change: float = 0.0
     ctr: float = 0.0
     position: float = 0.0
     growth: float = 0.0
@@ -104,9 +108,18 @@ class QualityReport:
 class PipelineSummary:
     run_key: str
     candidates_collected: int = 0
+    public_candidates_collected: int = 0
+    gsc_candidates_collected: int = 0
+    performance_rows_collected: int = 0
     candidates_after_dedup: int = 0
+    eligible_candidates: int = 0
+    top_opportunity_score: float = 0.0
     selected: int = 0
     drafts_created: int = 0
+    gsc_drafts_created: int = 0
+    news_drafts_created: int = 0
+    source_skips: int = 0
+    quality_skips: int = 0
     skipped: int = 0
     failed: int = 0
     draft_urls: list[str] = field(default_factory=list)
