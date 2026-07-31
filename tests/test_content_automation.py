@@ -1,8 +1,10 @@
 import asyncio
+import json
 import os
 import time
 import unittest
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.content_automation.collectors import parse_feed
@@ -11,12 +13,14 @@ from app.content_automation.integrations import (
     GoogleTokenProvider,
     official_references_for_query,
     product_links_for_query,
+    research_references_for_candidate,
 )
 from app.content_automation.models import ArticleDraft, SourceReference, TopicCandidate
 from app.content_automation.payloads import build_wordpress_draft_payload
 from app.content_automation.pipeline import _can_retry_topic, _target_quotas, build_candidate_pools
 from app.content_automation.quality import QualityGate
 from app.content_automation.topic_engine import consolidate_candidates, score_candidate, similarity
+from app.content_automation.writer import ArticleWriter
 
 
 class ContentAutomationTests(unittest.TestCase):
@@ -113,6 +117,58 @@ class ContentAutomationTests(unittest.TestCase):
         hosts = {reference.url.split("/")[2] for reference in references}
         self.assertGreaterEqual(len(hosts), 2)
         self.assertTrue(any("npci.org.in" in host for host in hosts))
+
+    def test_news_queries_receive_two_independent_official_sources(self):
+        candidate = TopicCandidate(
+            "New online shopping scam reported in India",
+            "news",
+            "Trusted News",
+            "https://www.thehindu.com/example",
+            excerpt="A current report about an online shopping scam.",
+        )
+        candidate.ensure_reference()
+        references = research_references_for_candidate(candidate, [])
+        hosts = {reference.url.split("/")[2] for reference in references}
+        self.assertIn("www.thehindu.com", hosts)
+        self.assertGreaterEqual(len(hosts), 2)
+        self.assertTrue(any("cybercrime.gov.in" in host for host in hosts))
+
+    def test_writer_uses_model_compatible_completion_token_parameter(self):
+        captured = {}
+
+        class FakeCompletions:
+            async def create(self, **kwargs):
+                captured.update(kwargs)
+                payload = {
+                    "title": "Online Scam Safety Checks for Indian Users",
+                    "slug": "online-scam-safety-checks-india",
+                    "meta_description": "Practical online scam safety checks for Indian users, based on current trusted guidance and prepared as a draft for human review.",
+                    "excerpt": "Practical online scam safety checks.",
+                    "primary_keyword": "online scam safety",
+                    "secondary_keywords": ["online fraud"],
+                    "html": "<h2>What to check</h2><p>Verify the request.</p>",
+                    "faqs": [],
+                }
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+                )
+
+        writer = object.__new__(ArticleWriter)
+        writer.config = ContentAutomationConfig(content_model="test-model")
+        writer.client = SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions())
+        )
+        candidate = TopicCandidate(
+            "Online scam safety",
+            "news",
+            "Trusted News",
+            "https://www.thehindu.com/example",
+            primary_keyword="online scam safety",
+        )
+        references = official_references_for_query(candidate.title)
+        asyncio.run(writer.write(candidate, references, []))
+        self.assertEqual(captured["max_completion_tokens"], 3800)
+        self.assertNotIn("max_tokens", captured)
 
     def test_google_token_refresh_is_serialized(self):
         provider = GoogleTokenProvider({"client_email": "test@example.com"})
