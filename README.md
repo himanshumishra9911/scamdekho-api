@@ -1,3 +1,9 @@
+# ScamDekho AI Scam Detection API
+
+**Live website:** [ScamDekho – Free AI Scam Checker](https://scamdekho.in/)
+
+ScamDekho is an India-focused online safety toolkit for checking suspicious websites, messages, UPI IDs, QR codes, payment screenshots, and job offers before users click, pay, or share.
+
 ## ScamDekho AI Engine
 
 This project uses an AI-only (ChatGPT-style) scam detection engine.
