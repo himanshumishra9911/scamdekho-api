@@ -7,11 +7,14 @@ from PIL import Image
 
 from app.services.payment_screenshot_engine import (
     PaymentObservation,
+    ReplicaTriage,
     SYSTEM_PROMPT,
     _estimate_cost_usd,
     _make_analysis_views,
     _needs_review,
     _prepare_image,
+    _replica_triage_to_observation,
+    _request_policy,
     calibrate_observations,
 )
 import app.services.payment_screenshot_engine as engine
@@ -46,6 +49,29 @@ def observation(**overrides) -> PaymentObservation:
     }
     data.update(overrides)
     return PaymentObservation(**data)
+
+
+def replica_triage(**overrides) -> ReplicaTriage:
+    data = {
+        "app_name": "PhonePe",
+        "app_key": "phonepe",
+        "app_confidence": 96,
+        "headline_text": "Transaction Successful",
+        "transaction_label": "PhonePe Transaction ID",
+        "transaction_id": "T2608082154187816861687",
+        "readability": "clear",
+        "wording_errors": [],
+        "app_identity_conflicts": [],
+        "transaction_format_anomalies": [],
+        "component_style_conflicts": [],
+        "benign_explanations": [],
+        "assessment": "likely_genuine",
+        "replica_probability": 8,
+        "confidence": "high",
+        "reasons": ["No combined replica-app pattern"],
+    }
+    data.update(overrides)
+    return ReplicaTriage(**data)
 
 
 def test_missing_fields_and_scam_words_do_not_make_genuine_pixels_fake():
@@ -97,6 +123,55 @@ def test_prompt_covers_replica_apps_without_overfitting_to_a_typo():
     assert "at least two independent, visible inconsistencies" in prompt
     assert "a single typo" in prompt
     assert "forwarded inside whatsapp" in prompt
+
+
+def test_replica_triage_requires_two_independent_signal_families_for_confirmation():
+    triage = replica_triage(
+        headline_text="Transaction Successfull",
+        transaction_label="Transaction ID",
+        transaction_id="TXNEHNAVCV3",
+        wording_errors=["Successfull is misspelled in the system heading"],
+        app_identity_conflicts=["Generic Banking name row conflicts with the claimed app UI"],
+        transaction_format_anomalies=["Generic short provider transaction ID"],
+        assessment="likely_replica",
+        replica_probability=91,
+        confidence="high",
+    )
+
+    converted = _replica_triage_to_observation(triage)
+
+    assert converted.authenticity_assessment == "clear_manipulation"
+    assert converted.fake_probability == 91
+    assert sum(item.strength == "strong" for item in converted.tampering_evidence) == 1
+    assert _needs_review(converted)
+
+
+def test_one_identifier_format_anomaly_cannot_confirm_a_fake_screen():
+    converted = _replica_triage_to_observation(
+        replica_triage(
+            transaction_id="ABC123",
+            transaction_format_anomalies=["Identifier format is unfamiliar"],
+            assessment="uncertain",
+            replica_probability=42,
+            confidence="medium",
+        )
+    )
+
+    assert converted.authenticity_assessment == "uncertain"
+    assert not any(item.strength == "strong" for item in converted.tampering_evidence)
+    assert calibrate_observations([converted])["verdict"] == "SUSPICIOUS"
+
+
+def test_default_fast_path_uses_low_detail_and_bounded_output():
+    assert _request_policy(engine.ANALYST_PROMPT) == ("low", 1100)
+    assert _request_policy(engine.REPLICA_REVIEW_PROMPT) == ("auto", 1500)
+
+
+def test_nano_primary_meets_per_check_budget_on_observed_production_usage():
+    cost = _estimate_cost_usd("gpt-5-nano", 2354, 1262, 1089, 901)
+
+    assert cost == pytest.approx(0.000435)
+    assert cost < engine.BUDGET_TARGET_USD_PER_CHECK
 
 
 def test_replica_app_signal_is_supported_but_remains_inconclusive_without_strong_proof():
@@ -334,7 +409,7 @@ def test_tall_screenshot_gets_overlapping_native_resolution_focus_views():
     output = io.BytesIO()
     Image.new("RGB", (400, 1000), "white").save(output, format="PNG")
 
-    views = _make_analysis_views(output.getvalue(), "image/png")
+    views = _make_analysis_views(output.getvalue(), "image/png", max_views=3)
 
     assert [view[0] for view in views] == [
         "Full screenshot",
@@ -344,7 +419,7 @@ def test_tall_screenshot_gets_overlapping_native_resolution_focus_views():
     assert all(view[2].startswith("image/") for view in views)
 
 
-def test_model_request_uses_original_detail_structured_output_and_optional_pro_mode(monkeypatch):
+def test_model_request_uses_configured_detail_structured_output_and_optional_pro_mode(monkeypatch):
     captured = {}
 
     class FakeResponses:
@@ -366,11 +441,11 @@ def test_model_request_uses_original_detail_structured_output_and_optional_pro_m
 
     fake_client = SimpleNamespace(responses=FakeResponses())
     monkeypatch.setattr(engine, "get_client", lambda: fake_client)
-    monkeypatch.setattr(engine, "IMAGE_DETAIL", "original")
+    monkeypatch.setattr(engine, "ADJUDICATOR_IMAGE_DETAIL", "original")
 
     model_pass = engine._run_model(
         [("Full screenshot", b"image-bytes", "image/png")],
-        "Inspect it",
+        engine.ADJUDICATOR_PROMPT,
         "gpt-5.6-sol",
         "xhigh",
         "pro",
@@ -385,7 +460,8 @@ def test_model_request_uses_original_detail_structured_output_and_optional_pro_m
     assert captured["store"] is False
     assert captured["text"] == {"verbosity": "low"}
     assert "verbosity" not in captured
-    assert captured["prompt_cache_key"].startswith("payment-vision-v5:gpt-5.6-sol:")
+    assert captured["max_output_tokens"] == 1800
+    assert captured["prompt_cache_key"].startswith("payment-vision-v6:gpt-5.6-sol:")
     assert model_pass.input_tokens == 4000
     assert model_pass.cached_input_tokens == 1000
     assert model_pass.reasoning_tokens == 600
@@ -432,6 +508,9 @@ def test_failed_required_review_cannot_leave_a_scam_verdict(monkeypatch):
         raise RuntimeError("review unavailable")
 
     monkeypatch.setattr(engine, "_run_model", fake_run_model)
+    monkeypatch.setattr(
+        engine, "_run_replica_triage", lambda *_args: observation(fake_probability=8)
+    )
     monkeypatch.setattr(engine, "REVIEW_MODE", "suspicious")
 
     result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
@@ -452,6 +531,9 @@ def test_clean_parallel_consensus_skips_costly_adjudicator(monkeypatch):
         return observation(fake_probability=8)
 
     monkeypatch.setattr(engine, "_run_model", fake_run_model)
+    monkeypatch.setattr(
+        engine, "_run_replica_triage", lambda *_args: observation(fake_probability=8)
+    )
     monkeypatch.setattr(engine, "REVIEW_MODE", "always")
     monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
 
@@ -459,16 +541,24 @@ def test_clean_parallel_consensus_skips_costly_adjudicator(monkeypatch):
 
     assert result["verdict"] == "SAFE"
     assert calls == 2
-    assert result["ensemble"]["attempted_passes"] == 2
-    assert result["ensemble"]["successful_passes"] == 2
+    assert result["ensemble"]["attempted_passes"] == 3
+    assert result["ensemble"]["successful_passes"] == 3
     assert result["ensemble"]["failed_passes"] == 0
     assert result["ensemble"]["adjudicator_performed"] is False
-    assert result["ensemble"]["analysis_views"] == 3
-    assert result["ensemble"]["view_counts"] == {"primary": 1, "review": 3}
-    assert result["ensemble"]["cascade_path"] == ["primary", "review"]
+    assert result["ensemble"]["analysis_views"] == 2
+    assert result["ensemble"]["view_counts"] == {
+        "primary": 1,
+        "replica_triage": 1,
+        "review": 2,
+    }
+    assert result["ensemble"]["cascade_path"] == [
+        "primary",
+        "replica_triage",
+        "review",
+    ]
 
 
-def test_clean_default_cascade_stops_after_one_sol_full_image_pass(monkeypatch):
+def test_clean_default_cascade_uses_parallel_nano_checks_without_review(monkeypatch):
     output = io.BytesIO()
     Image.new("RGB", (300, 600), "white").save(output, format="PNG")
     calls = []
@@ -478,20 +568,27 @@ def test_clean_default_cascade_stops_after_one_sol_full_image_pass(monkeypatch):
         return observation(fake_probability=8)
 
     monkeypatch.setattr(engine, "_run_model", fake_run_model)
-    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5.6-sol")
+    monkeypatch.setattr(
+        engine, "_run_replica_triage", lambda *_args: observation(fake_probability=7)
+    )
+    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5-nano")
+    monkeypatch.setattr(engine, "PRIMARY_REASONING_EFFORT", "none")
     monkeypatch.setattr(engine, "REVIEW_MODE", "suspicious")
     monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
 
     result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
 
     assert result["verdict"] == "SAFE"
-    assert calls == [(1, "gpt-5.6-sol", "high")]
+    assert calls == [(1, "gpt-5-nano", "none")]
     assert result["review_status"] == "not_required"
-    assert result["ensemble"]["cascade_path"] == ["primary"]
-    assert result["ensemble"]["view_counts"] == {"primary": 1}
+    assert result["ensemble"]["cascade_path"] == ["primary", "replica_triage"]
+    assert result["ensemble"]["view_counts"] == {
+        "primary": 1,
+        "replica_triage": 1,
+    }
 
 
-def test_fake_candidate_escalates_to_sol_with_focus_views_and_requires_consensus(monkeypatch):
+def test_fake_candidate_escalates_to_mini_with_focus_views_and_requires_consensus(monkeypatch):
     output = io.BytesIO()
     Image.new("RGB", (300, 600), "white").save(output, format="PNG")
     calls = []
@@ -514,8 +611,11 @@ def test_fake_candidate_escalates_to_sol_with_focus_views_and_requires_consensus
         return confirmed
 
     monkeypatch.setattr(engine, "_run_model", fake_run_model)
-    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5.6-sol")
-    monkeypatch.setattr(engine, "REVIEW_MODEL", "gpt-5.6-sol")
+    monkeypatch.setattr(engine, "_run_replica_triage", lambda *_args: confirmed)
+    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5-nano")
+    monkeypatch.setattr(engine, "PRIMARY_REASONING_EFFORT", "none")
+    monkeypatch.setattr(engine, "REVIEW_MODEL", "gpt-5.4-mini")
+    monkeypatch.setattr(engine, "REVIEW_REASONING_EFFORT", "low")
     monkeypatch.setattr(engine, "REVIEW_MODE", "suspicious")
     monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
 
@@ -523,10 +623,10 @@ def test_fake_candidate_escalates_to_sol_with_focus_views_and_requires_consensus
 
     assert result["verdict"] == "SCAM"
     assert calls == [
-        (1, "gpt-5.6-sol", "high"),
-        (3, "gpt-5.6-sol", "high"),
+        (1, "gpt-5-nano", "none"),
+        (2, "gpt-5.4-mini", "low"),
     ]
-    assert result["evidence_summary"]["confirmed_fake_votes"] == 2
+    assert result["evidence_summary"]["confirmed_fake_votes"] == 3
     assert result["ensemble"]["adjudicator_performed"] is False
 
 
@@ -559,6 +659,9 @@ def test_uncertain_parallel_result_triggers_independent_adjudicator(monkeypatch)
         return item
 
     monkeypatch.setattr(engine, "_run_model", fake_run_model)
+    monkeypatch.setattr(
+        engine, "_run_replica_triage", lambda *_args: observation(fake_probability=7)
+    )
     monkeypatch.setattr(engine, "REVIEW_MODE", "always")
     monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
 

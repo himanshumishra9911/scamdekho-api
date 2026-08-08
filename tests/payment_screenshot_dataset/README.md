@@ -28,10 +28,11 @@ The quality gate also requires the 95% Wilson confidence-interval lower bound to
 reach the target, so a small or merely lucky holdout cannot produce a “95%” claim.
 
 Current calibration intake contains 16 user-confirmed genuine images across
-PhonePe, Paytm, CRED, Airtel Thanks, YONO SBI Pay, Navi, and Google Pay, plus one
-medium-confidence public fake report. Several genuine images are alternate views
-of the same payment, so the dataset currently represents 9 independent source
-groups (8 genuine and 1 fake). Do not move these groups into the holdout split.
+PhonePe, Paytm, CRED, Airtel Thanks, YONO SBI Pay, Navi, and Google Pay, one
+user-confirmed fake PhonePe-style render, and one medium-confidence public fake
+report. Several genuine images are alternate views of the same payment, so the
+dataset currently represents 10 independent source groups (8 genuine and 2
+fake). Do not move these groups into the holdout split.
 
 `public_candidates.jsonl` records public scam reports separately. Only the
 medium-confidence, source-described fake is present in the calibration manifest.
