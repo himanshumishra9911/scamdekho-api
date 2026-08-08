@@ -153,6 +153,23 @@ def test_replica_triage_requires_two_independent_signal_families_for_confirmatio
     assert _needs_review(converted)
 
 
+def test_high_confidence_uncertain_triage_requires_three_signal_families():
+    converted = _replica_triage_to_observation(
+        replica_triage(
+            wording_errors=["Odd system wording"],
+            transaction_format_anomalies=["Provider ID does not cohere with its label"],
+            component_style_conflicts=["Mixed generic and provider-specific components"],
+            assessment="uncertain",
+            replica_probability=55,
+            confidence="medium",
+        )
+    )
+
+    assert converted.authenticity_assessment == "clear_manipulation"
+    assert converted.fake_probability == 70
+    assert sum(item.strength == "strong" for item in converted.tampering_evidence) == 1
+
+
 def test_one_identifier_format_anomaly_cannot_confirm_a_fake_screen():
     converted = _replica_triage_to_observation(
         replica_triage(
