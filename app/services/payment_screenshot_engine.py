@@ -470,7 +470,7 @@ def _run_model(
         ],
         "text_format": PaymentObservation,
         "max_output_tokens": 2600,
-        "verbosity": OUTPUT_VERBOSITY,
+        "text": {"verbosity": OUTPUT_VERBOSITY},
         "prompt_cache_key": (
             f"{ANALYSIS_VERSION}:{model}:"
             f"{hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:12]}"
