@@ -155,7 +155,7 @@ def test_replica_triage_requires_two_independent_signal_families_for_confirmatio
     assert _needs_review(converted)
 
 
-def test_high_confidence_uncertain_triage_requires_three_signal_families():
+def test_high_probability_semantic_claims_cannot_become_strong_evidence():
     converted = _replica_triage_to_observation(
         replica_triage(
             wording_errors=["Odd system wording"],
@@ -169,9 +169,10 @@ def test_high_confidence_uncertain_triage_requires_three_signal_families():
         )
     )
 
-    assert converted.authenticity_assessment == "clear_manipulation"
+    assert converted.authenticity_assessment == "uncertain"
     assert converted.fake_probability == 85
-    assert sum(item.strength == "strong" for item in converted.tampering_evidence) == 1
+    assert not any(item.strength == "strong" for item in converted.tampering_evidence)
+    assert sum(item.strength == "moderate" for item in converted.tampering_evidence) == 1
 
 
 def test_one_identifier_format_anomaly_cannot_confirm_a_fake_screen():
