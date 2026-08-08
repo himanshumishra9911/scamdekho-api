@@ -10,6 +10,7 @@ from app.services.payment_screenshot_engine import (
     ReplicaTriage,
     SYSTEM_PROMPT,
     _estimate_cost_usd,
+    _apply_provider_identifier_consensus,
     _make_analysis_views,
     _needs_review,
     _prepare_image,
@@ -184,6 +185,75 @@ def test_one_identifier_format_anomaly_cannot_confirm_a_fake_screen():
     assert converted.authenticity_assessment == "uncertain"
     assert not any(item.strength == "strong" for item in converted.tampering_evidence)
     assert calibrate_observations([converted])["verdict"] == "SUSPICIOUS"
+
+
+def test_repeated_invalid_phonepe_transaction_id_confirms_two_votes():
+    first = _replica_triage_to_observation(
+        replica_triage(
+            app_name="Unknown",
+            app_key=".",
+            app_confidence=35,
+            transaction_label="Transaction ID",
+            transaction_id="TXNEHNAVCV3",
+            assessment="uncertain",
+            replica_probability=40,
+            confidence="low",
+        )
+    )
+    second = _replica_triage_to_observation(
+        replica_triage(
+            transaction_label="Transaction ID",
+            transaction_id="TXNEHNAVCV3",
+            assessment="likely_genuine",
+            replica_probability=12,
+        )
+    )
+
+    assert _apply_provider_identifier_consensus([first, second]) is True
+    result = calibrate_observations([first, second])
+
+    assert result["verdict"] == "SCAM"
+    assert result["evidence_summary"]["confirmed_fake_votes"] == 2
+    assert result["evidence_summary"]["strong"] == 2
+
+
+def test_valid_phonepe_transaction_id_is_not_promoted():
+    observations = [
+        _replica_triage_to_observation(replica_triage()),
+        _replica_triage_to_observation(replica_triage()),
+    ]
+
+    assert _apply_provider_identifier_consensus(observations) is False
+    assert not any(item.tampering_evidence for item in observations)
+
+
+def test_repeated_utr_is_not_treated_as_phonepe_transaction_id():
+    observations = [
+        _replica_triage_to_observation(
+            replica_triage(transaction_label="UTR", transaction_id="264786711602")
+        ),
+        _replica_triage_to_observation(
+            replica_triage(transaction_label="UTR", transaction_id="264786711602")
+        ),
+    ]
+
+    assert _apply_provider_identifier_consensus(observations) is False
+    assert not any(item.tampering_evidence for item in observations)
+
+
+def test_one_invalid_provider_id_read_only_triggers_review():
+    item = _replica_triage_to_observation(
+        replica_triage(
+            transaction_label="Transaction ID",
+            transaction_id="TXNEHNAVCV3",
+            assessment="likely_genuine",
+            replica_probability=12,
+        )
+    )
+
+    assert _apply_provider_identifier_consensus([item]) is False
+    assert _needs_review(item) is True
+    assert not item.tampering_evidence
 
 
 def test_default_fast_path_uses_low_detail_and_bounded_output():

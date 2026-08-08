@@ -14,7 +14,9 @@ import hashlib
 import io
 import logging
 import os
+import re
 import time
+from collections import Counter
 from dataclasses import dataclass
 from statistics import mean
 from typing import Literal
@@ -34,7 +36,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v11"
+ANALYSIS_VERSION = "payment-vision-v12"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
@@ -112,6 +114,7 @@ class ExtractedFields(BaseModel):
     bank_name: str | None
     timestamp: str | None
     status_text: str | None
+    transaction_label: str | None = None
 
 
 class VisualEvidence(BaseModel):
@@ -683,6 +686,7 @@ def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
             bank_name=triage.bank_name,
             timestamp=triage.timestamp,
             status_text=triage.headline_text,
+            transaction_label=triage.transaction_label,
         ),
         tampering_evidence=evidence,
         impossible_inconsistencies=[],
@@ -819,6 +823,7 @@ def _needs_review(observation: PaymentObservation) -> bool:
             observation.confidence != "high",
             observation.screenshot_kind in {"other", "unreadable"},
             observation.app_confidence < 50,
+            _has_provider_identifier_review_signal(observation),
         )
     )
 
@@ -869,6 +874,129 @@ def _unique_strings(values: list[str]) -> list[str]:
             seen.add(key)
             result.append(clean)
     return result
+
+
+# PhonePe transaction IDs observed across current and older legitimate receipt
+# variants use a short alphabetic provider prefix followed by a long numeric
+# payload (for example T... and NX...). Keep this deliberately broad so the
+# rule survives new prefixes. UTRs are a different field and are never checked
+# against this pattern.
+_PROVIDER_TRANSACTION_ID_PATTERNS = {
+    "phonepe": re.compile(r"^[A-Z]{1,3}\d{18,30}$"),
+}
+
+
+def _normalized_app_identity(observation: PaymentObservation) -> str:
+    identity = f"{observation.app_key} {observation.app_name}".casefold()
+    compact = re.sub(r"[^a-z0-9]+", "", identity)
+    if "phonepe" in compact:
+        return "phonepe"
+    return ""
+
+
+def _normalized_transaction_id(value: str | None) -> str:
+    return re.sub(r"\s+", "", value or "").upper()
+
+
+def _is_explicit_transaction_id_label(value: str | None) -> bool:
+    label = re.sub(r"[^a-z0-9]+", " ", (value or "").casefold()).strip()
+    return (
+        "transaction" in label
+        and "id" in label.split()
+        and "utr" not in label
+        and "reference" not in label
+    )
+
+
+def _provider_identifier_candidate(
+    observation: PaymentObservation,
+) -> tuple[str, str] | None:
+    provider = _normalized_app_identity(observation)
+    pattern = _PROVIDER_TRANSACTION_ID_PATTERNS.get(provider)
+    transaction_id = _normalized_transaction_id(observation.fields.transaction_id)
+    if (
+        not pattern
+        or observation.app_confidence < 75
+        or not _is_explicit_transaction_id_label(observation.fields.transaction_label)
+        or not transaction_id
+        or pattern.fullmatch(transaction_id)
+    ):
+        return None
+    return provider, transaction_id
+
+
+def _has_provider_identifier_review_signal(observation: PaymentObservation) -> bool:
+    """Escalate one suspicious read, but never confirm it on one read alone."""
+    return _provider_identifier_candidate(observation) is not None
+
+
+def _apply_provider_identifier_consensus(
+    observations: list[PaymentObservation],
+) -> bool:
+    """Promote a repeated provider-ID conflict into consensus evidence.
+
+    A single model report can be an OCR mistake. Confirmation therefore needs
+    the same explicit transaction-ID value from at least two independent model
+    passes, plus high-confidence provider identification in at least one pass.
+    """
+    high_confidence_providers = {
+        provider
+        for observation in observations
+        if observation.app_confidence >= 75
+        if (provider := _normalized_app_identity(observation))
+    }
+    candidates: list[tuple[str, str, PaymentObservation]] = []
+    for observation in observations:
+        if not _is_explicit_transaction_id_label(observation.fields.transaction_label):
+            continue
+        transaction_id = _normalized_transaction_id(observation.fields.transaction_id)
+        if not transaction_id:
+            continue
+        for provider in high_confidence_providers:
+            pattern = _PROVIDER_TRANSACTION_ID_PATTERNS.get(provider)
+            if pattern and not pattern.fullmatch(transaction_id):
+                candidates.append((provider, transaction_id, observation))
+
+    repeated = {
+        item
+        for item, count in Counter(
+            (provider, transaction_id) for provider, transaction_id, _ in candidates
+        ).items()
+        if count >= 2
+    }
+    if not repeated:
+        return False
+
+    applied = False
+    for provider, transaction_id in sorted(repeated):
+        description = (
+            "Two independent reads found the same explicit "
+            f"{provider.title()} transaction ID, but its structure conflicts "
+            "with the provider-specific identifier family."
+        )
+        for candidate_provider, candidate_id, observation in candidates:
+            if (candidate_provider, candidate_id) != (provider, transaction_id):
+                continue
+            if not any(
+                item.category == "transaction_data"
+                and item.strength == "strong"
+                and item.observed_text == transaction_id
+                for item in observation.tampering_evidence
+            ):
+                observation.tampering_evidence.append(
+                    VisualEvidence(
+                        category="transaction_data",
+                        strength="strong",
+                        description=description,
+                        location="transaction details",
+                        observed_text=transaction_id,
+                    )
+                )
+            observation.authenticity_assessment = "clear_manipulation"
+            observation.fake_probability = max(observation.fake_probability, 82)
+            observation.reasons = _unique_strings(observation.reasons + [description])
+            applied = True
+    return applied
 
 
 def _candidate_signal_suffix(observations: list[PaymentObservation]) -> str:
@@ -1169,6 +1297,8 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             except Exception as exc:
                 logger.warning("Payment screenshot replica-review pass failed: %s", exc)
                 failures.append(exc)
+
+    _apply_provider_identifier_consensus(observations)
 
     adjudicator_performed = False
     if not review_disabled and observations and _needs_adjudication(observations):
