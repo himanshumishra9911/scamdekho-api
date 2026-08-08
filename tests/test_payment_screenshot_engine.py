@@ -472,7 +472,9 @@ def test_model_request_uses_configured_detail_structured_output_and_optional_pro
     assert captured["text"] == {"verbosity": "low"}
     assert "verbosity" not in captured
     assert captured["max_output_tokens"] == 1800
-    assert captured["prompt_cache_key"].startswith("payment-vision-v7:gpt-5.6-sol:")
+    assert captured["prompt_cache_key"].startswith(
+        f"{engine.ANALYSIS_VERSION}:gpt-5.6-sol:"
+    )
     assert model_pass.input_tokens == 4000
     assert model_pass.cached_input_tokens == 1000
     assert model_pass.reasoning_tokens == 600
