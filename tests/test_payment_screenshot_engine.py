@@ -383,7 +383,8 @@ def test_model_request_uses_original_detail_structured_output_and_optional_pro_m
     assert image_item["type"] == "input_image"
     assert image_item["detail"] == "original"
     assert captured["store"] is False
-    assert captured["verbosity"] == "low"
+    assert captured["text"] == {"verbosity": "low"}
+    assert "verbosity" not in captured
     assert captured["prompt_cache_key"].startswith("payment-vision-v5:gpt-5.6-sol:")
     assert model_pass.input_tokens == 4000
     assert model_pass.cached_input_tokens == 1000
