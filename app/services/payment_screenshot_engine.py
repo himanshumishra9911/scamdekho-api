@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v7"
+ANALYSIS_VERSION = "payment-vision-v8-diagnostic"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", "gpt-5-nano")
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
@@ -837,6 +837,14 @@ def _unique_strings(values: list[str]) -> list[str]:
     return result
 
 
+def _sanitized_failure_detail(exc: Exception) -> str:
+    detail = " ".join(str(exc).split())
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if api_key:
+        detail = detail.replace(api_key, "[redacted]")
+    return f"{type(exc).__name__}: {detail}"[:600]
+
+
 def _merge_fields(observations: list[PaymentObservation]) -> ExtractedFields:
     merged: dict[str, str | None] = {}
     for field_name in ExtractedFields.model_fields:
@@ -1170,6 +1178,9 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
                 "analysis_views": max(attempted_view_counts.values(), default=0),
                 "view_counts": attempted_view_counts,
                 "cascade_path": [item.role for item in model_passes],
+                "failure_details": [
+                    _sanitized_failure_detail(item) for item in failures
+                ],
             },
             "model_usage": model_usage,
             "image_dimensions": {"width": dimensions[0], "height": dimensions[1]},
