@@ -14,6 +14,7 @@ import hashlib
 import io
 import logging
 import os
+import time
 from dataclasses import dataclass
 from statistics import mean
 from typing import Literal
@@ -33,50 +34,69 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v5"
-PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.6-sol")
-REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.6-sol")
-ADJUDICATOR_MODEL = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL", "gpt-5.6-sol")
+ANALYSIS_VERSION = "payment-vision-v6"
+PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5-nano")
+REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", "gpt-5-nano")
+REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
+ADJUDICATOR_MODEL = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL", "gpt-5.6-luna")
 REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "suspicious").strip().lower()
 ADJUDICATOR_MODE = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODE", "adaptive").strip().lower()
-BASE_REASONING_EFFORT = os.getenv("PAYMENT_SCREENSHOT_REASONING_EFFORT", "high")
+BASE_REASONING_EFFORT = os.getenv("PAYMENT_SCREENSHOT_REASONING_EFFORT", "none")
 PRIMARY_REASONING_EFFORT = os.getenv(
     "PAYMENT_SCREENSHOT_PRIMARY_REASONING_EFFORT", BASE_REASONING_EFFORT
 )
+REPLICA_REASONING_EFFORT = os.getenv(
+    "PAYMENT_SCREENSHOT_REPLICA_REASONING_EFFORT", "none"
+)
 REVIEW_REASONING_EFFORT = os.getenv(
-    "PAYMENT_SCREENSHOT_REVIEW_REASONING_EFFORT", BASE_REASONING_EFFORT
+    "PAYMENT_SCREENSHOT_REVIEW_REASONING_EFFORT", "low"
 )
 ADJUDICATOR_REASONING_EFFORT = os.getenv(
-    "PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_EFFORT", "xhigh"
+    "PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_EFFORT", "medium"
 )
 ADJUDICATOR_REASONING_MODE = os.getenv(
     "PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_MODE", "standard"
 ).strip().lower()
-IMAGE_DETAIL = os.getenv("PAYMENT_SCREENSHOT_IMAGE_DETAIL", "original")
+PRIMARY_IMAGE_DETAIL = os.getenv("PAYMENT_SCREENSHOT_PRIMARY_IMAGE_DETAIL", "low")
+REPLICA_IMAGE_DETAIL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_IMAGE_DETAIL", "low")
+REVIEW_IMAGE_DETAIL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_IMAGE_DETAIL", "auto")
+ADJUDICATOR_IMAGE_DETAIL = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_IMAGE_DETAIL", "auto")
 OUTPUT_VERBOSITY = (
     os.getenv("PAYMENT_SCREENSHOT_OUTPUT_VERBOSITY", "low").strip().lower()
 )
 if OUTPUT_VERBOSITY not in {"low", "medium", "high"}:
     OUTPUT_VERBOSITY = "low"
-MODEL_TIMEOUT_SECONDS = float(os.getenv("PAYMENT_SCREENSHOT_MODEL_TIMEOUT", "75"))
+MODEL_TIMEOUT_SECONDS = float(os.getenv("PAYMENT_SCREENSHOT_MODEL_TIMEOUT", "25"))
 MAX_IMAGE_PIXELS = int(os.getenv("PAYMENT_SCREENSHOT_MAX_PIXELS", "40000000"))
-MAX_ANALYSIS_VIEWS = max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_MAX_VIEWS", "3"))))
+MAX_ANALYSIS_VIEWS = max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_MAX_VIEWS", "2"))))
 PRIMARY_MAX_ANALYSIS_VIEWS = min(
     MAX_ANALYSIS_VIEWS,
     max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_PRIMARY_MAX_VIEWS", "1")))),
 )
 REVIEW_MAX_ANALYSIS_VIEWS = min(
     MAX_ANALYSIS_VIEWS,
-    max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_REVIEW_MAX_VIEWS", "3")))),
+    max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_REVIEW_MAX_VIEWS", "2")))),
 )
 ADJUDICATOR_MAX_ANALYSIS_VIEWS = min(
     MAX_ANALYSIS_VIEWS,
-    max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_VIEWS", "3")))),
+    max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_VIEWS", "2")))),
+)
+PRIMARY_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_PRIMARY_MAX_OUTPUT_TOKENS", "1100"))
+REPLICA_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_REPLICA_MAX_OUTPUT_TOKENS", "650"))
+REVIEW_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_REVIEW_MAX_OUTPUT_TOKENS", "1500"))
+ADJUDICATOR_MAX_OUTPUT_TOKENS = int(
+    os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_OUTPUT_TOKENS", "1800")
+)
+BUDGET_TARGET_USD_PER_CHECK = float(
+    os.getenv("PAYMENT_SCREENSHOT_BUDGET_TARGET_USD", "0.0012")
 )
 
 # Standard API prices per one million tokens. These values are used only for
 # request telemetry; billing remains authoritative in the OpenAI dashboard.
 MODEL_PRICING_USD_PER_MTOK = {
+    "gpt-5-nano": {"input": 0.05, "cached_input": 0.005, "output": 0.4},
+    "gpt-5.4-nano": {"input": 0.2, "cached_input": 0.02, "output": 1.25},
+    "gpt-5.4-mini": {"input": 0.75, "cached_input": 0.075, "output": 4.5},
     "gpt-5.6-sol": {"input": 5.0, "cached_input": 0.5, "output": 30.0},
     "gpt-5.6-terra": {"input": 2.5, "cached_input": 0.25, "output": 15.0},
     "gpt-5.6-luna": {"input": 1.0, "cached_input": 0.1, "output": 6.0},
@@ -139,6 +159,27 @@ class PaymentObservation(BaseModel):
     reasons: list[str]
 
 
+class ReplicaTriage(BaseModel):
+    """Compact second opinion optimized for fake/clone payment-app screens."""
+
+    app_name: str
+    app_key: str
+    app_confidence: int = Field(ge=0, le=100)
+    headline_text: str | None
+    transaction_label: str | None
+    transaction_id: str | None
+    readability: Literal["clear", "partial", "unreadable"]
+    wording_errors: list[str]
+    app_identity_conflicts: list[str]
+    transaction_format_anomalies: list[str]
+    component_style_conflicts: list[str]
+    benign_explanations: list[str]
+    assessment: Literal["likely_genuine", "uncertain", "likely_replica"]
+    replica_probability: int = Field(ge=0, le=100)
+    confidence: Literal["low", "medium", "high"]
+    reasons: list[str]
+
+
 @dataclass
 class ModelPassResult:
     observation: PaymentObservation
@@ -152,6 +193,7 @@ class ModelPassResult:
     reasoning_tokens: int = 0
     total_tokens: int = 0
     estimated_cost_usd: float | None = None
+    latency_ms: int = 0
 
 
 SYSTEM_PROMPT = """You assess whether an Indian payment screenshot was fabricated or edited. This includes a coherent screen rendered by a fake or clone payment app, not only a pasted value in a real-app screenshot.
@@ -168,6 +210,8 @@ Strong evidence must be specific and visible, such as a localized paste boundary
 
 A fake-app screen may be internally clean and have no paste boundary. Consider replica_app evidence only when at least two independent, visible inconsistencies occur inside the payment UI, for example a stable grammatical error in a system heading plus mixed branding/component styles, or mutually incompatible app identity elements. A single typo, unfamiliar layout, missing transaction details, absent reference number, or the recipient saying money was not received is not enough. Use moderate replica_app evidence and uncertain when the combination is concerning but not decisive; use strong only when the visible combination has no plausible app-version, theme, language, accessibility, crop, compression, or OCR explanation.
 
+Do not overcorrect this rule by ignoring transaction identifiers. Identifier length or format alone is benign, but when the app identity is highly confident, a provider-label/identifier mismatch can be one replica signal if a separate wording, branding, component, or bank-identity inconsistency is also visible. Judge the combination, not a remembered template.
+
 When a payment receipt is forwarded inside WhatsApp, SMS, a gallery, or another viewer, treat the surrounding wrapper as context rather than part of the payment app. Inspect the embedded receipt separately and do not mistake wrapper fonts, status bars, or compression for receipt tampering.
 
 Populate every schema field. Put possible scam context in content_risk_signals, never in tampering_evidence unless it also supports visible screenshot fabrication or editing."""
@@ -176,13 +220,22 @@ Populate every schema field. Put possible scam context in content_risk_signals, 
 ANALYST_PROMPT = """Inspect the whole screenshot at original detail.
 
 1. Identify the app only when supported by visible branding; otherwise use Unknown.
-2. Transcribe visible fields without guessing missing text.
+2. Transcribe the success heading, transaction-ID label/value, and other visible fields exactly; do not silently correct spelling.
 3. Separate payment state from screenshot authenticity.
-4. Look for localized editing artifacts, impossible internal contradictions, and combinations of replica-app signals.
+4. Look for localized editing artifacts, impossible internal contradictions, and combinations of replica-app signals. A clean fake-app render may have no paste boundary.
 5. List benign limitations so they are not reused as fraud evidence.
 6. Estimate fake_probability for screenshot fabrication/editing only.
 
 Use clear_manipulation only when at least one strong, specific item exists in tampering_evidence or an impossible contradiction is directly visible."""
+
+
+REPLICA_TRIAGE_PROMPT = """Perform a compact, independent fake/clone payment-app triage.
+
+Quote the visible success heading, transaction-ID label, and transaction ID exactly without fixing spelling. Check four independent signal families: system wording, claimed-app identity/labels, provider-ID coherence, and mixed component/icon/bank styles. A fake-app render can look pixel-clean.
+
+Do not enforce one remembered app template. A single typo, short/alphanumeric ID, missing field, unfamiliar layout, or cross-app UPI handle is never enough. Mark likely_replica only when at least two independent visible signal families conflict and benign app-version, merchant-flow, theme, language, accessibility, crop, or OCR explanations do not resolve the combination.
+
+For example, on a confidently PhonePe-branded screen, an odd system heading, a generic banking-name or transaction label, a provider ID that does not cohere with that label, and generic/mixed bank components form separate signals only when actually visible. Any one of them alone is benign. Keep lists short and specific."""
 
 
 REPLICA_REVIEW_PROMPT = """Inspect the screenshot independently as a fake/clone payment-app specialist.
@@ -273,7 +326,7 @@ def get_client() -> OpenAI:
     return OpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),
         timeout=MODEL_TIMEOUT_SECONDS,
-        max_retries=1,
+        max_retries=0,
     )
 
 
@@ -401,6 +454,7 @@ def _model_pass_result(
     observation: PaymentObservation,
     model: str,
     view_count: int,
+    latency_ms: int = 0,
 ) -> ModelPassResult:
     usage = getattr(response, "usage", None)
     input_details = (
@@ -436,16 +490,36 @@ def _model_pass_result(
             cache_write_tokens,
             output_tokens,
         ),
+        latency_ms=latency_ms,
     )
 
 
-def _run_model(
+def _normalize_image_detail(value: str, fallback: str) -> str:
+    clean = str(value or "").strip().lower()
+    return clean if clean in {"low", "auto", "high", "original"} else fallback
+
+
+def _request_policy(prompt: str) -> tuple[str, int]:
+    if prompt == ANALYST_PROMPT:
+        return _normalize_image_detail(PRIMARY_IMAGE_DETAIL, "low"), PRIMARY_MAX_OUTPUT_TOKENS
+    if prompt == REPLICA_REVIEW_PROMPT:
+        return _normalize_image_detail(REVIEW_IMAGE_DETAIL, "auto"), REVIEW_MAX_OUTPUT_TOKENS
+    return (
+        _normalize_image_detail(ADJUDICATOR_IMAGE_DETAIL, "auto"),
+        ADJUDICATOR_MAX_OUTPUT_TOKENS,
+    )
+
+
+def _run_typed_model(
     image_views: list[AnalysisView],
     prompt: str,
     model: str,
     reasoning_effort: str,
-    reasoning_mode: str = "standard",
-) -> ModelPassResult:
+    reasoning_mode: str,
+    text_format: type[BaseModel],
+    image_detail: str,
+    max_output_tokens: int,
+) -> tuple[object, BaseModel, int]:
     content: list[dict] = [{"type": "input_text", "text": prompt}]
     for label, view_bytes, view_media_type in image_views:
         content.extend(
@@ -454,7 +528,7 @@ def _run_model(
                 {
                     "type": "input_image",
                     "image_url": _image_data_url(view_bytes, view_media_type),
-                    "detail": IMAGE_DETAIL,
+                    "detail": image_detail,
                 },
             ]
         )
@@ -468,8 +542,8 @@ def _run_model(
                 "content": content,
             }
         ],
-        "text_format": PaymentObservation,
-        "max_output_tokens": 2600,
+        "text_format": text_format,
+        "max_output_tokens": max_output_tokens,
         "text": {"verbosity": OUTPUT_VERBOSITY},
         "prompt_cache_key": (
             f"{ANALYSIS_VERSION}:{model}:"
@@ -483,14 +557,131 @@ def _run_model(
             reasoning["mode"] = "pro"
         request_kwargs["reasoning"] = reasoning
 
+    started_at = time.perf_counter()
     response = get_client().responses.parse(**request_kwargs)
+    latency_ms = round((time.perf_counter() - started_at) * 1000)
     if response.output_parsed is None:
         raise ValueError("The vision model did not return a usable forensic report.")
+    return response, response.output_parsed, latency_ms
+
+
+def _run_model(
+    image_views: list[AnalysisView],
+    prompt: str,
+    model: str,
+    reasoning_effort: str,
+    reasoning_mode: str = "standard",
+) -> ModelPassResult:
+    image_detail, max_output_tokens = _request_policy(prompt)
+    response, observation, latency_ms = _run_typed_model(
+        image_views,
+        prompt,
+        model,
+        reasoning_effort,
+        reasoning_mode,
+        PaymentObservation,
+        image_detail,
+        max_output_tokens,
+    )
     return _model_pass_result(
         response,
-        response.output_parsed,
+        observation,
         model,
         len(image_views),
+        latency_ms,
+    )
+
+
+def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
+    signal_groups = [
+        ("wording", triage.wording_errors, "moderate"),
+        ("app identity", triage.app_identity_conflicts, "moderate"),
+        ("transaction format", triage.transaction_format_anomalies, "weak"),
+        ("component style", triage.component_style_conflicts, "moderate"),
+    ]
+    independent_groups = sum(bool(items) for _, items, _ in signal_groups)
+    confirmed_replica = (
+        triage.assessment == "likely_replica"
+        and triage.replica_probability >= 65
+        and independent_groups >= 2
+    )
+    evidence: list[VisualEvidence] = []
+    promoted_strong = False
+    for group_name, items, default_strength in signal_groups:
+        for item in items[:3]:
+            strength = default_strength
+            if confirmed_replica and default_strength == "moderate" and not promoted_strong:
+                strength = "strong"
+                promoted_strong = True
+            evidence.append(
+                VisualEvidence(
+                    category="replica_app",
+                    strength=strength,
+                    description=f"{group_name.title()} inconsistency: {item}",
+                    location="payment interface",
+                    observed_text=item,
+                )
+            )
+
+    has_signal = bool(evidence)
+    assessment = (
+        "clear_manipulation"
+        if confirmed_replica
+        else "uncertain"
+        if has_signal or triage.assessment == "uncertain" or triage.replica_probability > 25
+        else "no_evidence_of_manipulation"
+    )
+    headline = (triage.headline_text or "").casefold()
+    is_success = "success" in headline or "paid" in headline or "sent" in headline
+    return PaymentObservation(
+        app_name=triage.app_name or "Unknown",
+        app_key=(triage.app_key or "unknown").lower(),
+        app_confidence=triage.app_confidence,
+        screenshot_kind="payment_success" if is_success else "receipt_or_history",
+        readability=triage.readability,
+        payment_state="success" if is_success else "unknown",
+        fields=ExtractedFields(
+            amount=None,
+            transaction_id=triage.transaction_id,
+            upi_id=None,
+            recipient_name=None,
+            sender_name=None,
+            bank_name=None,
+            timestamp=None,
+            status_text=triage.headline_text,
+        ),
+        tampering_evidence=evidence,
+        impossible_inconsistencies=[],
+        benign_limitations=triage.benign_explanations,
+        content_risk_signals=[],
+        authenticity_assessment=assessment,
+        fake_probability=max(70, triage.replica_probability)
+        if confirmed_replica
+        else triage.replica_probability,
+        confidence=triage.confidence,
+        reasons=triage.reasons,
+    )
+
+
+def _run_replica_triage(
+    image_views: list[AnalysisView],
+) -> ModelPassResult:
+    response, triage, latency_ms = _run_typed_model(
+        image_views,
+        REPLICA_TRIAGE_PROMPT,
+        REPLICA_MODEL,
+        REPLICA_REASONING_EFFORT,
+        "standard",
+        ReplicaTriage,
+        _normalize_image_detail(REPLICA_IMAGE_DETAIL, "low"),
+        REPLICA_MAX_OUTPUT_TOKENS,
+    )
+    return _model_pass_result(
+        response,
+        _replica_triage_to_observation(triage),
+        REPLICA_MODEL,
+        len(image_views),
+        latency_ms,
     )
 
 
@@ -529,8 +720,15 @@ def _summarize_model_usage(passes: list[ModelPassResult]) -> dict:
         "output_tokens": sum(item.output_tokens for item in passes),
         "reasoning_tokens": sum(item.reasoning_tokens for item in passes),
         "total_tokens": sum(item.total_tokens for item in passes),
+        "model_latency_ms": max((item.latency_ms for item in passes), default=0),
         "estimated_cost_usd": estimated_cost,
         "request_estimated_cost_usd": estimated_cost,
+        "budget_target_usd": BUDGET_TARGET_USD_PER_CHECK,
+        "within_budget": (
+            estimated_cost <= BUDGET_TARGET_USD_PER_CHECK
+            if estimated_cost is not None
+            else None
+        ),
         "cache_reused": False,
         "pricing_note": (
             "Estimate from configured standard list prices; "
@@ -548,6 +746,7 @@ def _summarize_model_usage(passes: list[ModelPassResult]) -> dict:
                 "reasoning_tokens": item.reasoning_tokens,
                 "total_tokens": item.total_tokens,
                 "estimated_cost_usd": item.estimated_cost_usd,
+                "latency_ms": item.latency_ms,
             }
             for item in passes
         ],
@@ -599,6 +798,9 @@ def _needs_adjudication(observations: list[PaymentObservation]) -> bool:
         # A clearly clean first pass should be the cheap path. A lone uncertain
         # or fake-looking result still gets an independent attempt.
         return not _is_clean_observation(observations[0])
+    required_votes = (len(observations) // 2) + 1
+    if sum(_has_confirmed_fake_evidence(item) for item in observations) >= required_votes:
+        return False
     if all(_is_clean_observation(item) for item in observations):
         return False
     if all(_has_confirmed_fake_evidence(item) for item in observations):
@@ -759,6 +961,7 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
 
 
 async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
+    analysis_started_at = time.perf_counter()
     prepared_bytes, media_type, dimensions = _prepare_image(image_bytes)
     loop = asyncio.get_running_loop()
     observations: list[PaymentObservation] = []
@@ -802,58 +1005,66 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             len(image_views),
         )
 
-    if REVIEW_MODE == "always":
-        primary_views = get_views(PRIMARY_MAX_ANALYSIS_VIEWS)
-        review_views = get_views(REVIEW_MAX_ANALYSIS_VIEWS)
-        attempted_passes += 2
-        attempted_view_counts.update(
-            primary=len(primary_views),
-            review=len(review_views),
+    async def execute_replica_triage(
+        image_views: list[AnalysisView],
+    ) -> ModelPassResult:
+        raw_result = await loop.run_in_executor(
+            None,
+            _run_replica_triage,
+            image_views,
         )
-        initial_results = await asyncio.gather(
-            execute_pass(
-                "primary",
-                primary_views,
-                ANALYST_PROMPT,
-                PRIMARY_MODEL,
-                PRIMARY_REASONING_EFFORT,
-            ),
+        return _normalize_pass_result(
+            raw_result,
+            "replica_triage",
+            REPLICA_MODEL,
+            len(image_views),
+        )
+
+    primary_views = get_views(PRIMARY_MAX_ANALYSIS_VIEWS)
+    attempted_passes += 2
+    attempted_view_counts.update(
+        primary=len(primary_views),
+        replica_triage=len(primary_views),
+    )
+    initial_tasks = [
+        execute_pass(
+            "primary",
+            primary_views,
+            ANALYST_PROMPT,
+            PRIMARY_MODEL,
+            PRIMARY_REASONING_EFFORT,
+        ),
+        execute_replica_triage(primary_views),
+    ]
+    if REVIEW_MODE == "always":
+        review_views = get_views(REVIEW_MAX_ANALYSIS_VIEWS)
+        attempted_passes += 1
+        attempted_view_counts["review"] = len(review_views)
+        initial_tasks.append(
             execute_pass(
                 "review",
                 review_views,
                 REPLICA_REVIEW_PROMPT,
                 REVIEW_MODEL,
                 REVIEW_REASONING_EFFORT,
-            ),
-            return_exceptions=True,
-        )
-        for item in initial_results:
-            if isinstance(item, BaseException):
-                logger.warning("Payment screenshot ensemble pass failed: %s", item)
-                failures.append(item if isinstance(item, Exception) else RuntimeError(str(item)))
-            else:
-                model_passes.append(item)
-                observations.append(item.observation)
-    else:
-        primary_views = get_views(PRIMARY_MAX_ANALYSIS_VIEWS)
-        attempted_passes += 1
-        attempted_view_counts["primary"] = len(primary_views)
-        try:
-            primary_pass = await execute_pass(
-                "primary",
-                primary_views,
-                ANALYST_PROMPT,
-                PRIMARY_MODEL,
-                PRIMARY_REASONING_EFFORT,
             )
-            model_passes.append(primary_pass)
-            observations.append(primary_pass.observation)
-        except Exception as exc:
-            logger.warning("Payment screenshot primary pass failed: %s", exc)
-            failures.append(exc)
+        )
 
+    initial_results = await asyncio.gather(
+        *initial_tasks,
+        return_exceptions=True,
+    )
+    for item in initial_results:
+        if isinstance(item, BaseException):
+            logger.warning("Payment screenshot fast ensemble pass failed: %s", item)
+            failures.append(item if isinstance(item, Exception) else RuntimeError(str(item)))
+        else:
+            model_passes.append(item)
+            observations.append(item.observation)
+
+    if REVIEW_MODE != "always":
         review_required = not review_disabled and (
-            not observations or _needs_review(observations[0])
+            not observations or any(_needs_review(item) for item in observations)
         )
         if review_required:
             review_views = get_views(REVIEW_MAX_ANALYSIS_VIEWS)
@@ -918,15 +1129,20 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         result["reasons"] = result["why"]
     if failures:
         result["confidence"] = "low"
+    analysis_latency_ms = round((time.perf_counter() - analysis_started_at) * 1000)
+    model_usage = _summarize_model_usage(model_passes)
+    model_usage["analysis_latency_ms"] = analysis_latency_ms
+    review_performed = "review" in attempted_view_counts
+    review_succeeded = any(item.role == "review" for item in model_passes)
     result.update(
         {
             "analysis_version": ANALYSIS_VERSION,
-            "review_performed": "review" in attempted_view_counts,
+            "review_performed": review_performed,
             "review_status": (
                 "failed"
-                if failures
+                if review_performed and not review_succeeded
                 else "completed"
-                if attempted_passes > 1
+                if review_performed
                 else "not_required"
             ),
             "ensemble": {
@@ -938,7 +1154,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
                 "view_counts": attempted_view_counts,
                 "cascade_path": [item.role for item in model_passes],
             },
-            "model_usage": _summarize_model_usage(model_passes),
+            "model_usage": model_usage,
             "image_dimensions": {"width": dimensions[0], "height": dimensions[1]},
         }
     )

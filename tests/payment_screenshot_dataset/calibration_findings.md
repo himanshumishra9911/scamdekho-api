@@ -52,8 +52,14 @@ data, not an accuracy test.
 
 ## Remaining measurement gap
 
-There is only one medium-confidence fake calibration example, one provisional
-candidate, and no untouched holdout examples. The 95% target therefore cannot
+There are now two fake calibration examples: one user-confirmed fake
+PhonePe-style render and one medium-confidence public report. The user-confirmed
+render exposed a concrete false negative: clean fake-app pixels with an odd
+system heading, generic banking-name semantics, provider-label/ID incoherence,
+and mixed generic bank components. These are evaluated as independent signal
+families; no single item is a fake verdict rule.
+
+There are still no untouched holdout examples. The 95% target therefore cannot
 yet be measured without manufacturing a biased test. Final evaluation needs
 independent genuine and fake screenshots from different transactions, devices,
 app versions, and manipulation methods.
