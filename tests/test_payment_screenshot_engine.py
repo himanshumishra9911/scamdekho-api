@@ -14,6 +14,7 @@ from app.services.payment_screenshot_engine import (
     _needs_review,
     _prepare_image,
     _replica_triage_to_observation,
+    _reasoning_config,
     _request_policy,
     calibrate_observations,
 )
@@ -165,6 +166,16 @@ def test_one_identifier_format_anomaly_cannot_confirm_a_fake_screen():
 def test_default_fast_path_uses_low_detail_and_bounded_output():
     assert _request_policy(engine.ANALYST_PROMPT) == ("low", 1100)
     assert _request_policy(engine.REPLICA_REVIEW_PROMPT) == ("auto", 1500)
+
+
+def test_gpt5_nano_omits_unsupported_reasoning_parameters():
+    assert _reasoning_config("gpt-5-nano", "none", "standard") is None
+    assert _reasoning_config("gpt-5-nano", "high", "standard") is None
+    assert _reasoning_config("gpt-5.4-mini", "low", "standard") == {"effort": "low"}
+    assert _reasoning_config("gpt-5.6-luna", "medium", "pro") == {
+        "effort": "medium",
+        "mode": "pro",
+    }
 
 
 def test_nano_primary_meets_per_check_budget_on_observed_production_usage():
@@ -461,7 +472,7 @@ def test_model_request_uses_configured_detail_structured_output_and_optional_pro
     assert captured["text"] == {"verbosity": "low"}
     assert "verbosity" not in captured
     assert captured["max_output_tokens"] == 1800
-    assert captured["prompt_cache_key"].startswith("payment-vision-v6:gpt-5.6-sol:")
+    assert captured["prompt_cache_key"].startswith("payment-vision-v7:gpt-5.6-sol:")
     assert model_pass.input_tokens == 4000
     assert model_pass.cached_input_tokens == 1000
     assert model_pass.reasoning_tokens == 600

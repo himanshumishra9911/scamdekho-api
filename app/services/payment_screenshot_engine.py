@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v6"
+ANALYSIS_VERSION = "payment-vision-v7"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", "gpt-5-nano")
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
@@ -217,7 +217,7 @@ When a payment receipt is forwarded inside WhatsApp, SMS, a gallery, or another 
 Populate every schema field. Put possible scam context in content_risk_signals, never in tampering_evidence unless it also supports visible screenshot fabrication or editing."""
 
 
-ANALYST_PROMPT = """Inspect the whole screenshot at original detail.
+ANALYST_PROMPT = """Inspect the whole screenshot carefully.
 
 1. Identify the app only when supported by visible branding; otherwise use Unknown.
 2. Transcribe the success heading, transaction-ID label/value, and other visible fields exactly; do not silently correct spelling.
@@ -241,6 +241,8 @@ For example, on a confidently PhonePe-branded screen, an odd system heading, a g
 REPLICA_REVIEW_PROMPT = """Inspect the screenshot independently as a fake/clone payment-app specialist.
 
 Look for combinations of internally inconsistent app identity, system wording, component families, icon geometry, spacing, duplicated elements, and transaction fields. Then try to falsify every suspected signal using app-version, OS, language, theme, merchant-flow, accessibility, crop, and compression explanations. A single typo, missing field, unfamiliar layout, or non-receipt claim is not enough. Inspect an embedded receipt separately from any chat, gallery, or SMS wrapper.
+
+Treat a confidently branded screen with three or more independent, visible conflicts across system wording, provider-specific labels/identifier coherence, banking-name semantics, and component/bank identity as strong clone-app evidence when those conflicts cannot be explained by a merchant flow or app variation. This is a combination rule, not a fixed-template rule; each item alone remains benign.
 
 Return no_evidence_of_manipulation when there is no specific visible evidence. Return uncertain for a concerning but non-decisive combination. Return clear_manipulation only for strong, specific visible evidence."""
 
@@ -510,6 +512,23 @@ def _request_policy(prompt: str) -> tuple[str, int]:
     )
 
 
+def _reasoning_config(
+    model: str,
+    reasoning_effort: str,
+    reasoning_mode: str,
+) -> dict[str, str] | None:
+    # GPT-5 Nano supports image input and structured output but not reasoning
+    # tokens. Sending a reasoning block makes the fast passes fail before
+    # inference, so omit it entirely for that model.
+    normalized_model = model.strip().lower()
+    if normalized_model == "gpt-5-nano" or not reasoning_effort:
+        return None
+    reasoning = {"effort": reasoning_effort}
+    if reasoning_mode == "pro" and normalized_model.startswith("gpt-5.6"):
+        reasoning["mode"] = "pro"
+    return reasoning
+
+
 def _run_typed_model(
     image_views: list[AnalysisView],
     prompt: str,
@@ -551,10 +570,8 @@ def _run_typed_model(
         ),
         "store": False,
     }
-    if model.startswith("gpt-5"):
-        reasoning = {"effort": reasoning_effort}
-        if reasoning_mode == "pro":
-            reasoning["mode"] = "pro"
+    reasoning = _reasoning_config(model, reasoning_effort, reasoning_mode)
+    if reasoning is not None:
         request_kwargs["reasoning"] = reasoning
 
     started_at = time.perf_counter()
