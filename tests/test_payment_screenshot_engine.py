@@ -139,8 +139,9 @@ def test_replica_triage_requires_two_independent_signal_families_for_confirmatio
         transaction_label="Transaction ID",
         transaction_id="TXNEHNAVCV3",
         wording_errors=["Successfull is misspelled in the system heading"],
-        app_identity_conflicts=["Generic Banking name row conflicts with the claimed app UI"],
+        app_identity_conflicts=["Two different app names both claim to be the paying application"],
         transaction_format_anomalies=["Generic short provider transaction ID"],
+        component_style_conflicts=["The success icon has a localized hard rectangular edge"],
         assessment="likely_replica",
         replica_probability=91,
         confidence="high",
@@ -159,15 +160,17 @@ def test_high_confidence_uncertain_triage_requires_three_signal_families():
         replica_triage(
             wording_errors=["Odd system wording"],
             transaction_format_anomalies=["Provider ID does not cohere with its label"],
-            component_style_conflicts=["Mixed generic and provider-specific components"],
+            component_style_conflicts=[
+                "The success icon has a localized hard rectangular edge"
+            ],
             assessment="uncertain",
-            replica_probability=55,
+            replica_probability=85,
             confidence="medium",
         )
     )
 
     assert converted.authenticity_assessment == "clear_manipulation"
-    assert converted.fake_probability == 70
+    assert converted.fake_probability == 85
     assert sum(item.strength == "strong" for item in converted.tampering_evidence) == 1
 
 
@@ -182,9 +185,33 @@ def test_one_identifier_format_anomaly_cannot_confirm_a_fake_screen():
         )
     )
 
-    assert converted.authenticity_assessment == "uncertain"
+    assert converted.authenticity_assessment == "no_evidence_of_manipulation"
+    assert converted.fake_probability == 25
     assert not any(item.strength == "strong" for item in converted.tampering_evidence)
-    assert calibrate_observations([converted])["verdict"] == "SUSPICIOUS"
+    assert calibrate_observations([converted])["verdict"] == "SAFE"
+
+
+def test_cross_app_upi_interoperability_claims_are_filtered_as_benign():
+    converted = _replica_triage_to_observation(
+        replica_triage(
+            app_identity_conflicts=[
+                "PhonePe-branded success screen shows Sent to: paytm in the recipient line"
+            ],
+            component_style_conflicts=[
+                "PhonePe branding is paired with a Paytm UPI handle"
+            ],
+            transaction_format_anomalies=["The identifier format is unfamiliar"],
+            assessment="likely_replica",
+            replica_probability=88,
+            confidence="high",
+        )
+    )
+
+    assert converted.authenticity_assessment == "no_evidence_of_manipulation"
+    assert converted.fake_probability == 25
+    assert all(item.strength == "weak" for item in converted.tampering_evidence)
+    assert len(converted.benign_limitations) == 2
+    assert calibrate_observations([converted])["verdict"] == "SAFE"
 
 
 def test_repeated_invalid_phonepe_transaction_id_confirms_two_votes():

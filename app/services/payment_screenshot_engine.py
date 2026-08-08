@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v12"
+ANALYSIS_VERSION = "payment-vision-v13"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
@@ -618,26 +618,94 @@ def _run_model(
     )
 
 
+def _is_benign_replica_claim(group_name: str, claim: str) -> bool:
+    """Reject common model claims that the prompt explicitly defines as benign."""
+    normalized = " ".join(claim.casefold().split())
+    soft_wording_markers = (
+        "capitalization",
+        "pluralization",
+        "casing",
+        "spacing",
+        "rather than a standard",
+        "non-screenshot-heading phrasing",
+        "thanksapp",
+        "airtel thanks app",
+        "footer brand",
+    )
+    interoperability_markers = (
+        "recipient line",
+        "sent to",
+        "paid to",
+        "received from",
+        "upi handle",
+        "handle domain",
+        "bank/provider",
+        "bank identity",
+        "bank of",
+        "banking name",
+        "payments bank",
+        "powered by",
+        "partner branding",
+        "separate partner",
+        "provider branding",
+        "footer",
+    )
+    presentation_markers = (
+        "share receipt",
+        "receipt composition",
+        "receipt-style",
+        "not shown",
+        "missing",
+        "only implied",
+        "masked",
+        "truncation",
+        "avatar",
+        "generic",
+        "future date",
+        "timestamp",
+    )
+    if group_name == "wording":
+        return any(marker in normalized for marker in soft_wording_markers)
+    if group_name in {"app identity", "component style"}:
+        return any(
+            marker in normalized
+            for marker in interoperability_markers + presentation_markers
+        )
+    return False
+
+
 def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
-    signal_groups = [
+    raw_signal_groups = [
         ("wording", triage.wording_errors, "moderate"),
         ("app identity", triage.app_identity_conflicts, "moderate"),
         ("transaction format", triage.transaction_format_anomalies, "weak"),
         ("component style", triage.component_style_conflicts, "moderate"),
     ]
+    filtered_claims: list[str] = []
+    signal_groups: list[tuple[str, list[str], str]] = []
+    for group_name, items, strength in raw_signal_groups:
+        accepted: list[str] = []
+        for item in items:
+            if _is_benign_replica_claim(group_name, item):
+                filtered_claims.append(item)
+            else:
+                accepted.append(item)
+        signal_groups.append((group_name, accepted, strength))
+
     independent_groups = sum(bool(items) for _, items, _ in signal_groups)
     material_groups = sum(
         bool(items) for _, items, strength in signal_groups if strength != "weak"
     )
     model_confirmed_replica = (
         triage.assessment == "likely_replica"
-        and triage.replica_probability >= 65
-        and independent_groups >= 2
+        and triage.replica_probability >= 80
+        and independent_groups >= 3
+        and material_groups >= 2
     )
     high_confidence_multisignal_replica = (
         triage.assessment == "uncertain"
         and triage.app_confidence >= 75
-        and triage.replica_probability >= 35
+        and triage.replica_probability >= 70
         and independent_groups >= 3
         and material_groups >= 2
     )
@@ -660,13 +728,22 @@ def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
                 )
             )
 
-    has_signal = bool(evidence)
+    has_material_signal = any(
+        item.strength in {"moderate", "strong"} for item in evidence
+    )
     assessment = (
         "clear_manipulation"
         if confirmed_replica
         else "uncertain"
-        if has_signal or triage.assessment == "uncertain" or triage.replica_probability > 25
+        if has_material_signal
         else "no_evidence_of_manipulation"
+    )
+    calibrated_probability = (
+        max(70, triage.replica_probability)
+        if confirmed_replica
+        else triage.replica_probability
+        if has_material_signal
+        else min(25, triage.replica_probability)
     )
     headline = (triage.headline_text or "").casefold()
     is_success = "success" in headline or "paid" in headline or "sent" in headline
@@ -690,12 +767,11 @@ def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
         ),
         tampering_evidence=evidence,
         impossible_inconsistencies=[],
-        benign_limitations=triage.benign_explanations,
+        benign_limitations=triage.benign_explanations
+        + [f"Benign interoperability or presentation variant: {item}" for item in filtered_claims],
         content_risk_signals=[],
         authenticity_assessment=assessment,
-        fake_probability=max(70, triage.replica_probability)
-        if confirmed_replica
-        else triage.replica_probability,
+        fake_probability=calibrated_probability,
         confidence=triage.confidence,
         reasons=triage.reasons,
     )
@@ -817,7 +893,10 @@ def _needs_review(observation: PaymentObservation) -> bool:
         (
             observation.authenticity_assessment != "no_evidence_of_manipulation",
             observation.fake_probability > 25,
-            bool(observation.tampering_evidence),
+            any(
+                item.strength in {"moderate", "strong"}
+                for item in observation.tampering_evidence
+            ),
             bool(observation.impossible_inconsistencies),
             observation.readability != "clear",
             observation.confidence != "high",
