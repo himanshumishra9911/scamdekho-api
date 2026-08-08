@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import logging
 import os
+from dataclasses import dataclass
 from statistics import mean
 from typing import Literal
 
@@ -31,11 +33,11 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v4"
+ANALYSIS_VERSION = "payment-vision-v5"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.6-sol")
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.6-sol")
 ADJUDICATOR_MODEL = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL", "gpt-5.6-sol")
-REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "always").strip().lower()
+REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "suspicious").strip().lower()
 ADJUDICATOR_MODE = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODE", "adaptive").strip().lower()
 BASE_REASONING_EFFORT = os.getenv("PAYMENT_SCREENSHOT_REASONING_EFFORT", "high")
 PRIMARY_REASONING_EFFORT = os.getenv(
@@ -51,9 +53,34 @@ ADJUDICATOR_REASONING_MODE = os.getenv(
     "PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_MODE", "standard"
 ).strip().lower()
 IMAGE_DETAIL = os.getenv("PAYMENT_SCREENSHOT_IMAGE_DETAIL", "original")
+OUTPUT_VERBOSITY = (
+    os.getenv("PAYMENT_SCREENSHOT_OUTPUT_VERBOSITY", "low").strip().lower()
+)
+if OUTPUT_VERBOSITY not in {"low", "medium", "high"}:
+    OUTPUT_VERBOSITY = "low"
 MODEL_TIMEOUT_SECONDS = float(os.getenv("PAYMENT_SCREENSHOT_MODEL_TIMEOUT", "75"))
 MAX_IMAGE_PIXELS = int(os.getenv("PAYMENT_SCREENSHOT_MAX_PIXELS", "40000000"))
 MAX_ANALYSIS_VIEWS = max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_MAX_VIEWS", "3"))))
+PRIMARY_MAX_ANALYSIS_VIEWS = min(
+    MAX_ANALYSIS_VIEWS,
+    max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_PRIMARY_MAX_VIEWS", "1")))),
+)
+REVIEW_MAX_ANALYSIS_VIEWS = min(
+    MAX_ANALYSIS_VIEWS,
+    max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_REVIEW_MAX_VIEWS", "3")))),
+)
+ADJUDICATOR_MAX_ANALYSIS_VIEWS = min(
+    MAX_ANALYSIS_VIEWS,
+    max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_VIEWS", "3")))),
+)
+
+# Standard API prices per one million tokens. These values are used only for
+# request telemetry; billing remains authoritative in the OpenAI dashboard.
+MODEL_PRICING_USD_PER_MTOK = {
+    "gpt-5.6-sol": {"input": 5.0, "cached_input": 0.5, "output": 30.0},
+    "gpt-5.6-terra": {"input": 2.5, "cached_input": 0.25, "output": 15.0},
+    "gpt-5.6-luna": {"input": 1.0, "cached_input": 0.1, "output": 6.0},
+}
 
 
 class ExtractedFields(BaseModel):
@@ -110,6 +137,21 @@ class PaymentObservation(BaseModel):
     fake_probability: int = Field(ge=0, le=100)
     confidence: Literal["low", "medium", "high"]
     reasons: list[str]
+
+
+@dataclass
+class ModelPassResult:
+    observation: PaymentObservation
+    model: str
+    view_count: int
+    role: str = ""
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float | None = None
 
 
 SYSTEM_PROMPT = """You assess whether an Indian payment screenshot was fabricated or edited. This includes a coherent screen rendered by a fake or clone payment app, not only a pasted value in a real-app screenshot.
@@ -277,10 +319,15 @@ def _encode_png(image: Image.Image) -> bytes:
     return output.getvalue()
 
 
-def _make_analysis_views(image_bytes: bytes, media_type: str) -> list[AnalysisView]:
+def _make_analysis_views(
+    image_bytes: bytes,
+    media_type: str,
+    max_views: int | None = None,
+) -> list[AnalysisView]:
     """Keep the full image and add overlapping native-resolution crops for tiny text."""
+    view_limit = MAX_ANALYSIS_VIEWS if max_views is None else max(1, min(3, max_views))
     views: list[AnalysisView] = [("Full screenshot", image_bytes, media_type)]
-    if MAX_ANALYSIS_VIEWS == 1:
+    if view_limit == 1:
         return views
 
     with Image.open(io.BytesIO(image_bytes)) as image:
@@ -301,9 +348,95 @@ def _make_analysis_views(image_bytes: bytes, media_type: str) -> list[AnalysisVi
         else:
             return views
 
-        for label, crop in crops[: MAX_ANALYSIS_VIEWS - 1]:
+        for label, crop in crops[: view_limit - 1]:
             views.append((label, _encode_png(crop), "image/png"))
     return views
+
+
+def _usage_value(container: object, name: str) -> int:
+    if container is None:
+        return 0
+    if isinstance(container, dict):
+        value = container.get(name, 0)
+    else:
+        value = getattr(container, name, 0)
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _model_pricing(model: str) -> dict[str, float] | None:
+    for model_prefix, prices in MODEL_PRICING_USD_PER_MTOK.items():
+        if model == model_prefix or model.startswith(f"{model_prefix}-"):
+            return prices
+    return None
+
+
+def _estimate_cost_usd(
+    model: str,
+    input_tokens: int,
+    cached_input_tokens: int,
+    cache_write_tokens: int,
+    output_tokens: int,
+) -> float | None:
+    prices = _model_pricing(model)
+    if prices is None:
+        return None
+
+    cached = min(input_tokens, cached_input_tokens)
+    uncached = max(0, input_tokens - cached)
+    # Cache-write tokens are already input tokens; add only the 25% write premium.
+    cost = (
+        uncached * prices["input"]
+        + cached * prices["cached_input"]
+        + cache_write_tokens * prices["input"] * 0.25
+        + output_tokens * prices["output"]
+    ) / 1_000_000
+    return round(cost, 6)
+
+
+def _model_pass_result(
+    response: object,
+    observation: PaymentObservation,
+    model: str,
+    view_count: int,
+) -> ModelPassResult:
+    usage = getattr(response, "usage", None)
+    input_details = (
+        usage.get("input_tokens_details")
+        if isinstance(usage, dict)
+        else getattr(usage, "input_tokens_details", None)
+    )
+    output_details = (
+        usage.get("output_tokens_details")
+        if isinstance(usage, dict)
+        else getattr(usage, "output_tokens_details", None)
+    )
+    input_tokens = _usage_value(usage, "input_tokens")
+    cached_input_tokens = _usage_value(input_details, "cached_tokens")
+    cache_write_tokens = _usage_value(input_details, "cache_write_tokens")
+    output_tokens = _usage_value(usage, "output_tokens")
+    reasoning_tokens = _usage_value(output_details, "reasoning_tokens")
+    total_tokens = _usage_value(usage, "total_tokens") or input_tokens + output_tokens
+    return ModelPassResult(
+        observation=observation,
+        model=model,
+        view_count=view_count,
+        input_tokens=input_tokens,
+        cached_input_tokens=cached_input_tokens,
+        cache_write_tokens=cache_write_tokens,
+        output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
+        total_tokens=total_tokens,
+        estimated_cost_usd=_estimate_cost_usd(
+            model,
+            input_tokens,
+            cached_input_tokens,
+            cache_write_tokens,
+            output_tokens,
+        ),
+    )
 
 
 def _run_model(
@@ -312,7 +445,7 @@ def _run_model(
     model: str,
     reasoning_effort: str,
     reasoning_mode: str = "standard",
-) -> PaymentObservation:
+) -> ModelPassResult:
     content: list[dict] = [{"type": "input_text", "text": prompt}]
     for label, view_bytes, view_media_type in image_views:
         content.extend(
@@ -337,6 +470,11 @@ def _run_model(
         ],
         "text_format": PaymentObservation,
         "max_output_tokens": 2600,
+        "verbosity": OUTPUT_VERBOSITY,
+        "prompt_cache_key": (
+            f"{ANALYSIS_VERSION}:{model}:"
+            f"{hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:12]}"
+        ),
         "store": False,
     }
     if model.startswith("gpt-5"):
@@ -348,7 +486,72 @@ def _run_model(
     response = get_client().responses.parse(**request_kwargs)
     if response.output_parsed is None:
         raise ValueError("The vision model did not return a usable forensic report.")
-    return response.output_parsed
+    return _model_pass_result(
+        response,
+        response.output_parsed,
+        model,
+        len(image_views),
+    )
+
+
+def _normalize_pass_result(
+    value: ModelPassResult | PaymentObservation,
+    role: str,
+    model: str,
+    view_count: int,
+) -> ModelPassResult:
+    # Accept a bare observation to keep the orchestration easy to unit-test and
+    # compatible with custom model adapters.
+    if isinstance(value, PaymentObservation):
+        value = ModelPassResult(
+            observation=value,
+            model=model,
+            view_count=view_count,
+            estimated_cost_usd=_estimate_cost_usd(model, 0, 0, 0, 0),
+        )
+    value.role = role
+    return value
+
+
+def _summarize_model_usage(passes: list[ModelPassResult]) -> dict:
+    known_costs = [
+        item.estimated_cost_usd
+        for item in passes
+        if item.estimated_cost_usd is not None
+    ]
+    estimated_cost = (
+        round(sum(known_costs), 6) if len(known_costs) == len(passes) else None
+    )
+    return {
+        "input_tokens": sum(item.input_tokens for item in passes),
+        "cached_input_tokens": sum(item.cached_input_tokens for item in passes),
+        "cache_write_tokens": sum(item.cache_write_tokens for item in passes),
+        "output_tokens": sum(item.output_tokens for item in passes),
+        "reasoning_tokens": sum(item.reasoning_tokens for item in passes),
+        "total_tokens": sum(item.total_tokens for item in passes),
+        "estimated_cost_usd": estimated_cost,
+        "request_estimated_cost_usd": estimated_cost,
+        "cache_reused": False,
+        "pricing_note": (
+            "Estimate from configured standard list prices; "
+            "OpenAI billing is authoritative."
+        ),
+        "passes": [
+            {
+                "role": item.role,
+                "model": item.model,
+                "views": item.view_count,
+                "input_tokens": item.input_tokens,
+                "cached_input_tokens": item.cached_input_tokens,
+                "cache_write_tokens": item.cache_write_tokens,
+                "output_tokens": item.output_tokens,
+                "reasoning_tokens": item.reasoning_tokens,
+                "total_tokens": item.total_tokens,
+                "estimated_cost_usd": item.estimated_cost_usd,
+            }
+            for item in passes
+        ],
+    }
 
 
 def _needs_review(observation: PaymentObservation) -> bool:
@@ -359,10 +562,12 @@ def _needs_review(observation: PaymentObservation) -> bool:
     return any(
         (
             observation.authenticity_assessment != "no_evidence_of_manipulation",
-            observation.fake_probability >= 30,
+            observation.fake_probability > 25,
             bool(observation.tampering_evidence),
             bool(observation.impossible_inconsistencies),
             observation.readability != "clear",
+            observation.confidence != "high",
+            observation.screenshot_kind in {"other", "unreadable"},
             observation.app_confidence < 50,
         )
     )
@@ -388,7 +593,17 @@ def _needs_adjudication(observations: list[PaymentObservation]) -> bool:
         return False
     if ADJUDICATOR_MODE == "always":
         return True
-    return len(observations) < 2 or not all(_is_clean_observation(item) for item in observations)
+    if not observations:
+        return False
+    if len(observations) == 1:
+        # A clearly clean first pass should be the cheap path. A lone uncertain
+        # or fake-looking result still gets an independent attempt.
+        return not _is_clean_observation(observations[0])
+    if all(_is_clean_observation(item) for item in observations):
+        return False
+    if all(_has_confirmed_fake_evidence(item) for item in observations):
+        return False
+    return True
 
 
 def _unique_strings(values: list[str]) -> list[str]:
@@ -478,7 +693,14 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
             + ["The available visual evidence is not conclusive enough for a genuine or fake verdict."]
         )
     else:
-        reason_text = ["The independent reviews found no clear, specific evidence of screenshot fabrication or editing."]
+        review_wording = (
+            "The review found"
+            if len(observations) == 1
+            else "The independent reviews found"
+        )
+        reason_text = [
+            f"{review_wording} no clear, specific evidence of screenshot fabrication or editing."
+        ]
 
     why = [{"en": item, "hi": ""} for item in reason_text[:6]]
     visual_forensics = [
@@ -538,20 +760,33 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
 
 async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     prepared_bytes, media_type, dimensions = _prepare_image(image_bytes)
-    image_views = _make_analysis_views(prepared_bytes, media_type)
     loop = asyncio.get_running_loop()
     observations: list[PaymentObservation] = []
+    model_passes: list[ModelPassResult] = []
     failures: list[Exception] = []
     attempted_passes = 0
+    attempted_view_counts: dict[str, int] = {}
     review_disabled = REVIEW_MODE in {"off", "false", "0", "disabled"}
+    view_cache: dict[int, list[AnalysisView]] = {}
+
+    def get_views(limit: int) -> list[AnalysisView]:
+        if limit not in view_cache:
+            view_cache[limit] = _make_analysis_views(
+                prepared_bytes,
+                media_type,
+                max_views=limit,
+            )
+        return view_cache[limit]
 
     async def execute_pass(
+        role: str,
+        image_views: list[AnalysisView],
         prompt: str,
         model: str,
         effort: str,
         mode: str = "standard",
-    ) -> PaymentObservation:
-        return await loop.run_in_executor(
+    ) -> ModelPassResult:
+        raw_result = await loop.run_in_executor(
             None,
             _run_model,
             image_views,
@@ -560,12 +795,36 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             effort,
             mode,
         )
+        return _normalize_pass_result(
+            raw_result,
+            role,
+            model,
+            len(image_views),
+        )
 
     if REVIEW_MODE == "always":
+        primary_views = get_views(PRIMARY_MAX_ANALYSIS_VIEWS)
+        review_views = get_views(REVIEW_MAX_ANALYSIS_VIEWS)
         attempted_passes += 2
+        attempted_view_counts.update(
+            primary=len(primary_views),
+            review=len(review_views),
+        )
         initial_results = await asyncio.gather(
-            execute_pass(ANALYST_PROMPT, PRIMARY_MODEL, PRIMARY_REASONING_EFFORT),
-            execute_pass(REPLICA_REVIEW_PROMPT, REVIEW_MODEL, REVIEW_REASONING_EFFORT),
+            execute_pass(
+                "primary",
+                primary_views,
+                ANALYST_PROMPT,
+                PRIMARY_MODEL,
+                PRIMARY_REASONING_EFFORT,
+            ),
+            execute_pass(
+                "review",
+                review_views,
+                REPLICA_REVIEW_PROMPT,
+                REVIEW_MODEL,
+                REVIEW_REASONING_EFFORT,
+            ),
             return_exceptions=True,
         )
         for item in initial_results:
@@ -573,14 +832,22 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
                 logger.warning("Payment screenshot ensemble pass failed: %s", item)
                 failures.append(item if isinstance(item, Exception) else RuntimeError(str(item)))
             else:
-                observations.append(item)
+                model_passes.append(item)
+                observations.append(item.observation)
     else:
+        primary_views = get_views(PRIMARY_MAX_ANALYSIS_VIEWS)
         attempted_passes += 1
+        attempted_view_counts["primary"] = len(primary_views)
         try:
-            primary = await execute_pass(
-                ANALYST_PROMPT, PRIMARY_MODEL, PRIMARY_REASONING_EFFORT
+            primary_pass = await execute_pass(
+                "primary",
+                primary_views,
+                ANALYST_PROMPT,
+                PRIMARY_MODEL,
+                PRIMARY_REASONING_EFFORT,
             )
-            observations.append(primary)
+            model_passes.append(primary_pass)
+            observations.append(primary_pass.observation)
         except Exception as exc:
             logger.warning("Payment screenshot primary pass failed: %s", exc)
             failures.append(exc)
@@ -589,32 +856,40 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             not observations or _needs_review(observations[0])
         )
         if review_required:
+            review_views = get_views(REVIEW_MAX_ANALYSIS_VIEWS)
             attempted_passes += 1
+            attempted_view_counts["review"] = len(review_views)
             try:
-                observations.append(
-                    await execute_pass(
-                        REPLICA_REVIEW_PROMPT,
-                        REVIEW_MODEL,
-                        REVIEW_REASONING_EFFORT,
-                    )
+                review_pass = await execute_pass(
+                    "review",
+                    review_views,
+                    REPLICA_REVIEW_PROMPT,
+                    REVIEW_MODEL,
+                    REVIEW_REASONING_EFFORT,
                 )
+                model_passes.append(review_pass)
+                observations.append(review_pass.observation)
             except Exception as exc:
                 logger.warning("Payment screenshot replica-review pass failed: %s", exc)
                 failures.append(exc)
 
     adjudicator_performed = False
     if not review_disabled and observations and _needs_adjudication(observations):
+        adjudicator_views = get_views(ADJUDICATOR_MAX_ANALYSIS_VIEWS)
         attempted_passes += 1
+        attempted_view_counts["adjudicator"] = len(adjudicator_views)
         adjudicator_performed = True
         try:
-            observations.append(
-                await execute_pass(
-                    ADJUDICATOR_PROMPT,
-                    ADJUDICATOR_MODEL,
-                    ADJUDICATOR_REASONING_EFFORT,
-                    ADJUDICATOR_REASONING_MODE,
-                )
+            adjudicator_pass = await execute_pass(
+                "adjudicator",
+                adjudicator_views,
+                ADJUDICATOR_PROMPT,
+                ADJUDICATOR_MODEL,
+                ADJUDICATOR_REASONING_EFFORT,
+                ADJUDICATOR_REASONING_MODE,
             )
+            model_passes.append(adjudicator_pass)
+            observations.append(adjudicator_pass.observation)
         except Exception as exc:
             logger.warning("Payment screenshot adjudicator pass failed: %s", exc)
             failures.append(exc)
@@ -646,7 +921,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     result.update(
         {
             "analysis_version": ANALYSIS_VERSION,
-            "review_performed": len(observations) > 1,
+            "review_performed": "review" in attempted_view_counts,
             "review_status": (
                 "failed"
                 if failures
@@ -659,8 +934,11 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
                 "successful_passes": len(observations),
                 "failed_passes": len(failures),
                 "adjudicator_performed": adjudicator_performed,
-                "analysis_views": len(image_views),
+                "analysis_views": max(attempted_view_counts.values(), default=0),
+                "view_counts": attempted_view_counts,
+                "cascade_path": [item.role for item in model_passes],
             },
+            "model_usage": _summarize_model_usage(model_passes),
             "image_dimensions": {"width": dimensions[0], "height": dimensions[1]},
         }
     )

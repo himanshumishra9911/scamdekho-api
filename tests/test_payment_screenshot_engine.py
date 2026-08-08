@@ -8,6 +8,7 @@ from PIL import Image
 from app.services.payment_screenshot_engine import (
     PaymentObservation,
     SYSTEM_PROMPT,
+    _estimate_cost_usd,
     _make_analysis_views,
     _needs_review,
     _prepare_image,
@@ -349,13 +350,25 @@ def test_model_request_uses_original_detail_structured_output_and_optional_pro_m
     class FakeResponses:
         def parse(self, **kwargs):
             captured.update(kwargs)
-            return SimpleNamespace(output_parsed=observation())
+            return SimpleNamespace(
+                output_parsed=observation(),
+                usage=SimpleNamespace(
+                    input_tokens=4000,
+                    input_tokens_details=SimpleNamespace(
+                        cached_tokens=1000,
+                        cache_write_tokens=0,
+                    ),
+                    output_tokens=900,
+                    output_tokens_details=SimpleNamespace(reasoning_tokens=600),
+                    total_tokens=4900,
+                ),
+            )
 
     fake_client = SimpleNamespace(responses=FakeResponses())
     monkeypatch.setattr(engine, "get_client", lambda: fake_client)
     monkeypatch.setattr(engine, "IMAGE_DETAIL", "original")
 
-    engine._run_model(
+    model_pass = engine._run_model(
         [("Full screenshot", b"image-bytes", "image/png")],
         "Inspect it",
         "gpt-5.6-sol",
@@ -370,6 +383,18 @@ def test_model_request_uses_original_detail_structured_output_and_optional_pro_m
     assert image_item["type"] == "input_image"
     assert image_item["detail"] == "original"
     assert captured["store"] is False
+    assert captured["verbosity"] == "low"
+    assert captured["prompt_cache_key"].startswith("payment-vision-v5:gpt-5.6-sol:")
+    assert model_pass.input_tokens == 4000
+    assert model_pass.cached_input_tokens == 1000
+    assert model_pass.reasoning_tokens == 600
+    assert model_pass.estimated_cost_usd == pytest.approx(0.0425)
+
+
+def test_cost_estimate_applies_cached_discount_and_cache_write_premium():
+    assert _estimate_cost_usd("gpt-5.6-sol", 1000, 200, 100, 100) == pytest.approx(
+        0.007225
+    )
 
 
 def test_tiny_images_are_rejected_before_paid_model_call():
@@ -433,13 +458,75 @@ def test_clean_parallel_consensus_skips_costly_adjudicator(monkeypatch):
 
     assert result["verdict"] == "SAFE"
     assert calls == 2
-    assert result["ensemble"] == {
-        "attempted_passes": 2,
-        "successful_passes": 2,
-        "failed_passes": 0,
-        "adjudicator_performed": False,
-        "analysis_views": 3,
-    }
+    assert result["ensemble"]["attempted_passes"] == 2
+    assert result["ensemble"]["successful_passes"] == 2
+    assert result["ensemble"]["failed_passes"] == 0
+    assert result["ensemble"]["adjudicator_performed"] is False
+    assert result["ensemble"]["analysis_views"] == 3
+    assert result["ensemble"]["view_counts"] == {"primary": 1, "review": 3}
+    assert result["ensemble"]["cascade_path"] == ["primary", "review"]
+
+
+def test_clean_default_cascade_stops_after_one_sol_full_image_pass(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGB", (300, 600), "white").save(output, format="PNG")
+    calls = []
+
+    def fake_run_model(image_views, _prompt, model, effort, _mode):
+        calls.append((len(image_views), model, effort))
+        return observation(fake_probability=8)
+
+    monkeypatch.setattr(engine, "_run_model", fake_run_model)
+    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5.6-sol")
+    monkeypatch.setattr(engine, "REVIEW_MODE", "suspicious")
+    monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
+
+    result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
+
+    assert result["verdict"] == "SAFE"
+    assert calls == [(1, "gpt-5.6-sol", "high")]
+    assert result["review_status"] == "not_required"
+    assert result["ensemble"]["cascade_path"] == ["primary"]
+    assert result["ensemble"]["view_counts"] == {"primary": 1}
+
+
+def test_fake_candidate_escalates_to_sol_with_focus_views_and_requires_consensus(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGB", (300, 600), "white").save(output, format="PNG")
+    calls = []
+    confirmed = observation(
+        tampering_evidence=[
+            {
+                "category": "overlay",
+                "strength": "strong",
+                "description": "A hard paste boundary surrounds the amount",
+                "location": "amount row",
+                "observed_text": "₹5,000",
+            }
+        ],
+        authenticity_assessment="clear_manipulation",
+        fake_probability=92,
+    )
+
+    def fake_run_model(image_views, _prompt, model, effort, _mode):
+        calls.append((len(image_views), model, effort))
+        return confirmed
+
+    monkeypatch.setattr(engine, "_run_model", fake_run_model)
+    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5.6-sol")
+    monkeypatch.setattr(engine, "REVIEW_MODEL", "gpt-5.6-sol")
+    monkeypatch.setattr(engine, "REVIEW_MODE", "suspicious")
+    monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
+
+    result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
+
+    assert result["verdict"] == "SCAM"
+    assert calls == [
+        (1, "gpt-5.6-sol", "high"),
+        (3, "gpt-5.6-sol", "high"),
+    ]
+    assert result["evidence_summary"]["confirmed_fake_votes"] == 2
+    assert result["ensemble"]["adjudicator_performed"] is False
 
 
 def test_uncertain_parallel_result_triggers_independent_adjudicator(monkeypatch):

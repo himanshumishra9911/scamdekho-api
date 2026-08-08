@@ -140,6 +140,12 @@ async def check_payment_screenshot(
     cached = await get_cached_scan("payment_screenshot", cache_payload)
     if cached:
         cached["from_cache"] = True
+        if isinstance(cached.get("model_usage"), dict):
+            cached["model_usage"] = {
+                **cached["model_usage"],
+                "request_estimated_cost_usd": 0.0,
+                "cache_reused": True,
+            }
         cached["_request_id"] = request_id
         return cached
 
@@ -199,6 +205,7 @@ async def check_payment_screenshot(
                 "review_performed": result.get("review_performed", False),
                 "review_status":    result.get("review_status"),
                 "ensemble":         result.get("ensemble", {}),
+                "model_usage":      result.get("model_usage", {}),
             }
         )
     except Exception as e:
