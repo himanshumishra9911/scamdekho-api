@@ -60,6 +60,12 @@ def replica_triage(**overrides) -> ReplicaTriage:
         "headline_text": "Transaction Successful",
         "transaction_label": "PhonePe Transaction ID",
         "transaction_id": "T2608082154187816861687",
+        "amount": "₹1",
+        "upi_id": "9956809088@ptyes",
+        "recipient_name": "Shikhar Tripathi",
+        "sender_name": "Himanshu Mishra",
+        "bank_name": "State Bank of India",
+        "timestamp": "8 August 2026 at 9:54 PM",
         "readability": "clear",
         "wording_errors": [],
         "app_identity_conflicts": [],
@@ -178,10 +184,10 @@ def test_gpt5_nano_omits_unsupported_reasoning_parameters():
     }
 
 
-def test_nano_primary_meets_per_check_budget_on_observed_production_usage():
-    cost = _estimate_cost_usd("gpt-5-nano", 2354, 1262, 1089, 901)
+def test_compact_54_nano_fast_path_meets_per_check_budget_envelope():
+    cost = _estimate_cost_usd("gpt-5.4-nano", 2000, 0, 0, 500)
 
-    assert cost == pytest.approx(0.000435)
+    assert cost == pytest.approx(0.001025)
     assert cost < engine.BUDGET_TARGET_USD_PER_CHECK
 
 
@@ -511,18 +517,18 @@ def test_failed_required_review_cannot_leave_a_scam_verdict(monkeypatch):
         authenticity_assessment="clear_manipulation",
         fake_probability=90,
     )
-    calls = 0
+    triage_calls = 0
 
-    def fake_run_model(*_args):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
+    def fake_run_triage(*_args):
+        nonlocal triage_calls
+        triage_calls += 1
+        if triage_calls == 1:
             return primary
         raise RuntimeError("review unavailable")
 
-    monkeypatch.setattr(engine, "_run_model", fake_run_model)
+    monkeypatch.setattr(engine, "_run_replica_triage", fake_run_triage)
     monkeypatch.setattr(
-        engine, "_run_replica_triage", lambda *_args: observation(fake_probability=8)
+        engine, "_run_model", lambda *_args: (_ for _ in ()).throw(RuntimeError("adjudicator unavailable"))
     )
     monkeypatch.setattr(engine, "REVIEW_MODE", "suspicious")
 
@@ -536,55 +542,46 @@ def test_failed_required_review_cannot_leave_a_scam_verdict(monkeypatch):
 def test_clean_parallel_consensus_skips_costly_adjudicator(monkeypatch):
     output = io.BytesIO()
     Image.new("RGB", (300, 600), "white").save(output, format="PNG")
-    calls = 0
+    calls = []
 
-    def fake_run_model(*_args):
-        nonlocal calls
-        calls += 1
+    def fake_run_triage(image_views, _prompt, model, effort, detail, _tokens):
+        calls.append((len(image_views), model, effort, detail))
         return observation(fake_probability=8)
 
-    monkeypatch.setattr(engine, "_run_model", fake_run_model)
-    monkeypatch.setattr(
-        engine, "_run_replica_triage", lambda *_args: observation(fake_probability=8)
-    )
+    monkeypatch.setattr(engine, "_run_replica_triage", fake_run_triage)
     monkeypatch.setattr(engine, "REVIEW_MODE", "always")
     monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
 
     result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
 
     assert result["verdict"] == "SAFE"
-    assert calls == 2
-    assert result["ensemble"]["attempted_passes"] == 3
-    assert result["ensemble"]["successful_passes"] == 3
+    assert calls == [
+        (1, "gpt-5.4-nano", "none", "low"),
+        (2, "gpt-5.4-mini", "low", "auto"),
+    ]
+    assert result["ensemble"]["attempted_passes"] == 2
+    assert result["ensemble"]["successful_passes"] == 2
     assert result["ensemble"]["failed_passes"] == 0
     assert result["ensemble"]["adjudicator_performed"] is False
     assert result["ensemble"]["analysis_views"] == 2
     assert result["ensemble"]["view_counts"] == {
         "primary": 1,
-        "replica_triage": 1,
         "review": 2,
     }
-    assert result["ensemble"]["cascade_path"] == [
-        "primary",
-        "replica_triage",
-        "review",
-    ]
+    assert result["ensemble"]["cascade_path"] == ["primary", "review"]
 
 
-def test_clean_default_cascade_uses_parallel_nano_checks_without_review(monkeypatch):
+def test_clean_default_cascade_uses_one_nano_triage_without_review(monkeypatch):
     output = io.BytesIO()
     Image.new("RGB", (300, 600), "white").save(output, format="PNG")
     calls = []
 
-    def fake_run_model(image_views, _prompt, model, effort, _mode):
-        calls.append((len(image_views), model, effort))
+    def fake_run_triage(image_views, _prompt, model, effort, detail, tokens):
+        calls.append((len(image_views), model, effort, detail, tokens))
         return observation(fake_probability=8)
 
-    monkeypatch.setattr(engine, "_run_model", fake_run_model)
-    monkeypatch.setattr(
-        engine, "_run_replica_triage", lambda *_args: observation(fake_probability=7)
-    )
-    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5-nano")
+    monkeypatch.setattr(engine, "_run_replica_triage", fake_run_triage)
+    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5.4-nano")
     monkeypatch.setattr(engine, "PRIMARY_REASONING_EFFORT", "none")
     monkeypatch.setattr(engine, "REVIEW_MODE", "suspicious")
     monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
@@ -592,13 +589,10 @@ def test_clean_default_cascade_uses_parallel_nano_checks_without_review(monkeypa
     result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
 
     assert result["verdict"] == "SAFE"
-    assert calls == [(1, "gpt-5-nano", "none")]
+    assert calls == [(1, "gpt-5.4-nano", "none", "low", 1100)]
     assert result["review_status"] == "not_required"
-    assert result["ensemble"]["cascade_path"] == ["primary", "replica_triage"]
-    assert result["ensemble"]["view_counts"] == {
-        "primary": 1,
-        "replica_triage": 1,
-    }
+    assert result["ensemble"]["cascade_path"] == ["primary"]
+    assert result["ensemble"]["view_counts"] == {"primary": 1}
 
 
 def test_fake_candidate_escalates_to_mini_with_focus_views_and_requires_consensus(monkeypatch):
@@ -619,13 +613,12 @@ def test_fake_candidate_escalates_to_mini_with_focus_views_and_requires_consensu
         fake_probability=92,
     )
 
-    def fake_run_model(image_views, _prompt, model, effort, _mode):
-        calls.append((len(image_views), model, effort))
+    def fake_run_triage(image_views, _prompt, model, effort, detail, _tokens):
+        calls.append((len(image_views), model, effort, detail))
         return confirmed
 
-    monkeypatch.setattr(engine, "_run_model", fake_run_model)
-    monkeypatch.setattr(engine, "_run_replica_triage", lambda *_args: confirmed)
-    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5-nano")
+    monkeypatch.setattr(engine, "_run_replica_triage", fake_run_triage)
+    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5.4-nano")
     monkeypatch.setattr(engine, "PRIMARY_REASONING_EFFORT", "none")
     monkeypatch.setattr(engine, "REVIEW_MODEL", "gpt-5.4-mini")
     monkeypatch.setattr(engine, "REVIEW_REASONING_EFFORT", "low")
@@ -636,17 +629,17 @@ def test_fake_candidate_escalates_to_mini_with_focus_views_and_requires_consensu
 
     assert result["verdict"] == "SCAM"
     assert calls == [
-        (1, "gpt-5-nano", "none"),
-        (2, "gpt-5.4-mini", "low"),
+        (1, "gpt-5.4-nano", "none", "low"),
+        (2, "gpt-5.4-mini", "low", "auto"),
     ]
-    assert result["evidence_summary"]["confirmed_fake_votes"] == 3
+    assert result["evidence_summary"]["confirmed_fake_votes"] == 2
     assert result["ensemble"]["adjudicator_performed"] is False
 
 
 def test_uncertain_parallel_result_triggers_independent_adjudicator(monkeypatch):
     output = io.BytesIO()
     Image.new("RGB", (300, 600), "white").save(output, format="PNG")
-    responses = [
+    triage_responses = [
         observation(fake_probability=9),
         observation(
             authenticity_assessment="uncertain",
@@ -661,25 +654,29 @@ def test_uncertain_parallel_result_triggers_independent_adjudicator(monkeypatch)
                 }
             ],
         ),
-        observation(fake_probability=12),
     ]
-    calls = 0
+    triage_calls = 0
+    adjudicator_calls = 0
 
-    def fake_run_model(*_args):
-        nonlocal calls
-        item = responses[calls]
-        calls += 1
+    def fake_run_triage(*_args):
+        nonlocal triage_calls
+        item = triage_responses[triage_calls]
+        triage_calls += 1
         return item
 
+    def fake_run_model(*_args):
+        nonlocal adjudicator_calls
+        adjudicator_calls += 1
+        return observation(fake_probability=12)
+
     monkeypatch.setattr(engine, "_run_model", fake_run_model)
-    monkeypatch.setattr(
-        engine, "_run_replica_triage", lambda *_args: observation(fake_probability=7)
-    )
+    monkeypatch.setattr(engine, "_run_replica_triage", fake_run_triage)
     monkeypatch.setattr(engine, "REVIEW_MODE", "always")
     monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
 
     result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
 
-    assert calls == 3
+    assert triage_calls == 2
+    assert adjudicator_calls == 1
     assert result["verdict"] == "SUSPICIOUS"
     assert result["ensemble"]["adjudicator_performed"] is True

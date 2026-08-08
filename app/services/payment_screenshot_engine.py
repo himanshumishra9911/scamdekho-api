@@ -34,9 +34,9 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v8-diagnostic"
-PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5-nano")
-REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", "gpt-5-nano")
+ANALYSIS_VERSION = "payment-vision-v9"
+PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
+REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
 ADJUDICATOR_MODEL = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL", "gpt-5.6-luna")
 REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "suspicious").strip().lower()
@@ -82,7 +82,7 @@ ADJUDICATOR_MAX_ANALYSIS_VIEWS = min(
     max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_VIEWS", "2")))),
 )
 PRIMARY_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_PRIMARY_MAX_OUTPUT_TOKENS", "1100"))
-REPLICA_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_REPLICA_MAX_OUTPUT_TOKENS", "650"))
+REPLICA_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_REPLICA_MAX_OUTPUT_TOKENS", "1100"))
 REVIEW_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_REVIEW_MAX_OUTPUT_TOKENS", "1500"))
 ADJUDICATOR_MAX_OUTPUT_TOKENS = int(
     os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_OUTPUT_TOKENS", "1800")
@@ -168,6 +168,12 @@ class ReplicaTriage(BaseModel):
     headline_text: str | None
     transaction_label: str | None
     transaction_id: str | None
+    amount: str | None
+    upi_id: str | None
+    recipient_name: str | None
+    sender_name: str | None
+    bank_name: str | None
+    timestamp: str | None
     readability: Literal["clear", "partial", "unreadable"]
     wording_errors: list[str]
     app_identity_conflicts: list[str]
@@ -231,7 +237,7 @@ Use clear_manipulation only when at least one strong, specific item exists in ta
 
 REPLICA_TRIAGE_PROMPT = """Perform a compact, independent fake/clone payment-app triage.
 
-Quote the visible success heading, transaction-ID label, and transaction ID exactly without fixing spelling. Check four independent signal families: system wording, claimed-app identity/labels, provider-ID coherence, and mixed component/icon/bank styles. A fake-app render can look pixel-clean.
+Quote the visible success heading, transaction-ID label, and transaction ID exactly without fixing spelling. Extract the amount, UPI ID, names, bank, and timestamp when visible; otherwise use null. Check four independent signal families: system wording, claimed-app identity/labels, provider-ID coherence, and mixed component/icon/bank styles. A fake-app render can look pixel-clean.
 
 Do not enforce one remembered app template. A single typo, short/alphanumeric ID, missing field, unfamiliar layout, or cross-app UPI handle is never enough. Mark likely_replica only when at least two independent visible signal families conflict and benign app-version, merchant-flow, theme, language, accessibility, crop, or OCR explanations do not resolve the combination.
 
@@ -658,13 +664,13 @@ def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
         readability=triage.readability,
         payment_state="success" if is_success else "unknown",
         fields=ExtractedFields(
-            amount=None,
+            amount=triage.amount,
             transaction_id=triage.transaction_id,
-            upi_id=None,
-            recipient_name=None,
-            sender_name=None,
-            bank_name=None,
-            timestamp=None,
+            upi_id=triage.upi_id,
+            recipient_name=triage.recipient_name,
+            sender_name=triage.sender_name,
+            bank_name=triage.bank_name,
+            timestamp=triage.timestamp,
             status_text=triage.headline_text,
         ),
         tampering_evidence=evidence,
@@ -682,21 +688,26 @@ def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
 
 def _run_replica_triage(
     image_views: list[AnalysisView],
+    prompt: str,
+    model: str,
+    reasoning_effort: str,
+    image_detail: str,
+    max_output_tokens: int,
 ) -> ModelPassResult:
     response, triage, latency_ms = _run_typed_model(
         image_views,
-        REPLICA_TRIAGE_PROMPT,
-        REPLICA_MODEL,
-        REPLICA_REASONING_EFFORT,
+        prompt,
+        model,
+        reasoning_effort,
         "standard",
         ReplicaTriage,
-        _normalize_image_detail(REPLICA_IMAGE_DETAIL, "low"),
-        REPLICA_MAX_OUTPUT_TOKENS,
+        image_detail,
+        max_output_tokens,
     )
     return _model_pass_result(
         response,
         _replica_triage_to_observation(triage),
-        REPLICA_MODEL,
+        model,
         len(image_views),
         latency_ms,
     )
@@ -835,14 +846,6 @@ def _unique_strings(values: list[str]) -> list[str]:
             seen.add(key)
             result.append(clean)
     return result
-
-
-def _sanitized_failure_detail(exc: Exception) -> str:
-    detail = " ".join(str(exc).split())
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if api_key:
-        detail = detail.replace(api_key, "[redacted]")
-    return f"{type(exc).__name__}: {detail}"[:600]
 
 
 def _merge_fields(observations: list[PaymentObservation]) -> ExtractedFields:
@@ -1031,47 +1034,58 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         )
 
     async def execute_replica_triage(
+        role: str,
         image_views: list[AnalysisView],
+        prompt: str,
+        model: str,
+        effort: str,
+        detail: str,
+        max_output_tokens: int,
     ) -> ModelPassResult:
         raw_result = await loop.run_in_executor(
             None,
             _run_replica_triage,
             image_views,
+            prompt,
+            model,
+            effort,
+            detail,
+            max_output_tokens,
         )
         return _normalize_pass_result(
             raw_result,
-            "replica_triage",
-            REPLICA_MODEL,
+            role,
+            model,
             len(image_views),
         )
 
     primary_views = get_views(PRIMARY_MAX_ANALYSIS_VIEWS)
-    attempted_passes += 2
-    attempted_view_counts.update(
-        primary=len(primary_views),
-        replica_triage=len(primary_views),
-    )
+    attempted_passes += 1
+    attempted_view_counts["primary"] = len(primary_views)
     initial_tasks = [
-        execute_pass(
+        execute_replica_triage(
             "primary",
             primary_views,
-            ANALYST_PROMPT,
+            REPLICA_TRIAGE_PROMPT,
             PRIMARY_MODEL,
             PRIMARY_REASONING_EFFORT,
-        ),
-        execute_replica_triage(primary_views),
+            _normalize_image_detail(PRIMARY_IMAGE_DETAIL, "low"),
+            REPLICA_MAX_OUTPUT_TOKENS,
+        )
     ]
     if REVIEW_MODE == "always":
         review_views = get_views(REVIEW_MAX_ANALYSIS_VIEWS)
         attempted_passes += 1
         attempted_view_counts["review"] = len(review_views)
         initial_tasks.append(
-            execute_pass(
+            execute_replica_triage(
                 "review",
                 review_views,
-                REPLICA_REVIEW_PROMPT,
+                f"{REPLICA_TRIAGE_PROMPT}\n\n{REPLICA_REVIEW_PROMPT}",
                 REVIEW_MODEL,
                 REVIEW_REASONING_EFFORT,
+                _normalize_image_detail(REVIEW_IMAGE_DETAIL, "auto"),
+                REVIEW_MAX_OUTPUT_TOKENS,
             )
         )
 
@@ -1096,12 +1110,14 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             attempted_passes += 1
             attempted_view_counts["review"] = len(review_views)
             try:
-                review_pass = await execute_pass(
+                review_pass = await execute_replica_triage(
                     "review",
                     review_views,
-                    REPLICA_REVIEW_PROMPT,
+                    f"{REPLICA_TRIAGE_PROMPT}\n\n{REPLICA_REVIEW_PROMPT}",
                     REVIEW_MODEL,
                     REVIEW_REASONING_EFFORT,
+                    _normalize_image_detail(REVIEW_IMAGE_DETAIL, "auto"),
+                    REVIEW_MAX_OUTPUT_TOKENS,
                 )
                 model_passes.append(review_pass)
                 observations.append(review_pass.observation)
@@ -1178,9 +1194,6 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
                 "analysis_views": max(attempted_view_counts.values(), default=0),
                 "view_counts": attempted_view_counts,
                 "cascade_path": [item.role for item in model_passes],
-                "failure_details": [
-                    _sanitized_failure_detail(item) for item in failures
-                ],
             },
             "model_usage": model_usage,
             "image_dimensions": {"width": dimensions[0], "height": dimensions[1]},
