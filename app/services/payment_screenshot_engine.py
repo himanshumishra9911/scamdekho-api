@@ -36,9 +36,10 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v16"
+ANALYSIS_VERSION = "payment-vision-v17"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
+CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
 ADJUDICATOR_MODEL = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL", "gpt-5.6-luna")
 REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "suspicious").strip().lower()
@@ -49,6 +50,9 @@ PRIMARY_REASONING_EFFORT = os.getenv(
 )
 REPLICA_REASONING_EFFORT = os.getenv(
     "PAYMENT_SCREENSHOT_REPLICA_REASONING_EFFORT", "none"
+)
+CHEAP_REVIEW_REASONING_EFFORT = os.getenv(
+    "PAYMENT_SCREENSHOT_CHEAP_REVIEW_REASONING_EFFORT", "none"
 )
 REVIEW_REASONING_EFFORT = os.getenv(
     "PAYMENT_SCREENSHOT_REVIEW_REASONING_EFFORT", "low"
@@ -85,6 +89,9 @@ ADJUDICATOR_MAX_ANALYSIS_VIEWS = min(
 )
 PRIMARY_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_PRIMARY_MAX_OUTPUT_TOKENS", "1100"))
 REPLICA_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_REPLICA_MAX_OUTPUT_TOKENS", "1100"))
+CHEAP_REVIEW_MAX_OUTPUT_TOKENS = int(
+    os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MAX_OUTPUT_TOKENS", "1100")
+)
 REVIEW_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_REVIEW_MAX_OUTPUT_TOKENS", "1500"))
 ADJUDICATOR_MAX_OUTPUT_TOKENS = int(
     os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_OUTPUT_TOKENS", "1800")
@@ -1145,6 +1152,19 @@ def _apply_provider_identifier_consensus(
     return applied
 
 
+def _needs_precision_review(observations: list[PaymentObservation]) -> bool:
+    return any(
+        _has_malformed_explicit_transaction_id_review_signal(observation)
+        or _has_confirmed_fake_evidence(observation)
+        or bool(observation.impossible_inconsistencies)
+        or any(
+            evidence.strength in {"moderate", "strong"}
+            for evidence in observation.tampering_evidence
+        )
+        for observation in observations
+    )
+
+
 def _candidate_signal_suffix(observations: list[PaymentObservation]) -> str:
     candidate_signals = _unique_strings(
         [
@@ -1424,6 +1444,18 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             review_views = get_views(REVIEW_MAX_ANALYSIS_VIEWS)
             attempted_passes += 1
             attempted_view_counts["review"] = len(review_views)
+            precision_review = _needs_precision_review(observations)
+            selected_review_model = REVIEW_MODEL if precision_review else CHEAP_REVIEW_MODEL
+            selected_review_effort = (
+                REVIEW_REASONING_EFFORT
+                if precision_review
+                else CHEAP_REVIEW_REASONING_EFFORT
+            )
+            selected_review_tokens = (
+                REVIEW_MAX_OUTPUT_TOKENS
+                if precision_review
+                else CHEAP_REVIEW_MAX_OUTPUT_TOKENS
+            )
             review_prompt = (
                 f"{REPLICA_TRIAGE_PROMPT}\n\n{REPLICA_REVIEW_PROMPT}"
                 + _candidate_signal_suffix(observations)
@@ -1433,10 +1465,10 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
                     "review",
                     review_views,
                     review_prompt,
-                    REVIEW_MODEL,
-                    REVIEW_REASONING_EFFORT,
+                    selected_review_model,
+                    selected_review_effort,
                     _normalize_image_detail(REVIEW_IMAGE_DETAIL, "auto"),
-                    REVIEW_MAX_OUTPUT_TOKENS,
+                    selected_review_tokens,
                 )
                 model_passes.append(review_pass)
                 observations.append(review_pass.observation)
