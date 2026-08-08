@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import sys
 from collections import Counter, defaultdict
+from math import sqrt
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -77,8 +79,35 @@ def find_group_label_conflicts(rows: list[dict]) -> list[str]:
     return sorted(group for group, labels in group_labels.items() if len(labels) > 1)
 
 
+def find_content_hash_leakage(rows: list[dict], manifest_dir: Path) -> list[str]:
+    """Catch exact image reuse across splits even when group IDs were entered incorrectly."""
+    hash_splits: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        image_path = (manifest_dir / str(row["file"])).resolve()
+        if not image_path.is_file():
+            continue
+        digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+        hash_splits[digest].add(str(row["split"]))
+    return sorted(digest[:16] for digest, splits in hash_splits.items() if len(splits) > 1)
+
+
 def safe_ratio(numerator: int, denominator: int) -> float | None:
     return round(numerator / denominator, 4) if denominator else None
+
+
+def wilson_interval(successes: int, total: int, z: float = 1.959963984540054) -> dict | None:
+    """95% Wilson score interval; more honest than a point estimate on small sets."""
+    if total <= 0:
+        return None
+    proportion = successes / total
+    denominator = 1 + (z * z / total)
+    centre = (proportion + z * z / (2 * total)) / denominator
+    margin = (
+        z
+        * sqrt((proportion * (1 - proportion) / total) + (z * z / (4 * total * total)))
+        / denominator
+    )
+    return {"lower": round(max(0.0, centre - margin), 4), "upper": round(min(1.0, centre + margin), 4)}
 
 
 async def evaluate(rows: list[dict], manifest_dir: Path) -> list[dict]:
@@ -119,8 +148,10 @@ def summarize(
     args: argparse.Namespace,
     leakage: list[str],
     label_conflicts: list[str] | None = None,
+    content_leakage: list[str] | None = None,
 ) -> dict:
     label_conflicts = label_conflicts or []
+    content_leakage = content_leakage or []
     label_counts = Counter(item["label"] for item in predictions)
     verdict_counts = Counter(item["predicted_verdict"] for item in predictions)
     confusion = Counter((item["label"], item["predicted_verdict"]) for item in predictions)
@@ -147,6 +178,7 @@ def summarize(
     )
 
     accuracy = safe_ratio(strict_correct, total)
+    accuracy_interval = wilson_interval(strict_correct, total)
     genuine_fpr = safe_ratio(genuine_false_positives, genuine)
     fake_fnr = safe_ratio(fake_false_negatives, fake)
     strict_fake_fnr = safe_ratio(fake_not_confirmed, fake)
@@ -175,11 +207,14 @@ def summarize(
         and group_label_counts["FAKE"] >= args.min_groups_per_class
         and not leakage
         and not label_conflicts
+        and not content_leakage
     )
     passed = bool(
         enough_data
         and accuracy is not None
         and accuracy >= args.target_accuracy
+        and accuracy_interval is not None
+        and accuracy_interval["lower"] >= args.target_accuracy
         and group_weighted_accuracy is not None
         and group_weighted_accuracy >= args.target_accuracy
         and genuine_fpr is not None
@@ -205,6 +240,7 @@ def summarize(
         "label_counts": dict(label_counts),
         "verdict_counts": dict(verdict_counts),
         "strict_accuracy": accuracy,
+        "strict_accuracy_wilson_95": accuracy_interval,
         "group_weighted_strict_accuracy": group_weighted_accuracy,
         "independent_groups": len(grouped),
         "group_label_counts": dict(group_label_counts),
@@ -218,11 +254,13 @@ def summarize(
         },
         "by_app": by_app,
         "leaked_group_ids": leakage,
+        "leaked_content_hashes": content_leakage,
         "conflicting_group_label_ids": label_conflicts,
         "gate": {
             "passed": passed,
             "enough_data": enough_data,
             "target_accuracy": args.target_accuracy,
+            "requires_wilson_lower_bound": True,
             "max_genuine_fpr": args.max_genuine_fpr,
             "max_fake_fnr": args.max_fake_fnr,
             "min_samples": args.min_samples,
@@ -239,6 +277,7 @@ async def async_main() -> int:
     all_rows = load_manifest(manifest_path)
     leakage = find_split_leakage(all_rows)
     label_conflicts = find_group_label_conflicts(all_rows)
+    content_leakage = find_content_hash_leakage(all_rows, manifest_path.parent)
     rows = [row for row in all_rows if str(row["split"]) == args.split]
     if args.limit:
         rows = rows[: args.limit]
@@ -246,7 +285,7 @@ async def async_main() -> int:
         raise ValueError(f"No rows found for split {args.split!r}")
 
     predictions = await evaluate(rows, manifest_path.parent)
-    summary = summarize(predictions, args, leakage, label_conflicts)
+    summary = summarize(predictions, args, leakage, label_conflicts, content_leakage)
     report = {"summary": summary, "predictions": predictions}
     rendered = json.dumps(report, indent=2, ensure_ascii=False)
     print(rendered)

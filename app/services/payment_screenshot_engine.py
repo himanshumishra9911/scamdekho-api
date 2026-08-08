@@ -31,14 +31,29 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v3"
-PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.6-terra")
+ANALYSIS_VERSION = "payment-vision-v4"
+PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.6-sol")
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.6-sol")
-REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "suspicious").strip().lower()
-REASONING_EFFORT = os.getenv("PAYMENT_SCREENSHOT_REASONING_EFFORT", "medium")
+ADJUDICATOR_MODEL = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL", "gpt-5.6-sol")
+REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "always").strip().lower()
+ADJUDICATOR_MODE = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODE", "adaptive").strip().lower()
+BASE_REASONING_EFFORT = os.getenv("PAYMENT_SCREENSHOT_REASONING_EFFORT", "high")
+PRIMARY_REASONING_EFFORT = os.getenv(
+    "PAYMENT_SCREENSHOT_PRIMARY_REASONING_EFFORT", BASE_REASONING_EFFORT
+)
+REVIEW_REASONING_EFFORT = os.getenv(
+    "PAYMENT_SCREENSHOT_REVIEW_REASONING_EFFORT", BASE_REASONING_EFFORT
+)
+ADJUDICATOR_REASONING_EFFORT = os.getenv(
+    "PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_EFFORT", "xhigh"
+)
+ADJUDICATOR_REASONING_MODE = os.getenv(
+    "PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_MODE", "standard"
+).strip().lower()
 IMAGE_DETAIL = os.getenv("PAYMENT_SCREENSHOT_IMAGE_DETAIL", "original")
-MODEL_TIMEOUT_SECONDS = float(os.getenv("PAYMENT_SCREENSHOT_MODEL_TIMEOUT", "45"))
+MODEL_TIMEOUT_SECONDS = float(os.getenv("PAYMENT_SCREENSHOT_MODEL_TIMEOUT", "75"))
 MAX_IMAGE_PIXELS = int(os.getenv("PAYMENT_SCREENSHOT_MAX_PIXELS", "40000000"))
+MAX_ANALYSIS_VIEWS = max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_MAX_VIEWS", "3"))))
 
 
 class ExtractedFields(BaseModel):
@@ -128,7 +143,14 @@ ANALYST_PROMPT = """Inspect the whole screenshot at original detail.
 Use clear_manipulation only when at least one strong, specific item exists in tampering_evidence or an impossible contradiction is directly visible."""
 
 
-REVIEW_PROMPT = """Act as an independent second-pass forensic reviewer. Inspect the screenshot from scratch, including the possibility of a coherent fake/clone payment-app screen.
+REPLICA_REVIEW_PROMPT = """Inspect the screenshot independently as a fake/clone payment-app specialist.
+
+Look for combinations of internally inconsistent app identity, system wording, component families, icon geometry, spacing, duplicated elements, and transaction fields. Then try to falsify every suspected signal using app-version, OS, language, theme, merchant-flow, accessibility, crop, and compression explanations. A single typo, missing field, unfamiliar layout, or non-receipt claim is not enough. Inspect an embedded receipt separately from any chat, gallery, or SMS wrapper.
+
+Return no_evidence_of_manipulation when there is no specific visible evidence. Return uncertain for a concerning but non-decisive combination. Return clear_manipulation only for strong, specific visible evidence."""
+
+
+ADJUDICATOR_PROMPT = """Perform a fresh, independent forensic adjudication of this payment screenshot. You have not seen any other reviewer report.
 
 First search for evidence that a fake could have introduced. Then actively try to explain each anomaly through compression, crop, app/OS version, theme, language, accessibility, merchant flow, or unreadable text. Do not assume a popular app's remembered layout is current. Prefer uncertain over clear_manipulation when evidence cannot be localized. Populate every schema field."""
 
@@ -246,34 +268,82 @@ def _image_data_url(image_bytes: bytes, media_type: str) -> str:
     return f"data:{media_type};base64,{encoded}"
 
 
+AnalysisView = tuple[str, bytes, str]
+
+
+def _encode_png(image: Image.Image) -> bytes:
+    output = io.BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+def _make_analysis_views(image_bytes: bytes, media_type: str) -> list[AnalysisView]:
+    """Keep the full image and add overlapping native-resolution crops for tiny text."""
+    views: list[AnalysisView] = [("Full screenshot", image_bytes, media_type)]
+    if MAX_ANALYSIS_VIEWS == 1:
+        return views
+
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        image.load()
+        width, height = image.size
+        if height >= width * 1.45:
+            crop_height = round(height * 0.62)
+            crops = [
+                ("Upper payment area", image.crop((0, 0, width, crop_height))),
+                ("Lower details area", image.crop((0, height - crop_height, width, height))),
+            ]
+        elif width >= height * 1.45:
+            crop_width = round(width * 0.62)
+            crops = [
+                ("Left payment area", image.crop((0, 0, crop_width, height))),
+                ("Right payment area", image.crop((width - crop_width, 0, width, height))),
+            ]
+        else:
+            return views
+
+        for label, crop in crops[: MAX_ANALYSIS_VIEWS - 1]:
+            views.append((label, _encode_png(crop), "image/png"))
+    return views
+
+
 def _run_model(
-    image_bytes: bytes,
-    media_type: str,
+    image_views: list[AnalysisView],
     prompt: str,
     model: str,
+    reasoning_effort: str,
+    reasoning_mode: str = "standard",
 ) -> PaymentObservation:
+    content: list[dict] = [{"type": "input_text", "text": prompt}]
+    for label, view_bytes, view_media_type in image_views:
+        content.extend(
+            [
+                {"type": "input_text", "text": label},
+                {
+                    "type": "input_image",
+                    "image_url": _image_data_url(view_bytes, view_media_type),
+                    "detail": IMAGE_DETAIL,
+                },
+            ]
+        )
+
     request_kwargs: dict = {
         "model": model,
         "instructions": SYSTEM_PROMPT,
         "input": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt},
-                    {
-                        "type": "input_image",
-                        "image_url": _image_data_url(image_bytes, media_type),
-                        "detail": IMAGE_DETAIL,
-                    },
-                ],
+                "content": content,
             }
         ],
         "text_format": PaymentObservation,
-        "max_output_tokens": 2200,
+        "max_output_tokens": 2600,
         "store": False,
     }
     if model.startswith("gpt-5"):
-        request_kwargs["reasoning"] = {"effort": REASONING_EFFORT}
+        reasoning = {"effort": reasoning_effort}
+        if reasoning_mode == "pro":
+            reasoning["mode"] = "pro"
+        request_kwargs["reasoning"] = reasoning
 
     response = get_client().responses.parse(**request_kwargs)
     if response.output_parsed is None:
@@ -296,6 +366,29 @@ def _needs_review(observation: PaymentObservation) -> bool:
             observation.app_confidence < 50,
         )
     )
+
+
+def _is_clean_observation(observation: PaymentObservation) -> bool:
+    material_evidence = any(
+        item.strength in {"moderate", "strong"} for item in observation.tampering_evidence
+    )
+    return all(
+        (
+            observation.authenticity_assessment == "no_evidence_of_manipulation",
+            observation.fake_probability <= 25,
+            not material_evidence,
+            not observation.impossible_inconsistencies,
+            observation.readability != "unreadable",
+        )
+    )
+
+
+def _needs_adjudication(observations: list[PaymentObservation]) -> bool:
+    if ADJUDICATOR_MODE in {"off", "false", "0", "disabled"}:
+        return False
+    if ADJUDICATOR_MODE == "always":
+        return True
+    return len(observations) < 2 or not all(_is_clean_observation(item) for item in observations)
 
 
 def _unique_strings(values: list[str]) -> list[str]:
@@ -328,7 +421,7 @@ def _has_confirmed_fake_evidence(observation: PaymentObservation) -> bool:
 
 
 def calibrate_observations(observations: list[PaymentObservation]) -> dict:
-    """Turn one or two model observations into a conservative public verdict."""
+    """Turn independent observations into an evidence-gated public verdict."""
     if not observations:
         raise ValueError("At least one forensic observation is required.")
 
@@ -341,32 +434,29 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
     probabilities = [obs.fake_probability for obs in observations]
     average_probability = round(mean(probabilities))
     confirmed_votes = sum(_has_confirmed_fake_evidence(obs) for obs in observations)
-
-    if len(observations) == 1:
-        confirmed_fake = confirmed_votes == 1
-    else:
-        # Two independent reports must agree before a high-risk verdict. A single
-        # strong report is retained as SUSPICIOUS instead of being discarded.
-        confirmed_fake = confirmed_votes == len(observations)
-
-    has_uncertainty = any(
-        (
-            obs.authenticity_assessment != "no_evidence_of_manipulation"
-            or obs.fake_probability >= 35
-            or obs.readability != "clear"
-        )
-        for obs in observations
+    clean_votes = sum(_is_clean_observation(obs) for obs in observations)
+    required_votes = 1 if len(observations) == 1 else (len(observations) // 2) + 1
+    replica_moderate_count = sum(
+        item.category == "replica_app" and item.strength == "moderate" for item in evidence
+    )
+    confirmed_fake = confirmed_votes >= required_votes
+    credible_dissent = bool(
+        confirmed_votes
+        or strong_count
+        or impossible
+        or replica_moderate_count
+        or moderate_count >= 2
     )
 
     if confirmed_fake:
         verdict = "SCAM"
         risk = min(98, max(70, average_probability))
-    elif strong_count or impossible or moderate_count >= 2 or has_uncertainty:
-        verdict = "SUSPICIOUS"
-        risk = min(65, max(31, average_probability))
-    else:
+    elif clean_votes >= required_votes and not credible_dissent and average_probability <= 30:
         verdict = "SAFE"
         risk = min(30, max(5, average_probability))
+    else:
+        verdict = "SUSPICIOUS"
+        risk = min(69, max(31, average_probability))
 
     best_app = max(observations, key=lambda item: item.app_confidence)
     fields = _merge_fields(observations)
@@ -388,7 +478,7 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
             + ["The available visual evidence is not conclusive enough for a genuine or fake verdict."]
         )
     else:
-        reason_text = ["No clear, specific visual evidence of pixel manipulation was found."]
+        reason_text = ["The independent reviews found no clear, specific evidence of screenshot fabrication or editing."]
 
     why = [{"en": item, "hi": ""} for item in reason_text[:6]]
     visual_forensics = [
@@ -430,8 +520,12 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
             "strong": strong_count,
             "moderate": moderate_count,
             "weak": sum(item.strength == "weak" for item in evidence),
+            "replica_app_moderate": replica_moderate_count,
             "impossible_inconsistencies": len(impossible),
             "review_count": len(observations),
+            "clean_votes": clean_votes,
+            "confirmed_fake_votes": confirmed_votes,
+            "required_consensus_votes": required_votes,
         },
         "pattern_match": {
             "found": bool(strong_count or impossible),
@@ -444,43 +538,97 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
 
 async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     prepared_bytes, media_type, dimensions = _prepare_image(image_bytes)
+    image_views = _make_analysis_views(prepared_bytes, media_type)
     loop = asyncio.get_running_loop()
+    observations: list[PaymentObservation] = []
+    failures: list[Exception] = []
+    attempted_passes = 0
+    review_disabled = REVIEW_MODE in {"off", "false", "0", "disabled"}
 
-    primary = await loop.run_in_executor(
-        None,
-        _run_model,
-        prepared_bytes,
-        media_type,
-        ANALYST_PROMPT,
-        PRIMARY_MODEL,
-    )
-    observations = [primary]
-    review_required = _needs_review(primary)
-    review_failed = False
+    async def execute_pass(
+        prompt: str,
+        model: str,
+        effort: str,
+        mode: str = "standard",
+    ) -> PaymentObservation:
+        return await loop.run_in_executor(
+            None,
+            _run_model,
+            image_views,
+            prompt,
+            model,
+            effort,
+            mode,
+        )
 
-    if review_required:
+    if REVIEW_MODE == "always":
+        attempted_passes += 2
+        initial_results = await asyncio.gather(
+            execute_pass(ANALYST_PROMPT, PRIMARY_MODEL, PRIMARY_REASONING_EFFORT),
+            execute_pass(REPLICA_REVIEW_PROMPT, REVIEW_MODEL, REVIEW_REASONING_EFFORT),
+            return_exceptions=True,
+        )
+        for item in initial_results:
+            if isinstance(item, BaseException):
+                logger.warning("Payment screenshot ensemble pass failed: %s", item)
+                failures.append(item if isinstance(item, Exception) else RuntimeError(str(item)))
+            else:
+                observations.append(item)
+    else:
+        attempted_passes += 1
         try:
-            review = await loop.run_in_executor(
-                None,
-                _run_model,
-                prepared_bytes,
-                media_type,
-                REVIEW_PROMPT,
-                REVIEW_MODEL,
+            primary = await execute_pass(
+                ANALYST_PROMPT, PRIMARY_MODEL, PRIMARY_REASONING_EFFORT
             )
-            observations.append(review)
-        except Exception as exc:  # a review outage must not discard a valid primary report
-            logger.warning("Payment screenshot review pass failed: %s", exc)
-            review_failed = True
+            observations.append(primary)
+        except Exception as exc:
+            logger.warning("Payment screenshot primary pass failed: %s", exc)
+            failures.append(exc)
+
+        review_required = not review_disabled and (
+            not observations or _needs_review(observations[0])
+        )
+        if review_required:
+            attempted_passes += 1
+            try:
+                observations.append(
+                    await execute_pass(
+                        REPLICA_REVIEW_PROMPT,
+                        REVIEW_MODEL,
+                        REVIEW_REASONING_EFFORT,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Payment screenshot replica-review pass failed: %s", exc)
+                failures.append(exc)
+
+    adjudicator_performed = False
+    if not review_disabled and observations and _needs_adjudication(observations):
+        attempted_passes += 1
+        adjudicator_performed = True
+        try:
+            observations.append(
+                await execute_pass(
+                    ADJUDICATOR_PROMPT,
+                    ADJUDICATOR_MODEL,
+                    ADJUDICATOR_REASONING_EFFORT,
+                    ADJUDICATOR_REASONING_MODE,
+                )
+            )
+        except Exception as exc:
+            logger.warning("Payment screenshot adjudicator pass failed: %s", exc)
+            failures.append(exc)
+
+    if not observations:
+        raise RuntimeError("All payment screenshot forensic passes failed") from failures[0]
 
     result = calibrate_observations(observations)
-    if review_failed and result["verdict"] == "SCAM":
-        # The production default requires independent agreement for a high-risk
-        # verdict. A transient reviewer outage must not silently bypass that guard.
+    if len(observations) < 2 and result["verdict"] == "SCAM":
+        # A high-risk verdict is never exposed from one model report alone.
         result.update(
             {
                 "verdict": "SUSPICIOUS",
-                "risk_percentage": 65,
+                "risk_percentage": 69,
                 "confidence": "low",
                 "verdict_label": VERDICT_LABELS["SUSPICIOUS"],
                 "what_to_do": WHAT_TO_DO["SUSPICIOUS"],
@@ -488,18 +636,31 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         )
         result["why"].append(
             {
-                "en": "A second forensic review was unavailable, so a high-risk verdict was not confirmed.",
+                "en": "Independent forensic consensus was unavailable, so a high-risk verdict was not confirmed.",
                 "hi": "",
             }
         )
         result["reasons"] = result["why"]
+    if failures:
+        result["confidence"] = "low"
     result.update(
         {
             "analysis_version": ANALYSIS_VERSION,
             "review_performed": len(observations) > 1,
             "review_status": (
-                "failed" if review_failed else "completed" if review_required else "not_required"
+                "failed"
+                if failures
+                else "completed"
+                if attempted_passes > 1
+                else "not_required"
             ),
+            "ensemble": {
+                "attempted_passes": attempted_passes,
+                "successful_passes": len(observations),
+                "failed_passes": len(failures),
+                "adjudicator_performed": adjudicator_performed,
+                "analysis_views": len(image_views),
+            },
             "image_dimensions": {"width": dimensions[0], "height": dimensions[1]},
         }
     )

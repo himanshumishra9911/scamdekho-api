@@ -15,6 +15,8 @@ Each `manifest.jsonl` line must contain:
   measurement.
 - `group_id`: original and compressed/cropped variants of the same source must
   share a group. The evaluator fails the quality gate if a group crosses splits.
+- The evaluator also hashes image bytes and fails the gate when an exact image is
+  reused across splits under different group IDs.
 - `variant`: optional description such as `original`, `whatsapp_compressed`,
   `cropped`, `dark_mode`, or `hindi`.
 
@@ -22,6 +24,8 @@ Recommended minimum for a credible 95% claim: 100 untouched holdout screenshots,
 at least 40 genuine and 40 fake, at least 80 independent transaction/image-source
 groups (30 per class), multiple apps/devices, and no source overlap with calibration
 examples. Both screenshot-level and group-weighted accuracy must reach the target.
+The quality gate also requires the 95% Wilson confidence-interval lower bound to
+reach the target, so a small or merely lucky holdout cannot produce a “95%” claim.
 
 Current calibration intake contains 16 user-confirmed genuine images across
 PhonePe, Paytm, CRED, Airtel Thanks, YONO SBI Pay, Navi, and Google Pay, plus one

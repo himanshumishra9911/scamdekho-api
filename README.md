@@ -32,18 +32,27 @@ The URL checker also has a stricter per-IP rate limit because it performs extern
 
 ## Payment screenshot accuracy controls
 
-The payment screenshot endpoint uses structured vision observations plus a
-deterministic evidence threshold. Missing fields, unfamiliar apps, compression,
-cropping, and suspicious UPI words are not treated as proof of image tampering.
+The payment screenshot endpoint uses an adaptive GPT-5.6 Sol ensemble plus a
+deterministic consensus threshold. Two independent passes inspect localized edits
+and fake/clone-app signals in parallel. Ambiguous evidence triggers a third blind
+adjudicator. Tall receipts are supplied as the original image plus overlapping
+native-resolution focus views. Missing fields, unfamiliar apps, compression,
+cropping, and suspicious UPI words are not treated as proof of fabrication.
 
 Optional Render environment variables:
 
-- `PAYMENT_SCREENSHOT_MODEL` (default `gpt-5.6-terra`): primary vision model.
-- `PAYMENT_SCREENSHOT_REVIEW_MODEL` (default `gpt-5.6-sol`): independent reviewer for uncertain, low-quality, or unfamiliar screenshots.
-- `PAYMENT_SCREENSHOT_REVIEW_MODE`: `suspicious` (default), `always`, or `off`.
-- `PAYMENT_SCREENSHOT_REASONING_EFFORT` (default `medium`).
+- `PAYMENT_SCREENSHOT_MODEL` (default `gpt-5.6-sol`): primary forensic model.
+- `PAYMENT_SCREENSHOT_REVIEW_MODEL` (default `gpt-5.6-sol`): independent clone-app specialist.
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL` (default `gpt-5.6-sol`): blind third-pass adjudicator.
+- `PAYMENT_SCREENSHOT_REVIEW_MODE`: `always` (default), `suspicious`, or `off`.
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_MODE`: `adaptive` (default), `always`, or `off`.
+- `PAYMENT_SCREENSHOT_REASONING_EFFORT` (default `high`) supplies the primary/reviewer baseline.
+- `PAYMENT_SCREENSHOT_PRIMARY_REASONING_EFFORT` and `PAYMENT_SCREENSHOT_REVIEW_REASONING_EFFORT` optionally override that baseline.
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_EFFORT` (default `xhigh`).
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_MODE`: `standard` (default) or `pro`. Enable `pro` only after a representative holdout demonstrates a worthwhile gain.
 - `PAYMENT_SCREENSHOT_IMAGE_DETAIL` (default `original`).
-- `PAYMENT_SCREENSHOT_ANALYSIS_TIMEOUT` (default `90` seconds).
+- `PAYMENT_SCREENSHOT_MAX_VIEWS` (default `3`, range `1`-`3`).
+- `PAYMENT_SCREENSHOT_ANALYSIS_TIMEOUT` (default `180` seconds).
 
 See `tests/payment_screenshot_dataset/README.md` for the leakage-safe labeled
 evaluation format and the 95% quality gate.

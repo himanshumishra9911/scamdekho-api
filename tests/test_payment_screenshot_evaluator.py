@@ -1,9 +1,11 @@
 from argparse import Namespace
 
 from scripts.evaluate_payment_screenshots import (
+    find_content_hash_leakage,
     find_group_label_conflicts,
     find_split_leakage,
     summarize,
+    wilson_interval,
 )
 
 
@@ -58,6 +60,17 @@ def test_conflicting_labels_for_the_same_source_are_detected():
     assert find_group_label_conflicts(rows) == ["same-source"]
 
 
+def test_exact_image_reuse_across_splits_is_detected_even_with_different_groups(tmp_path):
+    (tmp_path / "a.png").write_bytes(b"same-image-bytes")
+    (tmp_path / "b.png").write_bytes(b"same-image-bytes")
+    rows = [
+        {"file": "a.png", "split": "calibration", "group_id": "one"},
+        {"file": "b.png", "split": "holdout", "group_id": "two"},
+    ]
+
+    assert len(find_content_hash_leakage(rows, tmp_path)) == 1
+
+
 def test_quality_gate_passes_only_when_all_thresholds_and_sample_sizes_pass():
     predictions = [
         {"label": "GENUINE", "predicted_verdict": "SAFE", "app": "gpay"},
@@ -66,8 +79,35 @@ def test_quality_gate_passes_only_when_all_thresholds_and_sample_sizes_pass():
         {"label": "FAKE", "predicted_verdict": "SCAM", "app": "phonepe"},
     ]
 
-    assert summarize(predictions, args(), [])["gate"]["passed"] is True
-    assert summarize(predictions, args(), ["leaked-source"])["gate"]["passed"] is False
+    relaxed = args(target_accuracy=0.5)
+    assert summarize(predictions, relaxed, [])["gate"]["passed"] is True
+    assert summarize(predictions, relaxed, ["leaked-source"])["gate"]["passed"] is False
+
+
+def test_reported_95_percent_does_not_pass_when_confidence_bound_is_lower():
+    predictions = [
+        {"label": "GENUINE", "predicted_verdict": "SAFE", "app": "gpay"}
+        for _ in range(50)
+    ] + [
+        {"label": "FAKE", "predicted_verdict": "SCAM", "app": "phonepe"}
+        for _ in range(45)
+    ] + [
+        {"label": "FAKE", "predicted_verdict": "SUSPICIOUS", "app": "phonepe"}
+        for _ in range(5)
+    ]
+
+    report = summarize(predictions, args(), [])
+
+    assert report["strict_accuracy"] == 0.95
+    assert report["strict_accuracy_wilson_95"]["lower"] < 0.95
+    assert report["gate"]["passed"] is False
+
+
+def test_wilson_interval_is_defined_for_perfect_small_sample_without_claiming_perfection():
+    interval = wilson_interval(4, 4)
+
+    assert interval["lower"] < 1.0
+    assert interval["upper"] == 1.0
 
 
 def test_duplicate_variants_cannot_satisfy_independent_group_gate():

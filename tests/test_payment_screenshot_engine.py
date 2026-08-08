@@ -1,5 +1,6 @@
 import asyncio
 import io
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -7,6 +8,7 @@ from PIL import Image
 from app.services.payment_screenshot_engine import (
     PaymentObservation,
     SYSTEM_PROMPT,
+    _make_analysis_views,
     _needs_review,
     _prepare_image,
     calibrate_observations,
@@ -228,6 +230,90 @@ def test_two_confirmed_fake_votes_are_required_after_review():
     assert calibrate_observations([primary, reviewer])["verdict"] == "SCAM"
 
 
+def test_two_of_three_confirmed_fake_votes_form_a_scam_consensus():
+    confirmed = observation(
+        tampering_evidence=[
+            {
+                "category": "overlay",
+                "strength": "strong",
+                "description": "A hard paste boundary surrounds the amount",
+                "location": "amount row",
+                "observed_text": "₹5,000",
+            }
+        ],
+        authenticity_assessment="clear_manipulation",
+        fake_probability=92,
+    )
+
+    result = calibrate_observations([confirmed, confirmed, observation(fake_probability=9)])
+
+    assert result["verdict"] == "SCAM"
+    assert result["evidence_summary"]["confirmed_fake_votes"] == 2
+    assert result["evidence_summary"]["required_consensus_votes"] == 2
+
+
+def test_one_false_strong_vote_cannot_overrule_two_clean_reviews():
+    dissent = observation(
+        tampering_evidence=[
+            {
+                "category": "pixel_artifact",
+                "strength": "strong",
+                "description": "Possible hard edge near amount",
+                "location": "amount row",
+                "observed_text": "₹500",
+            }
+        ],
+        authenticity_assessment="clear_manipulation",
+        fake_probability=86,
+    )
+
+    result = calibrate_observations(
+        [dissent, observation(fake_probability=8), observation(fake_probability=11)]
+    )
+
+    assert result["verdict"] == "SUSPICIOUS"
+    assert result["evidence_summary"]["confirmed_fake_votes"] == 1
+
+
+def test_weak_dissent_does_not_create_a_false_positive_against_clean_consensus():
+    weak = observation(
+        tampering_evidence=[
+            {
+                "category": "typography",
+                "strength": "weak",
+                "description": "One label may have a different weight",
+                "location": "lower half",
+                "observed_text": "Paid",
+            }
+        ],
+        fake_probability=19,
+    )
+
+    assert calibrate_observations(
+        [weak, observation(fake_probability=7), observation(fake_probability=9)]
+    )["verdict"] == "SAFE"
+
+
+def test_replica_app_dissent_is_never_silently_marked_safe():
+    replica = observation(
+        tampering_evidence=[
+            {
+                "category": "replica_app",
+                "strength": "moderate",
+                "description": "Two independent component families conflict",
+                "location": "payment panel",
+                "observed_text": "Payments Successful",
+            }
+        ],
+        authenticity_assessment="uncertain",
+        fake_probability=54,
+    )
+
+    assert calibrate_observations(
+        [replica, observation(fake_probability=8), observation(fake_probability=10)]
+    )["verdict"] == "SUSPICIOUS"
+
+
 def test_unknown_or_unclear_apps_receive_a_review_in_default_mode():
     assert _needs_review(observation(app_name="Unknown", app_key="unknown", app_confidence=10))
 
@@ -241,6 +327,49 @@ def test_valid_png_is_preserved_for_original_detail_analysis():
     assert prepared == output.getvalue()
     assert media_type == "image/png"
     assert dimensions == (300, 600)
+
+
+def test_tall_screenshot_gets_overlapping_native_resolution_focus_views():
+    output = io.BytesIO()
+    Image.new("RGB", (400, 1000), "white").save(output, format="PNG")
+
+    views = _make_analysis_views(output.getvalue(), "image/png")
+
+    assert [view[0] for view in views] == [
+        "Full screenshot",
+        "Upper payment area",
+        "Lower details area",
+    ]
+    assert all(view[2].startswith("image/") for view in views)
+
+
+def test_model_request_uses_original_detail_structured_output_and_optional_pro_mode(monkeypatch):
+    captured = {}
+
+    class FakeResponses:
+        def parse(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(output_parsed=observation())
+
+    fake_client = SimpleNamespace(responses=FakeResponses())
+    monkeypatch.setattr(engine, "get_client", lambda: fake_client)
+    monkeypatch.setattr(engine, "IMAGE_DETAIL", "original")
+
+    engine._run_model(
+        [("Full screenshot", b"image-bytes", "image/png")],
+        "Inspect it",
+        "gpt-5.6-sol",
+        "xhigh",
+        "pro",
+    )
+
+    assert captured["model"] == "gpt-5.6-sol"
+    assert captured["reasoning"] == {"effort": "xhigh", "mode": "pro"}
+    assert captured["text_format"] is PaymentObservation
+    image_item = captured["input"][0]["content"][2]
+    assert image_item["type"] == "input_image"
+    assert image_item["detail"] == "original"
+    assert captured["store"] is False
 
 
 def test_tiny_images_are_rejected_before_paid_model_call():
@@ -284,3 +413,69 @@ def test_failed_required_review_cannot_leave_a_scam_verdict(monkeypatch):
     assert result["verdict"] == "SUSPICIOUS"
     assert result["review_status"] == "failed"
     assert result["confidence"] == "low"
+
+
+def test_clean_parallel_consensus_skips_costly_adjudicator(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGB", (300, 600), "white").save(output, format="PNG")
+    calls = 0
+
+    def fake_run_model(*_args):
+        nonlocal calls
+        calls += 1
+        return observation(fake_probability=8)
+
+    monkeypatch.setattr(engine, "_run_model", fake_run_model)
+    monkeypatch.setattr(engine, "REVIEW_MODE", "always")
+    monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
+
+    result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
+
+    assert result["verdict"] == "SAFE"
+    assert calls == 2
+    assert result["ensemble"] == {
+        "attempted_passes": 2,
+        "successful_passes": 2,
+        "failed_passes": 0,
+        "adjudicator_performed": False,
+        "analysis_views": 3,
+    }
+
+
+def test_uncertain_parallel_result_triggers_independent_adjudicator(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGB", (300, 600), "white").save(output, format="PNG")
+    responses = [
+        observation(fake_probability=9),
+        observation(
+            authenticity_assessment="uncertain",
+            fake_probability=52,
+            tampering_evidence=[
+                {
+                    "category": "replica_app",
+                    "strength": "moderate",
+                    "description": "Conflicting component families",
+                    "location": "payment panel",
+                    "observed_text": "Payments Successful",
+                }
+            ],
+        ),
+        observation(fake_probability=12),
+    ]
+    calls = 0
+
+    def fake_run_model(*_args):
+        nonlocal calls
+        item = responses[calls]
+        calls += 1
+        return item
+
+    monkeypatch.setattr(engine, "_run_model", fake_run_model)
+    monkeypatch.setattr(engine, "REVIEW_MODE", "always")
+    monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
+
+    result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
+
+    assert calls == 3
+    assert result["verdict"] == "SUSPICIOUS"
+    assert result["ensemble"]["adjudicator_performed"] is True

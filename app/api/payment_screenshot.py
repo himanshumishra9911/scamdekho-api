@@ -25,7 +25,7 @@ ALLOWED_MIME_TYPES = {
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".avif"}
 MAX_FILE_SIZE    = 10 * 1024 * 1024
 MIN_FILE_SIZE    = 5  * 1024
-ANALYSIS_TIMEOUT = int(os.getenv("PAYMENT_SCREENSHOT_ANALYSIS_TIMEOUT", "90"))
+ANALYSIS_TIMEOUT = int(os.getenv("PAYMENT_SCREENSHOT_ANALYSIS_TIMEOUT", "180"))
 CHUNK_SIZE       = 64 * 1024
 
 MAGIC_SIGNATURES = {
@@ -197,6 +197,8 @@ async def check_payment_screenshot(
                 "visual_signals":   result.get("visual_forensics", []),
                 "analysis_version": result.get("analysis_version"),
                 "review_performed": result.get("review_performed", False),
+                "review_status":    result.get("review_status"),
+                "ensemble":         result.get("ensemble", {}),
             }
         )
     except Exception as e:
