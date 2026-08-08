@@ -24,9 +24,20 @@ groups (30 per class), multiple apps/devices, and no source overlap with calibra
 examples. Both screenshot-level and group-weighted accuracy must reach the target.
 
 Current calibration intake contains 16 user-confirmed genuine images across
-PhonePe, Paytm, CRED, Airtel Thanks, YONO SBI Pay, Navi, and Google Pay. Several
-images are alternate views of the same payment, so they represent 8 independent
-transaction groups. Do not move these groups into the holdout split.
+PhonePe, Paytm, CRED, Airtel Thanks, YONO SBI Pay, Navi, and Google Pay, plus one
+medium-confidence public fake report. Several genuine images are alternate views
+of the same payment, so the dataset currently represents 9 independent source
+groups (8 genuine and 1 fake). Do not move these groups into the holdout split.
+
+`public_candidates.jsonl` records public scam reports separately. Only the
+medium-confidence, source-described fake is present in the calibration manifest.
+Community guesses and ambiguous non-receipt claims remain provisional and must
+not enter measured accuracy. Public images stay local because they may contain
+personal identifiers and must not be redistributed without permission.
+
+`external_sources.jsonl` records researched forgery datasets and why they were
+not silently ingested. Access-controlled, academic-only, incompatible-license,
+or non-UPI receipt datasets are research leads, not production training data.
 
 `official_sources.jsonl` records official pages for additional app coverage.
 Those pages are reference-only: promotional app-store artwork must never be

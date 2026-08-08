@@ -87,6 +87,33 @@ def test_prompt_protects_common_genuine_receipt_variants_from_false_positives():
         assert benign_variant in prompt
 
 
+def test_prompt_covers_replica_apps_without_overfitting_to_a_typo():
+    prompt = SYSTEM_PROMPT.lower()
+
+    assert "fake or clone payment app" in prompt
+    assert "at least two independent, visible inconsistencies" in prompt
+    assert "a single typo" in prompt
+    assert "forwarded inside whatsapp" in prompt
+
+
+def test_replica_app_signal_is_supported_but_remains_inconclusive_without_strong_proof():
+    item = observation(
+        tampering_evidence=[
+            {
+                "category": "replica_app",
+                "strength": "moderate",
+                "description": "The system heading and component styles contain two independent inconsistencies",
+                "location": "payment confirmation panel",
+                "observed_text": "Payments Successful",
+            }
+        ],
+        authenticity_assessment="uncertain",
+        fake_probability=56,
+    )
+
+    assert calibrate_observations([item])["verdict"] == "SUSPICIOUS"
+
+
 def test_one_weak_visual_anomaly_is_not_enough_for_suspicious():
     item = observation(
         tampering_evidence=[

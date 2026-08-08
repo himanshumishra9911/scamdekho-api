@@ -34,9 +34,26 @@ data, not an accuracy test.
 - Require strong localized evidence for a `SCAM` verdict. When the independent
   review disagrees, return `SUSPICIOUS` rather than forcing a binary answer.
 
+## Public fake-example search
+
+- One public PhonePe fraud-attempt report explicitly says the sender supplied a
+  fake transaction screenshot after no payment arrived. Its payment receipt is
+  embedded in a WhatsApp screenshot, so it is local calibration data only and
+  not a clean holdout example.
+- A second recent PhonePe-style screenshot has the visible heading “Payments
+  Successful” and was reported as not credited. Its label still depends on a
+  community report, so it remains provisional and outside the manifest.
+- The fake examples expose a false-negative class that localized-edit checks
+  alone miss: fake/clone payment apps can render a clean, internally coherent
+  screen. The detector now has a separate `replica_app` evidence category.
+- Replica-app suspicion requires a combination of independent visible UI
+  inconsistencies. A single typo, missing transaction ID, unfamiliar layout, or
+  non-receipt claim cannot make an otherwise genuine screenshot `SCAM`.
+
 ## Remaining measurement gap
 
-There are no fake examples and no untouched holdout examples in this intake.
-The 95% target therefore cannot yet be measured without manufacturing a biased
-test. Final evaluation needs independent genuine and fake screenshots from
-different transactions, devices, app versions, and manipulation methods.
+There is only one medium-confidence fake calibration example, one provisional
+candidate, and no untouched holdout examples. The 95% target therefore cannot
+yet be measured without manufacturing a biased test. Final evaluation needs
+independent genuine and fake screenshots from different transactions, devices,
+app versions, and manipulation methods.

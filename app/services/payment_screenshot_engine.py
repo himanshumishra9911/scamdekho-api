@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v2"
+ANALYSIS_VERSION = "payment-vision-v3"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.6-terra")
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.6-sol")
 REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "suspicious").strip().lower()
@@ -59,6 +59,7 @@ class VisualEvidence(BaseModel):
         "alignment",
         "branding",
         "pixel_artifact",
+        "replica_app",
         "transaction_data",
         "other",
     ]
@@ -96,7 +97,7 @@ class PaymentObservation(BaseModel):
     reasons: list[str]
 
 
-SYSTEM_PROMPT = """You assess whether the pixels in an Indian payment screenshot were fabricated or edited.
+SYSTEM_PROMPT = """You assess whether an Indian payment screenshot was fabricated or edited. This includes a coherent screen rendered by a fake or clone payment app, not only a pasted value in a real-app screenshot.
 
 The task is screenshot authenticity, not confirmation that money reached an account. A visually genuine screenshot can still show a failed, pending, requested, reversed, old, or fraudulent transaction. Record those facts separately.
 
@@ -108,7 +109,11 @@ Treat normal presentation variants as benign unless there is independent, locali
 
 Strong evidence must be specific and visible, such as a localized paste boundary, inconsistent anti-aliasing around an edited value, an impossible internal contradiction visible in two fields, or a clearly composited logo/status element. Name its location. If a benign explanation is plausible, use weak/moderate evidence or no evidence.
 
-Populate every schema field. Put possible scam context in content_risk_signals, never in tampering_evidence unless it also proves pixel manipulation."""
+A fake-app screen may be internally clean and have no paste boundary. Consider replica_app evidence only when at least two independent, visible inconsistencies occur inside the payment UI, for example a stable grammatical error in a system heading plus mixed branding/component styles, or mutually incompatible app identity elements. A single typo, unfamiliar layout, missing transaction details, absent reference number, or the recipient saying money was not received is not enough. Use moderate replica_app evidence and uncertain when the combination is concerning but not decisive; use strong only when the visible combination has no plausible app-version, theme, language, accessibility, crop, compression, or OCR explanation.
+
+When a payment receipt is forwarded inside WhatsApp, SMS, a gallery, or another viewer, treat the surrounding wrapper as context rather than part of the payment app. Inspect the embedded receipt separately and do not mistake wrapper fonts, status bars, or compression for receipt tampering.
+
+Populate every schema field. Put possible scam context in content_risk_signals, never in tampering_evidence unless it also supports visible screenshot fabrication or editing."""
 
 
 ANALYST_PROMPT = """Inspect the whole screenshot at original detail.
@@ -116,14 +121,14 @@ ANALYST_PROMPT = """Inspect the whole screenshot at original detail.
 1. Identify the app only when supported by visible branding; otherwise use Unknown.
 2. Transcribe visible fields without guessing missing text.
 3. Separate payment state from screenshot authenticity.
-4. Look for localized editing artifacts and impossible internal contradictions.
+4. Look for localized editing artifacts, impossible internal contradictions, and combinations of replica-app signals.
 5. List benign limitations so they are not reused as fraud evidence.
-6. Estimate fake_probability for pixel fabrication only.
+6. Estimate fake_probability for screenshot fabrication/editing only.
 
-Use clear_manipulation only when at least one strong, localized item exists in tampering_evidence or an impossible contradiction is directly visible."""
+Use clear_manipulation only when at least one strong, specific item exists in tampering_evidence or an impossible contradiction is directly visible."""
 
 
-REVIEW_PROMPT = """Act as an independent second-pass forensic reviewer. Inspect the screenshot from scratch.
+REVIEW_PROMPT = """Act as an independent second-pass forensic reviewer. Inspect the screenshot from scratch, including the possibility of a coherent fake/clone payment-app screen.
 
 First search for evidence that a fake could have introduced. Then actively try to explain each anomaly through compression, crop, app/OS version, theme, language, accessibility, merchant flow, or unreadable text. Do not assume a popular app's remembered layout is current. Prefer uncertain over clear_manipulation when evidence cannot be localized. Populate every schema field."""
 
