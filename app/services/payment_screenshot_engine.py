@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v9"
+ANALYSIS_VERSION = "payment-vision-v10"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
@@ -253,9 +253,9 @@ Treat a confidently branded screen with three or more independent, visible confl
 Return no_evidence_of_manipulation when there is no specific visible evidence. Return uncertain for a concerning but non-decisive combination. Return clear_manipulation only for strong, specific visible evidence."""
 
 
-ADJUDICATOR_PROMPT = """Perform a fresh, independent forensic adjudication of this payment screenshot. You have not seen any other reviewer report.
+ADJUDICATOR_PROMPT = """Perform a forensic adjudication of this payment screenshot.
 
-First search for evidence that a fake could have introduced. Then actively try to explain each anomaly through compression, crop, app/OS version, theme, language, accessibility, merchant flow, or unreadable text. Do not assume a popular app's remembered layout is current. Prefer uncertain over clear_manipulation when evidence cannot be localized. Populate every schema field."""
+First search for evidence that a fake could have introduced. Then actively try to explain each anomaly through compression, crop, app/OS version, theme, language, accessibility, merchant flow, or unreadable text. Candidate signals from cheaper reviewers may be supplied; treat them only as hypotheses and verify each directly against visible pixels. Do not assume a popular app's remembered layout is current. Prefer uncertain over clear_manipulation when evidence cannot be localized. Populate every schema field."""
 
 
 VERDICT_LABELS = {
@@ -623,11 +623,18 @@ def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
         ("component style", triage.component_style_conflicts, "moderate"),
     ]
     independent_groups = sum(bool(items) for _, items, _ in signal_groups)
-    confirmed_replica = (
+    model_confirmed_replica = (
         triage.assessment == "likely_replica"
         and triage.replica_probability >= 65
         and independent_groups >= 2
     )
+    high_confidence_multisignal_replica = (
+        triage.assessment == "uncertain"
+        and triage.app_confidence >= 75
+        and triage.replica_probability >= 45
+        and independent_groups >= 3
+    )
+    confirmed_replica = model_confirmed_replica or high_confidence_multisignal_replica
     evidence: list[VisualEvidence] = []
     promoted_strong = False
     for group_name, items, default_strength in signal_groups:
@@ -1131,11 +1138,26 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         attempted_passes += 1
         attempted_view_counts["adjudicator"] = len(adjudicator_views)
         adjudicator_performed = True
+        candidate_signals = _unique_strings(
+            [
+                item.description
+                for observation in observations
+                for item in observation.tampering_evidence
+                if item.strength in {"moderate", "strong"}
+            ]
+        )[:6]
+        adjudicator_prompt = ADJUDICATOR_PROMPT
+        if candidate_signals:
+            adjudicator_prompt += (
+                "\n\nCandidate signals to verify or reject independently:\n- "
+                + "\n- ".join(candidate_signals)
+                + "\nDo not accept these claims unless the corresponding pixels are visible."
+            )
         try:
             adjudicator_pass = await execute_pass(
                 "adjudicator",
                 adjudicator_views,
-                ADJUDICATOR_PROMPT,
+                adjudicator_prompt,
                 ADJUDICATOR_MODEL,
                 ADJUDICATOR_REASONING_EFFORT,
                 ADJUDICATOR_REASONING_MODE,
