@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v14"
+ANALYSIS_VERSION = "payment-vision-v15"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
@@ -634,9 +634,13 @@ def _is_benign_replica_claim(group_name: str, claim: str) -> bool:
         "no obvious spelling",
         "masked",
         "partial",
+        "receipt-style",
+        "generic heading",
+        "powered by",
     )
     interoperability_markers = (
         "recipient line",
+        "recipient row",
         "sent to",
         "paid to",
         "received from",

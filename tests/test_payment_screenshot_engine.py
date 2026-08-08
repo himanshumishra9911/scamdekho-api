@@ -214,6 +214,30 @@ def test_cross_app_upi_interoperability_claims_are_filtered_as_benign():
     assert calibrate_observations([converted])["verdict"] == "SAFE"
 
 
+def test_share_receipt_heading_and_recipient_brand_are_not_tampering():
+    converted = _replica_triage_to_observation(
+        replica_triage(
+            wording_errors=[
+                "The powered by UPI receipt-style page has a generic heading"
+            ],
+            app_identity_conflicts=[
+                "Recipient row shows paytm on a PhonePe-branded receipt"
+            ],
+            component_style_conflicts=[
+                "PhonePe purple UI coexists with a Paytm-labeled recipient row"
+            ],
+            assessment="uncertain",
+            replica_probability=55,
+        )
+    )
+
+    assert converted.authenticity_assessment == "no_evidence_of_manipulation"
+    assert converted.fake_probability == 25
+    assert not converted.tampering_evidence
+    assert len(converted.benign_limitations) == 3
+    assert _needs_review(converted) is False
+
+
 def test_repeated_invalid_phonepe_transaction_id_confirms_two_votes():
     first = _replica_triage_to_observation(
         replica_triage(
