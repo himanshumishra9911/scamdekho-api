@@ -1,272 +1,501 @@
 # -*- coding: utf-8 -*-
-import os
-import re
-import json
+"""Evidence-based payment screenshot authenticity analysis.
+
+The model observes the screenshot; deterministic code owns the public verdict.
+This separation prevents missing fields, an unfamiliar app, or suspicious payment
+content from being treated as proof that the pixels were manipulated.
+"""
+
+from __future__ import annotations
+
+import asyncio
 import base64
-from openai import OpenAI
+import io
+import logging
+import os
+from statistics import mean
+from typing import Literal
+
 from dotenv import load_dotenv
+from openai import OpenAI
+from PIL import Image, ImageOps, UnidentifiedImageError
+from pydantic import BaseModel, Field
+
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except ImportError:  # pragma: no cover - dependency is present in production
+    pass
 
 load_dotenv()
+logger = logging.getLogger(__name__)
+
+ANALYSIS_VERSION = "payment-vision-v2"
+PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.6-terra")
+REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.6-sol")
+REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "suspicious").strip().lower()
+REASONING_EFFORT = os.getenv("PAYMENT_SCREENSHOT_REASONING_EFFORT", "medium")
+IMAGE_DETAIL = os.getenv("PAYMENT_SCREENSHOT_IMAGE_DETAIL", "original")
+MODEL_TIMEOUT_SECONDS = float(os.getenv("PAYMENT_SCREENSHOT_MODEL_TIMEOUT", "45"))
+MAX_IMAGE_PIXELS = int(os.getenv("PAYMENT_SCREENSHOT_MAX_PIXELS", "40000000"))
 
 
-def get_client():
-    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+class ExtractedFields(BaseModel):
+    amount: str | None
+    transaction_id: str | None
+    upi_id: str | None
+    recipient_name: str | None
+    sender_name: str | None
+    bank_name: str | None
+    timestamp: str | None
+    status_text: str | None
 
 
-def _image_to_base64(image_bytes: bytes) -> str:
-    return base64.b64encode(image_bytes).decode("utf-8")
+class VisualEvidence(BaseModel):
+    category: Literal[
+        "overlay",
+        "typography",
+        "alignment",
+        "branding",
+        "pixel_artifact",
+        "transaction_data",
+        "other",
+    ]
+    strength: Literal["weak", "moderate", "strong"]
+    description: str
+    location: str | None
+    observed_text: str | None
 
 
-def _detect_media_type(image_bytes: bytes) -> str:
-    if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
-        return "image/png"
-    if image_bytes[:3] == b'\xff\xd8\xff':
-        return "image/jpeg"
-    if image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
-        return "image/webp"
-    return "image/jpeg"
+class PaymentObservation(BaseModel):
+    app_name: str
+    app_key: str
+    app_confidence: int = Field(ge=0, le=100)
+    screenshot_kind: Literal[
+        "payment_success",
+        "payment_pending",
+        "payment_failed",
+        "payment_request",
+        "receipt_or_history",
+        "other",
+        "unreadable",
+    ]
+    readability: Literal["clear", "partial", "unreadable"]
+    payment_state: Literal["success", "pending", "failed", "request", "unknown"]
+    fields: ExtractedFields
+    tampering_evidence: list[VisualEvidence]
+    impossible_inconsistencies: list[str]
+    benign_limitations: list[str]
+    content_risk_signals: list[str]
+    authenticity_assessment: Literal[
+        "no_evidence_of_manipulation", "uncertain", "clear_manipulation"
+    ]
+    fake_probability: int = Field(ge=0, le=100)
+    confidence: Literal["low", "medium", "high"]
+    reasons: list[str]
 
 
-PROMPT = """You are a UPI payment screenshot forensic expert. Your goal is to help users avoid scams by detecting fake or misleading payment screenshots with high accuracy.
+SYSTEM_PROMPT = """You assess whether the pixels in an Indian payment screenshot were fabricated or edited.
 
-Carefully analyze the provided screenshot using these checks:
+The task is screenshot authenticity, not confirmation that money reached an account. A visually genuine screenshot can still show a failed, pending, requested, reversed, old, or fraudulent transaction. Record those facts separately.
 
-### 1. UI & DESIGN CONSISTENCY
-- Check fonts, spacing, alignment, icons
-- Look for blur, mismatch, overlays, cropping issues
-- Compare with standard Paytm / GPay / PhonePe UI patterns
+Use only visible evidence. Payment app layouts change by app version, OS, language, theme, device size, account type, merchant flow, and A/B test. Unknown or regional apps are normal. Never invent an official layout from memory.
 
-### 2. TRANSACTION DETAILS VALIDATION
-Verify presence and format of:
-- Amount (Rs format)
-- Receiver name
-- UPI ID (must follow valid structure like name@bank)
-- Sender name + bank name
-- UPI Reference Number (12-digit numeric)
-- Date and Time
+These are NOT tampering evidence by themselves: crop; compression; blur; missing status bar; missing UPI ID, bank, sender, reference number, date, or time; a non-12-digit or alphanumeric reference; old or future date; dark mode; unusual font caused by OS accessibility; cross-app UPI handles or branding; merchant handles; suspicious words in a name or UPI ID; or a simple/clean design.
 
-Missing or incorrect format = HIGH suspicion
+Treat normal presentation variants as benign unless there is independent, localized evidence of editing. Examples include masked identifiers, decorative receipts, minimal share receipts, large black or white viewer margins, OS/share-sheet chrome, ads, cashback or rewards panels, and receipts embedded inside another app or image viewer. A full transaction page and a shared receipt for the same payment can look substantially different. The status-bar time may reflect when the receipt was viewed rather than when the payment happened.
 
-### 3. LOGICAL CONSISTENCY
-- Does amount match text (Rs 150 vs "One Hundred Fifty")?
-- Does app branding match (Paytm vs PhonePe mismatch)?
-- Does UPI handle match bank? (e.g., @ybl = Yes Bank)
+Strong evidence must be specific and visible, such as a localized paste boundary, inconsistent anti-aliasing around an edited value, an impossible internal contradiction visible in two fields, or a clearly composited logo/status element. Name its location. If a benign explanation is plausible, use weak/moderate evidence or no evidence.
 
-### 4. COMMON SCAM PATTERNS
-- "Paid Successfully" but no transaction ID
-- Fake green tick overlays
-- Edited names or numbers
-- Cropped screens hiding key details
-- Too clean or too perfect UI
-- Mismatch in fonts or emoji/icons
-
-### 5. IMPORTANT RULES - READ CAREFULLY
-- @ptys, @ptm, @paytm = GENUINE Paytm merchant handles - do NOT flag as suspicious
-- April/May 2026 dates = CURRENT dates, NOT future dates
-- WhatsApp forwarded screenshots may have compression - do NOT flag as fake for this alone
-- Any app can pay to any UPI handle - cross-app payments are normal in India
-- Screenshots alone are NOT proof of payment even if real
-
-### 6. VERDICT LOGIC
-- GENUINE: No visual tampering, all details consistent, no scam indicators
-- SUSPICIOUS: Minor issues, unclear, or something mildly off - cannot confirm either way
-- FAKE: Clear visual tampering OR impossible data OR scam UPI ID keywords (support/refund/kyc/help/verify/prize/reward/rbi)
-
-Give risk_percentage:
-- GENUINE = 5 to 30
-- SUSPICIOUS = 31 to 65
-- FAKE = 66 to 100
-
-Extract all visible fields. Return ONLY valid JSON:
-{
-  "app_name": "Paytm",
-  "app_key": "paytm",
-  "app_confidence": 95,
-  "fields": {
-    "amount": "500",
-    "transaction_id": "609532000947",
-    "upi_id": "merchant@ptys",
-    "recipient_name": "Shop Name",
-    "bank_name": "State Bank of India",
-    "timestamp": "05:49 PM, 05 Apr 2026",
-    "status_text": "Paid Successfully"
-  },
-  "visual_verdict": "genuine",
-  "visual_signals": [
-    "Font consistent throughout - no tampering detected",
-    "Paytm blue header matches genuine design",
-    "Status bar visible and real"
-  ],
-  "verdict": "GENUINE",
-  "risk_percentage": 10,
-  "confidence": "high",
-  "reasons": [
-    {"en": "All visual elements match genuine Paytm design", "hi": "सभी visual elements असली Paytm design से match करते हैं"},
-    {"en": "UTR number present and valid", "hi": "UTR number present है और valid है"},
-    {"en": "No tampering evidence found", "hi": "Tampering का कोई evidence नहीं मिला"}
-  ]
-}
-
-Return ONLY the JSON. No markdown. No text outside JSON."""
+Populate every schema field. Put possible scam context in content_risk_signals, never in tampering_evidence unless it also proves pixel manipulation."""
 
 
-def _run_ai_analysis(image_bytes: bytes) -> dict:
-    b64 = _image_to_base64(image_bytes)
-    media_type = _detect_media_type(image_bytes)
+ANALYST_PROMPT = """Inspect the whole screenshot at original detail.
 
-    response = get_client().chat.completions.create(
-        model="gpt-4.1-mini",
-        max_tokens=1500,
-        temperature=0.1,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{media_type};base64,{b64}",
-                            "detail": "high"
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": PROMPT
-                    }
-                ]
-            }
-        ]
-    )
+1. Identify the app only when supported by visible branding; otherwise use Unknown.
+2. Transcribe visible fields without guessing missing text.
+3. Separate payment state from screenshot authenticity.
+4. Look for localized editing artifacts and impossible internal contradictions.
+5. List benign limitations so they are not reused as fraud evidence.
+6. Estimate fake_probability for pixel fabrication only.
 
-    raw = response.choices[0].message.content.strip()
+Use clear_manipulation only when at least one strong, localized item exists in tampering_evidence or an impossible contradiction is directly visible."""
 
-    if raw.startswith("```"):
-        raw = re.sub(r"^```[a-z]*\n?", "", raw)
-        raw = re.sub(r"\n?```$", "", raw)
-        raw = raw.strip()
 
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group())
-            except Exception:
-                pass
-        return {}
+REVIEW_PROMPT = """Act as an independent second-pass forensic reviewer. Inspect the screenshot from scratch.
+
+First search for evidence that a fake could have introduced. Then actively try to explain each anomaly through compression, crop, app/OS version, theme, language, accessibility, merchant flow, or unreadable text. Do not assume a popular app's remembered layout is current. Prefer uncertain over clear_manipulation when evidence cannot be localized. Populate every schema field."""
 
 
 VERDICT_LABELS = {
     "SAFE": {
-        "en": "This payment screenshot appears genuine.",
-        "hi": "यह payment screenshot genuine लग रहा है।"
+        "en": "No clear visual evidence of screenshot manipulation was found.",
+        "hi": "Screenshot में बदलाव या छेड़छाड़ का कोई स्पष्ट visual evidence नहीं मिला।",
     },
     "SUSPICIOUS": {
-        "en": "Suspicious - Verify Before Accepting",
-        "hi": "संदिग्ध - Accept करने से पहले verify करें"
+        "en": "Inconclusive - verify the payment in your own account.",
+        "hi": "नतीजा स्पष्ट नहीं है — payment को अपने account में verify करें।",
     },
     "SCAM": {
-        "en": "High Risk - This screenshot shows signs of fraud.",
-        "hi": "High Risk - इस screenshot में fraud के संकेत हैं।"
-    }
+        "en": "High risk - clear signs of screenshot manipulation were found.",
+        "hi": "High risk — screenshot में छेड़छाड़ के स्पष्ट संकेत मिले हैं।",
+    },
 }
 
 WHAT_TO_DO = {
     "SAFE": [
-        {"en": "Still verify the payment in your own bank/UPI app before releasing goods.", "hi": "Goods देने से पहले अपने bank/UPI app में payment verify करें।"},
-        {"en": "A screenshot alone is never 100% proof - check your transaction history.", "hi": "Screenshot अकेला proof नहीं है - अपना transaction history देखें।"},
+        {
+            "en": "Verify the credit in your own bank or UPI app before releasing goods.",
+            "hi": "Goods देने से पहले अपने bank या UPI app में credit verify करें।",
+        },
+        {
+            "en": "A visually genuine screenshot is not proof that the payment settled.",
+            "hi": "Visually genuine screenshot भी payment settle होने का proof नहीं है।",
+        },
     ],
     "SUSPICIOUS": [
-        {"en": "DO NOT accept this as payment proof - verify directly in your bank app.", "hi": "इसे payment proof मत मानें - अपने bank app में directly verify करें।"},
-        {"en": "Ask the sender to show the transaction live in their UPI app.", "hi": "Sender से कहें कि अपने UPI app में live transaction दिखाएं।"},
-        {"en": "If payment not in your account, do not hand over goods/services.", "hi": "अगर payment account में नहीं है तो goods/services मत दें।"},
+        {
+            "en": "Do not accept this screenshot as payment proof; check your own account.",
+            "hi": "इसे payment proof न मानें; अपना account check करें।",
+        },
+        {
+            "en": "Ask the sender to show the transaction live in their UPI app.",
+            "hi": "Sender से अपने UPI app में live transaction दिखाने को कहें।",
+        },
+        {
+            "en": "Do not release goods or services until the credit is visible to you.",
+            "hi": "Credit दिखने तक goods या services न दें।",
+        },
     ],
     "SCAM": [
-        {"en": "DO NOT accept this payment - it is likely fraudulent.", "hi": "यह payment मत लें - यह fraud हो सकता है।"},
-        {"en": "Report this UPI ID to NPCI at npci.org.in.", "hi": "इस UPI ID को NPCI को report करें - npci.org.in पर।"},
-        {"en": "File a cybercrime complaint at cybercrime.gov.in or call 1930.", "hi": "cybercrime.gov.in पर complaint करें या 1930 call करें।"},
-        {"en": "Block the sender and do not engage further.", "hi": "Sender को block करें और आगे engage मत करें।"},
-    ]
+        {
+            "en": "Do not accept this screenshot as payment proof.",
+            "hi": "इस screenshot को payment proof न मानें।",
+        },
+        {
+            "en": "Check your own account and preserve the chat and screenshot as evidence.",
+            "hi": "अपना account check करें और chat व screenshot को evidence के रूप में रखें।",
+        },
+        {
+            "en": "If money or goods were lost, report at cybercrime.gov.in or call 1930.",
+            "hi": "नुकसान हुआ हो तो cybercrime.gov.in पर report करें या 1930 call करें।",
+        },
+    ],
 }
 
 HOW_TO_AVOID = [
-    {"en": "Always check your own UPI app or bank SMS for credit confirmation.", "hi": "हमेशा अपने UPI app या bank SMS में credit confirm करें।"},
-    {"en": "Ask the buyer to show live transaction - not a screenshot.", "hi": "Buyer से live transaction दिखाने को कहें - screenshot नहीं।"},
-    {"en": "Never release goods/services based on screenshot alone.", "hi": "कभी भी सिर्फ screenshot देखकर goods/services मत दें।"},
-    {"en": "Real UPI payments reflect in your account within seconds.", "hi": "Real UPI payment seconds में आपके account में reflect होती है।"},
+    {
+        "en": "Always confirm incoming credit in your own UPI app, bank app, or statement.",
+        "hi": "Incoming credit हमेशा अपने UPI app, bank app या statement में confirm करें।",
+    },
+    {
+        "en": "Match the amount, payer, time, and reference with your own transaction history.",
+        "hi": "Amount, payer, time और reference को अपनी transaction history से match करें।",
+    },
+    {
+        "en": "Never release goods or services based only on a screenshot.",
+        "hi": "सिर्फ screenshot देखकर goods या services कभी न दें।",
+    },
 ]
 
 
-async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
-    import asyncio
-    loop = asyncio.get_running_loop()
-    ai = await loop.run_in_executor(None, _run_ai_analysis, image_bytes)
+def get_client() -> OpenAI:
+    return OpenAI(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        timeout=MODEL_TIMEOUT_SECONDS,
+        max_retries=1,
+    )
 
-    # Parse
-    app_name       = ai.get("app_name") or "Unknown"
-    app_key        = (ai.get("app_key") or "unknown").lower()
-    app_confidence = int(ai.get("app_confidence") or 0)
-    fields         = ai.get("fields") or {}
-    visual_signals = ai.get("visual_signals") or []
-    ai_risk        = float(ai.get("risk_percentage") or 50)
-    ai_confidence  = (ai.get("confidence") or "medium").lower()
-    ai_reasons     = ai.get("reasons") or []
 
-    # AI verdict -> our verdict (pure trust)
-    raw_verdict = (ai.get("verdict") or "SUSPICIOUS").upper()
-    if raw_verdict == "GENUINE":
-        final_verdict = "SAFE"
-    elif raw_verdict == "FAKE":
-        final_verdict = "SCAM"
-    elif raw_verdict in ("SAFE", "SCAM", "SUSPICIOUS"):
-        final_verdict = raw_verdict
+def _prepare_image(image_bytes: bytes) -> tuple[bytes, str, tuple[int, int]]:
+    """Validate pixels and convert HEIC/HEIF to a model-supported JPEG."""
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        image.load()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValueError("Could not decode this image. Upload a clear PNG, JPEG, WebP or HEIC file.") from exc
+
+    width, height = image.size
+    if width < 200 or height < 200:
+        raise ValueError("Image dimensions are too small. Upload the full payment screen.")
+    if width * height > MAX_IMAGE_PIXELS:
+        raise ValueError("Image resolution is too large. Upload an image under 40 megapixels.")
+
+    image_format = (image.format or "").upper()
+    media_types = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
+    if image_format in media_types:
+        return image_bytes, media_types[image_format], (width, height)
+
+    if image_format in {"HEIC", "HEIF", "AVIF"}:
+        converted = ImageOps.exif_transpose(image).convert("RGB")
+        output = io.BytesIO()
+        converted.save(output, format="JPEG", quality=95, optimize=True)
+        return output.getvalue(), "image/jpeg", (width, height)
+
+    raise ValueError("Unsupported decoded image format. Upload PNG, JPEG, WebP or HEIC.")
+
+
+def _image_data_url(image_bytes: bytes, media_type: str) -> str:
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{media_type};base64,{encoded}"
+
+
+def _run_model(
+    image_bytes: bytes,
+    media_type: str,
+    prompt: str,
+    model: str,
+) -> PaymentObservation:
+    request_kwargs: dict = {
+        "model": model,
+        "instructions": SYSTEM_PROMPT,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {
+                        "type": "input_image",
+                        "image_url": _image_data_url(image_bytes, media_type),
+                        "detail": IMAGE_DETAIL,
+                    },
+                ],
+            }
+        ],
+        "text_format": PaymentObservation,
+        "max_output_tokens": 2200,
+        "store": False,
+    }
+    if model.startswith("gpt-5"):
+        request_kwargs["reasoning"] = {"effort": REASONING_EFFORT}
+
+    response = get_client().responses.parse(**request_kwargs)
+    if response.output_parsed is None:
+        raise ValueError("The vision model did not return a usable forensic report.")
+    return response.output_parsed
+
+
+def _needs_review(observation: PaymentObservation) -> bool:
+    if REVIEW_MODE in {"off", "false", "0", "disabled"}:
+        return False
+    if REVIEW_MODE == "always":
+        return True
+    return any(
+        (
+            observation.authenticity_assessment != "no_evidence_of_manipulation",
+            observation.fake_probability >= 30,
+            bool(observation.tampering_evidence),
+            bool(observation.impossible_inconsistencies),
+            observation.readability != "clear",
+            observation.app_confidence < 50,
+        )
+    )
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        clean = " ".join(str(value).split()).strip()
+        key = clean.casefold()
+        if clean and key not in seen:
+            seen.add(key)
+            result.append(clean)
+    return result
+
+
+def _merge_fields(observations: list[PaymentObservation]) -> ExtractedFields:
+    merged: dict[str, str | None] = {}
+    for field_name in ExtractedFields.model_fields:
+        candidates = [getattr(item.fields, field_name) for item in observations]
+        merged[field_name] = next((value for value in candidates if value), None)
+    return ExtractedFields(**merged)
+
+
+def _has_confirmed_fake_evidence(observation: PaymentObservation) -> bool:
+    strong_count = sum(item.strength == "strong" for item in observation.tampering_evidence)
+    return (
+        observation.authenticity_assessment == "clear_manipulation"
+        and (strong_count > 0 or bool(observation.impossible_inconsistencies))
+        and observation.fake_probability >= 65
+    )
+
+
+def calibrate_observations(observations: list[PaymentObservation]) -> dict:
+    """Turn one or two model observations into a conservative public verdict."""
+    if not observations:
+        raise ValueError("At least one forensic observation is required.")
+
+    evidence = [item for obs in observations for item in obs.tampering_evidence]
+    strong_count = sum(item.strength == "strong" for item in evidence)
+    moderate_count = sum(item.strength == "moderate" for item in evidence)
+    impossible = _unique_strings(
+        [item for obs in observations for item in obs.impossible_inconsistencies]
+    )
+    probabilities = [obs.fake_probability for obs in observations]
+    average_probability = round(mean(probabilities))
+    confirmed_votes = sum(_has_confirmed_fake_evidence(obs) for obs in observations)
+
+    if len(observations) == 1:
+        confirmed_fake = confirmed_votes == 1
     else:
-        final_verdict = "SUSPICIOUS"
+        # Two independent reports must agree before a high-risk verdict. A single
+        # strong report is retained as SUSPICIOUS instead of being discarded.
+        confirmed_fake = confirmed_votes == len(observations)
 
-    final_risk = round(ai_risk)
+    has_uncertainty = any(
+        (
+            obs.authenticity_assessment != "no_evidence_of_manipulation"
+            or obs.fake_probability >= 35
+            or obs.readability != "clear"
+        )
+        for obs in observations
+    )
 
-    if final_verdict not in VERDICT_LABELS:
-        final_verdict = "SUSPICIOUS"
+    if confirmed_fake:
+        verdict = "SCAM"
+        risk = min(98, max(70, average_probability))
+    elif strong_count or impossible or moderate_count >= 2 or has_uncertainty:
+        verdict = "SUSPICIOUS"
+        risk = min(65, max(31, average_probability))
+    else:
+        verdict = "SAFE"
+        risk = min(30, max(5, average_probability))
 
-    # Reasons
-    why = []
-    for r in ai_reasons:
-        if isinstance(r, dict):
-            why.append(r)
-        elif isinstance(r, str):
-            why.append({"en": r, "hi": ""})
+    best_app = max(observations, key=lambda item: item.app_confidence)
+    fields = _merge_fields(observations)
+    limitations = _unique_strings(
+        [item for obs in observations for item in obs.benign_limitations]
+    )
+    content_risk = _unique_strings(
+        [item for obs in observations for item in obs.content_risk_signals]
+    )
 
-    # Visual signals
-    visual_forensics = []
-    for vs in visual_signals:
-        if isinstance(vs, str):
-            visual_forensics.append({"en": vs, "hi": ""})
-        elif isinstance(vs, dict):
-            visual_forensics.append(vs)
+    if verdict == "SCAM":
+        reason_text = _unique_strings(
+            [item.description for item in evidence if item.strength == "strong"] + impossible
+        )
+    elif verdict == "SUSPICIOUS":
+        reason_text = _unique_strings(
+            [item.description for item in evidence if item.strength != "weak"]
+            + impossible
+            + ["The available visual evidence is not conclusive enough for a genuine or fake verdict."]
+        )
+    else:
+        reason_text = ["No clear, specific visual evidence of pixel manipulation was found."]
+
+    why = [{"en": item, "hi": ""} for item in reason_text[:6]]
+    visual_forensics = [
+        {
+            "en": item.description,
+            "hi": "",
+            "strength": item.strength,
+            "category": item.category,
+            "location": item.location,
+        }
+        for item in evidence[:10]
+    ]
+
+    confidence_rank = {"low": 0, "medium": 1, "high": 2}
+    confidence = min(observations, key=lambda item: confidence_rank[item.confidence]).confidence
+    if len(observations) > 1 and len({obs.authenticity_assessment for obs in observations}) > 1:
+        confidence = "low"
 
     return {
-        "verdict": final_verdict,
-        "risk_percentage": final_risk,
-        "confidence": ai_confidence,
-        "verdict_label": VERDICT_LABELS[final_verdict],
+        "verdict": verdict,
+        "risk_percentage": risk,
+        "confidence": confidence,
+        "verdict_label": VERDICT_LABELS[verdict],
         "detected_app": {
-            "name": app_name,
-            "app_key": app_key,
-            "detection_confidence": app_confidence,
+            "name": best_app.app_name or "Unknown",
+            "app_key": (best_app.app_key or "unknown").lower(),
+            "detection_confidence": best_app.app_confidence,
         },
-        "extracted_fields": {
-            "amount": fields.get("amount"),
-            "transaction_id": fields.get("transaction_id"),
-            "upi_id": fields.get("upi_id"),
-            "recipient_name": fields.get("recipient_name"),
-            "bank_name": fields.get("bank_name"),
-            "timestamp": fields.get("timestamp"),
-            "status_text": fields.get("status_text"),
-        },
+        "extracted_fields": fields.model_dump(),
+        "payment_state": observations[0].payment_state,
+        "screenshot_kind": observations[0].screenshot_kind,
         "why": why,
+        "reasons": why,
         "visual_forensics": visual_forensics,
-        "pattern_match": {"found": False, "match_count": 0},
-        "what_to_do": WHAT_TO_DO[final_verdict],
+        "visual_signals": visual_forensics,
+        "benign_limitations": limitations[:8],
+        "content_risk_signals": content_risk[:8],
+        "evidence_summary": {
+            "strong": strong_count,
+            "moderate": moderate_count,
+            "weak": sum(item.strength == "weak" for item in evidence),
+            "impossible_inconsistencies": len(impossible),
+            "review_count": len(observations),
+        },
+        "pattern_match": {
+            "found": bool(strong_count or impossible),
+            "match_count": strong_count + len(impossible),
+        },
+        "what_to_do": WHAT_TO_DO[verdict],
         "how_to_avoid": HOW_TO_AVOID,
     }
+
+
+async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
+    prepared_bytes, media_type, dimensions = _prepare_image(image_bytes)
+    loop = asyncio.get_running_loop()
+
+    primary = await loop.run_in_executor(
+        None,
+        _run_model,
+        prepared_bytes,
+        media_type,
+        ANALYST_PROMPT,
+        PRIMARY_MODEL,
+    )
+    observations = [primary]
+    review_required = _needs_review(primary)
+    review_failed = False
+
+    if review_required:
+        try:
+            review = await loop.run_in_executor(
+                None,
+                _run_model,
+                prepared_bytes,
+                media_type,
+                REVIEW_PROMPT,
+                REVIEW_MODEL,
+            )
+            observations.append(review)
+        except Exception as exc:  # a review outage must not discard a valid primary report
+            logger.warning("Payment screenshot review pass failed: %s", exc)
+            review_failed = True
+
+    result = calibrate_observations(observations)
+    if review_failed and result["verdict"] == "SCAM":
+        # The production default requires independent agreement for a high-risk
+        # verdict. A transient reviewer outage must not silently bypass that guard.
+        result.update(
+            {
+                "verdict": "SUSPICIOUS",
+                "risk_percentage": 65,
+                "confidence": "low",
+                "verdict_label": VERDICT_LABELS["SUSPICIOUS"],
+                "what_to_do": WHAT_TO_DO["SUSPICIOUS"],
+            }
+        )
+        result["why"].append(
+            {
+                "en": "A second forensic review was unavailable, so a high-risk verdict was not confirmed.",
+                "hi": "",
+            }
+        )
+        result["reasons"] = result["why"]
+    result.update(
+        {
+            "analysis_version": ANALYSIS_VERSION,
+            "review_performed": len(observations) > 1,
+            "review_status": (
+                "failed" if review_failed else "completed" if review_required else "not_required"
+            ),
+            "image_dimensions": {"width": dimensions[0], "height": dimensions[1]},
+        }
+    )
+    return result

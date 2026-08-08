@@ -30,6 +30,24 @@ Set these Render environment variables before deploying:
 
 The URL checker also has a stricter per-IP rate limit because it performs external checks, screenshots, AI work, and writes dashboard history.
 
+## Payment screenshot accuracy controls
+
+The payment screenshot endpoint uses structured vision observations plus a
+deterministic evidence threshold. Missing fields, unfamiliar apps, compression,
+cropping, and suspicious UPI words are not treated as proof of image tampering.
+
+Optional Render environment variables:
+
+- `PAYMENT_SCREENSHOT_MODEL` (default `gpt-5.6-terra`): primary vision model.
+- `PAYMENT_SCREENSHOT_REVIEW_MODEL` (default `gpt-5.6-sol`): independent reviewer for uncertain, low-quality, or unfamiliar screenshots.
+- `PAYMENT_SCREENSHOT_REVIEW_MODE`: `suspicious` (default), `always`, or `off`.
+- `PAYMENT_SCREENSHOT_REASONING_EFFORT` (default `medium`).
+- `PAYMENT_SCREENSHOT_IMAGE_DETAIL` (default `original`).
+- `PAYMENT_SCREENSHOT_ANALYSIS_TIMEOUT` (default `90` seconds).
+
+See `tests/payment_screenshot_dataset/README.md` for the leakage-safe labeled
+evaluation format and the 95% quality gate.
+
 ## Domain CSV seeder
 
 Run the isolated seeder whenever you want to create the next batch of public pages from a CSV:

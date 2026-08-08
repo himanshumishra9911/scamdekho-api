@@ -5,12 +5,13 @@ Payment Screenshot API Router - ScamDekho
 import asyncio
 import base64
 import logging
+import os
 import uuid
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from app.services.db_service import save_scan
-from app.services.payment_screenshot_engine import analyze_payment_screenshot
+from app.services.payment_screenshot_engine import ANALYSIS_VERSION, analyze_payment_screenshot
 from app.services.cache_service import get_cached_scan, set_cached_scan
 
 logger   = logging.getLogger(__name__)
@@ -19,24 +20,23 @@ limiter  = Limiter(key_func=get_remote_address)
 
 ALLOWED_MIME_TYPES = {
     "image/jpeg", "image/jpg", "image/png",
-    "image/webp", "image/heic", "image/heif"
+    "image/webp", "image/heic", "image/heif", "image/avif"
 }
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".avif"}
 MAX_FILE_SIZE    = 10 * 1024 * 1024
 MIN_FILE_SIZE    = 5  * 1024
-ANALYSIS_TIMEOUT = 60
+ANALYSIS_TIMEOUT = int(os.getenv("PAYMENT_SCREENSHOT_ANALYSIS_TIMEOUT", "90"))
 CHUNK_SIZE       = 64 * 1024
 
 MAGIC_SIGNATURES = {
     b"\xff\xd8\xff":          "image/jpeg",
     b"\x89PNG\r\n\x1a\n":    "image/png",
     b"RIFF":                  "image/webp",
-    b"\x00\x00\x00\x18ftyp": "image/heic",
-    b"\x00\x00\x00\x1cftyp": "image/heic",
-    b"ftypheic":              "image/heic",
-    b"ftypheix":              "image/heic",
-    b"ftypmif1":              "image/heif",
 }
+
+HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"hevx"}
+HEIF_BRANDS = {b"mif1", b"msf1"}
+AVIF_BRANDS = {b"avif", b"avis"}
 
 
 def get_real_mime_type(header_bytes: bytes) -> str | None:
@@ -45,6 +45,17 @@ def get_real_mime_type(header_bytes: bytes) -> str | None:
             if magic == b"RIFF" and header_bytes[8:12] != b"WEBP":
                 continue
             return mime
+    # ISO Base Media files put the major brand after a variable 4-byte box size
+    # and the literal `ftyp`. Checking the brand is more reliable than matching
+    # one hard-coded box size used by only some HEIC encoders.
+    if len(header_bytes) >= 12 and header_bytes[4:8] == b"ftyp":
+        brand = header_bytes[8:12]
+        if brand in HEIC_BRANDS:
+            return "image/heic"
+        if brand in HEIF_BRANDS:
+            return "image/heif"
+        if brand in AVIF_BRANDS:
+            return "image/avif"
     return None
 
 
@@ -119,7 +130,13 @@ async def check_payment_screenshot(
             detail="File content does not match an image. Only real image files are accepted."
         )
 
-    cache_payload = {"mime_type": real_mime, "image_bytes": image_bytes}
+    # Versioning prevents a stale result from the old prompt-only classifier from
+    # surviving an engine deployment through the image cache.
+    cache_payload = {
+        "analysis_version": ANALYSIS_VERSION,
+        "mime_type": real_mime,
+        "image_bytes": image_bytes,
+    }
     cached = await get_cached_scan("payment_screenshot", cache_payload)
     if cached:
         cached["from_cache"] = True
@@ -177,7 +194,9 @@ async def check_payment_screenshot(
                 "app_confidence":   app.get("detection_confidence"),
                 "extracted_fields": fields,
                 "reasons":          result.get("reasons", []),
-                "visual_signals":   result.get("visual_signals", []),
+                "visual_signals":   result.get("visual_forensics", []),
+                "analysis_version": result.get("analysis_version"),
+                "review_performed": result.get("review_performed", False),
             }
         )
     except Exception as e:
