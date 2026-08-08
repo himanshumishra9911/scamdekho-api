@@ -30,6 +30,40 @@ Set these Render environment variables before deploying:
 
 The URL checker also has a stricter per-IP rate limit because it performs external checks, screenshots, AI work, and writes dashboard history.
 
+## Payment screenshot accuracy controls
+
+The payment screenshot endpoint uses a cost-aware GPT-5.6 cascade plus a
+deterministic consensus threshold. A Sol/high pass inspects one full original
+image. Clear results stop there; uncertain, unfamiliar, unreadable, or
+fake-looking results escalate to an independent Sol/high clone-app specialist
+with focused views. A blind Sol/xhigh adjudicator is reserved for unresolved
+disagreement. A `SCAM` verdict is never exposed from one model report. Missing
+fields, unfamiliar apps, compression, cropping, and suspicious UPI words are not
+treated as proof of fabrication. The API reports actual model token usage and an
+estimated USD cost, while the OpenAI billing dashboard remains authoritative.
+
+Optional Render environment variables:
+
+- `PAYMENT_SCREENSHOT_MODEL` (default `gpt-5.6-sol`): primary forensic model.
+- `PAYMENT_SCREENSHOT_REVIEW_MODEL` (default `gpt-5.6-sol`): independent clone-app specialist.
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL` (default `gpt-5.6-sol`): blind third-pass adjudicator.
+- `PAYMENT_SCREENSHOT_REVIEW_MODE`: `suspicious` (default), `always`, or `off`.
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_MODE`: `adaptive` (default), `always`, or `off`.
+- `PAYMENT_SCREENSHOT_REASONING_EFFORT` (default `high`) supplies the primary/reviewer baseline.
+- `PAYMENT_SCREENSHOT_PRIMARY_REASONING_EFFORT` and `PAYMENT_SCREENSHOT_REVIEW_REASONING_EFFORT` optionally override that baseline.
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_EFFORT` (default `xhigh`).
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_MODE`: `standard` (default) or `pro`. Enable `pro` only after a representative holdout demonstrates a worthwhile gain.
+- `PAYMENT_SCREENSHOT_IMAGE_DETAIL` (default `original`).
+- `PAYMENT_SCREENSHOT_OUTPUT_VERBOSITY` (default `low`) keeps structured reports token-efficient.
+- `PAYMENT_SCREENSHOT_MAX_VIEWS` (default `3`, range `1`-`3`) is the global view cap.
+- `PAYMENT_SCREENSHOT_PRIMARY_MAX_VIEWS` (default `1`).
+- `PAYMENT_SCREENSHOT_REVIEW_MAX_VIEWS` (default `3`).
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_VIEWS` (default `3`).
+- `PAYMENT_SCREENSHOT_ANALYSIS_TIMEOUT` (default `180` seconds).
+
+See `tests/payment_screenshot_dataset/README.md` for the leakage-safe labeled
+evaluation format and the 95% quality gate.
+
 ## Domain CSV seeder
 
 Run the isolated seeder whenever you want to create the next batch of public pages from a CSV:

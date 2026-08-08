@@ -1,6 +1,15 @@
 __pycache__/
 *.pyc
 venv/
+.venv/
 .env
 pyvenv.cfg
 scamdekho.db
+tests/payment_screenshot_dataset/**/*.png
+tests/payment_screenshot_dataset/**/*.jpg
+tests/payment_screenshot_dataset/**/*.jpeg
+tests/payment_screenshot_dataset/**/*.webp
+tests/payment_screenshot_dataset/**/*.heic
+tests/payment_screenshot_dataset/**/*.heif
+tests/payment_screenshot_dataset/**/*.avif
+payment-screenshot-eval*.json

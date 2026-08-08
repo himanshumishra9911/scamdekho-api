@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-openai
+openai>=2.0,<3
 pydantic
 python-dotenv
 requests
@@ -8,6 +8,7 @@ python-multipart
 pytesseract
 playwright
 Pillow
+pillow-heif
 motor
 httpx
 opencv-contrib-python

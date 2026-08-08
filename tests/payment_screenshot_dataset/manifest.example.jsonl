@@ -1,0 +1,2 @@
+{"id":"gpay-genuine-001","file":"genuine/google_pay/gpay-001.png","label":"GENUINE","app":"google_pay","split":"calibration","group_id":"gpay-source-001","variant":"original"}
+{"id":"phonepe-fake-001","file":"fake/phonepe/phonepe-001.png","label":"FAKE","app":"phonepe","split":"holdout","group_id":"phonepe-source-001","variant":"known_fake"}
