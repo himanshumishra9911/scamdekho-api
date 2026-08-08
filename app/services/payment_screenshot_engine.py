@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v15"
+ANALYSIS_VERSION = "payment-vision-v16"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
@@ -684,12 +684,44 @@ def _is_benign_replica_claim(group_name: str, claim: str) -> bool:
     return False
 
 
+def _is_objective_wording_claim(claim: str) -> bool:
+    normalized = claim.casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "misspell",
+            "spelling error",
+            "grammatical error",
+            "extra letter",
+            "wrong spelling",
+        )
+    )
+
+
+def _is_objective_visual_claim(claim: str) -> bool:
+    normalized = claim.casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "paste boundary",
+            "hard edge",
+            "hard rectangular edge",
+            "pixel artifact",
+            "pixelated",
+            "anti-alias",
+            "halo around",
+            "different resolution",
+            "composite boundary",
+        )
+    )
+
+
 def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
     raw_signal_groups = [
-        ("wording", triage.wording_errors, "moderate"),
-        ("app identity", triage.app_identity_conflicts, "moderate"),
+        ("wording", triage.wording_errors, "weak"),
+        ("app identity", triage.app_identity_conflicts, "weak"),
         ("transaction format", triage.transaction_format_anomalies, "weak"),
-        ("component style", triage.component_style_conflicts, "moderate"),
+        ("component style", triage.component_style_conflicts, "weak"),
     ]
     filtered_claims: list[str] = []
     signal_groups: list[tuple[str, list[str], str]] = []
@@ -700,7 +732,18 @@ def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
                 filtered_claims.append(item)
             else:
                 accepted.append(item)
-        signal_groups.append((group_name, accepted, strength))
+        if group_name == "wording":
+            objective = [item for item in accepted if _is_objective_wording_claim(item)]
+            semantic = [item for item in accepted if item not in objective]
+            signal_groups.append(("wording", objective, "moderate"))
+            signal_groups.append(("wording variant", semantic, "weak"))
+        elif group_name == "component style":
+            objective = [item for item in accepted if _is_objective_visual_claim(item)]
+            semantic = [item for item in accepted if item not in objective]
+            signal_groups.append(("visual component", objective, "moderate"))
+            signal_groups.append(("component style", semantic, "weak"))
+        else:
+            signal_groups.append((group_name, accepted, strength))
 
     independent_groups = sum(bool(items) for _, items, _ in signal_groups)
     material_groups = sum(
