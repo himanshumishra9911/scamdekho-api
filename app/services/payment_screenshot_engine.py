@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v10"
+ANALYSIS_VERSION = "payment-vision-v11"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
@@ -623,6 +623,9 @@ def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
         ("component style", triage.component_style_conflicts, "moderate"),
     ]
     independent_groups = sum(bool(items) for _, items, _ in signal_groups)
+    material_groups = sum(
+        bool(items) for _, items, strength in signal_groups if strength != "weak"
+    )
     model_confirmed_replica = (
         triage.assessment == "likely_replica"
         and triage.replica_probability >= 65
@@ -631,8 +634,9 @@ def _replica_triage_to_observation(triage: ReplicaTriage) -> PaymentObservation:
     high_confidence_multisignal_replica = (
         triage.assessment == "uncertain"
         and triage.app_confidence >= 75
-        and triage.replica_probability >= 45
+        and triage.replica_probability >= 35
         and independent_groups >= 3
+        and material_groups >= 2
     )
     confirmed_replica = model_confirmed_replica or high_confidence_multisignal_replica
     evidence: list[VisualEvidence] = []
@@ -782,6 +786,18 @@ def _summarize_model_usage(passes: list[ModelPassResult]) -> dict:
                 "total_tokens": item.total_tokens,
                 "estimated_cost_usd": item.estimated_cost_usd,
                 "latency_ms": item.latency_ms,
+                "app_key": item.observation.app_key,
+                "app_confidence": item.observation.app_confidence,
+                "authenticity_assessment": item.observation.authenticity_assessment,
+                "fake_probability": item.observation.fake_probability,
+                "strong_evidence": sum(
+                    evidence.strength == "strong"
+                    for evidence in item.observation.tampering_evidence
+                ),
+                "moderate_evidence": sum(
+                    evidence.strength == "moderate"
+                    for evidence in item.observation.tampering_evidence
+                ),
             }
             for item in passes
         ],
@@ -853,6 +869,24 @@ def _unique_strings(values: list[str]) -> list[str]:
             seen.add(key)
             result.append(clean)
     return result
+
+
+def _candidate_signal_suffix(observations: list[PaymentObservation]) -> str:
+    candidate_signals = _unique_strings(
+        [
+            item.description
+            for observation in observations
+            for item in observation.tampering_evidence
+            if item.strength in {"moderate", "strong"}
+        ]
+    )[:6]
+    if not candidate_signals:
+        return ""
+    return (
+        "\n\nCandidate signals to verify or reject independently:\n- "
+        + "\n- ".join(candidate_signals)
+        + "\nDo not accept these claims unless the corresponding pixels are visible."
+    )
 
 
 def _merge_fields(observations: list[PaymentObservation]) -> ExtractedFields:
@@ -1116,11 +1150,15 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             review_views = get_views(REVIEW_MAX_ANALYSIS_VIEWS)
             attempted_passes += 1
             attempted_view_counts["review"] = len(review_views)
+            review_prompt = (
+                f"{REPLICA_TRIAGE_PROMPT}\n\n{REPLICA_REVIEW_PROMPT}"
+                + _candidate_signal_suffix(observations)
+            )
             try:
                 review_pass = await execute_replica_triage(
                     "review",
                     review_views,
-                    f"{REPLICA_TRIAGE_PROMPT}\n\n{REPLICA_REVIEW_PROMPT}",
+                    review_prompt,
                     REVIEW_MODEL,
                     REVIEW_REASONING_EFFORT,
                     _normalize_image_detail(REVIEW_IMAGE_DETAIL, "auto"),
@@ -1138,21 +1176,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         attempted_passes += 1
         attempted_view_counts["adjudicator"] = len(adjudicator_views)
         adjudicator_performed = True
-        candidate_signals = _unique_strings(
-            [
-                item.description
-                for observation in observations
-                for item in observation.tampering_evidence
-                if item.strength in {"moderate", "strong"}
-            ]
-        )[:6]
-        adjudicator_prompt = ADJUDICATOR_PROMPT
-        if candidate_signals:
-            adjudicator_prompt += (
-                "\n\nCandidate signals to verify or reject independently:\n- "
-                + "\n- ".join(candidate_signals)
-                + "\nDo not accept these claims unless the corresponding pixels are visible."
-            )
+        adjudicator_prompt = ADJUDICATOR_PROMPT + _candidate_signal_suffix(observations)
         try:
             adjudicator_pass = await execute_pass(
                 "adjudicator",
