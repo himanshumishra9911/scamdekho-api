@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v13"
+ANALYSIS_VERSION = "payment-vision-v14"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-mini")
@@ -631,6 +631,9 @@ def _is_benign_replica_claim(group_name: str, claim: str) -> bool:
         "thanksapp",
         "airtel thanks app",
         "footer brand",
+        "no obvious spelling",
+        "masked",
+        "partial",
     )
     interoperability_markers = (
         "recipient line",
@@ -648,6 +651,9 @@ def _is_benign_replica_claim(group_name: str, claim: str) -> bool:
         "partner branding",
         "separate partner",
         "provider branding",
+        "provider logo",
+        "text branding",
+        "monogram",
         "footer",
     )
     presentation_markers = (
@@ -899,10 +905,9 @@ def _needs_review(observation: PaymentObservation) -> bool:
             ),
             bool(observation.impossible_inconsistencies),
             observation.readability != "clear",
-            observation.confidence != "high",
             observation.screenshot_kind in {"other", "unreadable"},
-            observation.app_confidence < 50,
             _has_provider_identifier_review_signal(observation),
+            _has_malformed_explicit_transaction_id_review_signal(observation),
         )
     )
 
@@ -1007,6 +1012,21 @@ def _provider_identifier_candidate(
 def _has_provider_identifier_review_signal(observation: PaymentObservation) -> bool:
     """Escalate one suspicious read, but never confirm it on one read alone."""
     return _provider_identifier_candidate(observation) is not None
+
+
+def _has_malformed_explicit_transaction_id_review_signal(
+    observation: PaymentObservation,
+) -> bool:
+    """Review a conspicuously short mixed ID without treating it as proof."""
+    if not _is_explicit_transaction_id_label(observation.fields.transaction_label):
+        return False
+    transaction_id = _normalized_transaction_id(observation.fields.transaction_id)
+    return (
+        bool(transaction_id)
+        and len(transaction_id) < 14
+        and any(character.isalpha() for character in transaction_id)
+        and any(character.isdigit() for character in transaction_id)
+    )
 
 
 def _apply_provider_identifier_consensus(

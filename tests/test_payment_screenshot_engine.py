@@ -283,6 +283,37 @@ def test_one_invalid_provider_id_read_only_triggers_review():
     assert not item.tampering_evidence
 
 
+def test_low_app_identity_confidence_alone_does_not_trigger_review():
+    item = observation(
+        app_name="Unknown",
+        app_key="unknown",
+        app_confidence=5,
+        confidence="low",
+        fake_probability=10,
+    )
+
+    assert _needs_review(item) is False
+
+
+def test_short_mixed_explicit_transaction_id_triggers_independent_review():
+    item = _replica_triage_to_observation(
+        replica_triage(
+            app_name="Unknown",
+            app_key="unknown",
+            app_confidence=10,
+            transaction_label="Transaction ID",
+            transaction_id="TXNEHNAVCV3",
+            transaction_format_anomalies=[],
+            assessment="likely_genuine",
+            replica_probability=10,
+            confidence="low",
+        )
+    )
+
+    assert item.authenticity_assessment == "no_evidence_of_manipulation"
+    assert _needs_review(item) is True
+
+
 def test_default_fast_path_uses_low_detail_and_bounded_output():
     assert _request_policy(engine.ANALYST_PROMPT) == ("low", 1100)
     assert _request_policy(engine.REPLICA_REVIEW_PROMPT) == ("auto", 1500)
@@ -519,10 +550,6 @@ def test_replica_app_dissent_is_never_silently_marked_safe():
     assert calibrate_observations(
         [replica, observation(fake_probability=8), observation(fake_probability=10)]
     )["verdict"] == "SUSPICIOUS"
-
-
-def test_unknown_or_unclear_apps_receive_a_review_in_default_mode():
-    assert _needs_review(observation(app_name="Unknown", app_key="unknown", app_confidence=10))
 
 
 def test_valid_png_is_preserved_for_original_detail_analysis():
