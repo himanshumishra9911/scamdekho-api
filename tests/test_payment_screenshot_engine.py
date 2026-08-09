@@ -868,7 +868,7 @@ def test_clean_parallel_consensus_skips_costly_adjudicator(monkeypatch):
     assert result["verdict"] == "SAFE"
     assert calls == [
         (1, "gpt-5.4-nano", "none", "low"),
-        (2, "gpt-5.4-mini", "low", "auto"),
+        (2, "gpt-5.4-nano", "none", "auto"),
     ]
     assert result["ensemble"]["attempted_passes"] == 2
     assert result["ensemble"]["successful_passes"] == 2
