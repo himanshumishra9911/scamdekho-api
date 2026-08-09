@@ -42,10 +42,15 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v28"
-PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
+ANALYSIS_VERSION = "payment-vision-v29"
+# GPT-5 mini is the highest-quality direct-vision model that still fits the
+# product's measured ~$0.0014/check operating envelope.  Confirmed local
+# signatures and cache hits continue to bypass the model entirely.
+PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5-mini")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
-CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
+CHEAP_REVIEW_MODEL = os.getenv(
+    "PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", "gpt-5.4-nano"
+)
 REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODEL", "gpt-5.4-nano")
 ADJUDICATOR_MODEL = os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL", "gpt-5.4-nano")
 REVIEW_MODE = os.getenv("PAYMENT_SCREENSHOT_REVIEW_MODE", "suspicious").strip().lower()
@@ -103,13 +108,19 @@ ADJUDICATOR_MAX_OUTPUT_TOKENS = int(
     os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_OUTPUT_TOKENS", "1800")
 )
 BUDGET_TARGET_USD_PER_CHECK = float(
-    os.getenv("PAYMENT_SCREENSHOT_BUDGET_TARGET_USD", "0.0012")
+    os.getenv("PAYMENT_SCREENSHOT_BUDGET_TARGET_USD", "0.0014")
 )
+
+MODEL_SCORE_WEIGHT = 0.75
+FORENSIC_SCORE_WEIGHT = 0.25
+SAFE_MAX_SCORE = 34
+SCAM_MIN_SCORE = 70
 
 # Standard API prices per one million tokens. These values are used only for
 # request telemetry; billing remains authoritative in the OpenAI dashboard.
 MODEL_PRICING_USD_PER_MTOK = {
     "gpt-5-nano": {"input": 0.05, "cached_input": 0.005, "output": 0.4},
+    "gpt-5-mini": {"input": 0.25, "cached_input": 0.025, "output": 2.0},
     "gpt-5.4-nano": {"input": 0.2, "cached_input": 0.02, "output": 1.25},
     "gpt-5.4-mini": {"input": 0.75, "cached_input": 0.075, "output": 4.5},
     "gpt-5.6-sol": {"input": 5.0, "cached_input": 0.5, "output": 30.0},
@@ -216,6 +227,7 @@ class ModelPassResult:
     total_tokens: int = 0
     estimated_cost_usd: float | None = None
     latency_ms: int = 0
+    raw_model_score: int | None = None
 
 
 SYSTEM_PROMPT = """You assess whether an Indian payment screenshot was fabricated or edited. This includes a coherent screen rendered by a fake or clone payment app, not only a pasted value in a real-app screenshot.
@@ -268,6 +280,10 @@ Use clear_manipulation only when at least one strong, specific item exists in ta
 
 REPLICA_TRIAGE_PROMPT = """Perform a compact, independent fake/clone payment-app triage.
 
+You are the primary direct-image judge. Classify the authenticity of the
+submitted screenshot itself as likely_genuine, uncertain, or likely_replica.
+Do not answer whether bank settlement occurred; pixels cannot verify that.
+
 Quote the visible success heading, transaction-ID label, and transaction ID exactly without fixing spelling. Extract the amount, UPI ID, names, bank, and timestamp when visible; otherwise use null. app_name/app_key describe the visible paying-app UI, never the recipient's UPI-handle domain or bank. Check four independent signal families: system wording, claimed-app identity/labels, provider-ID coherence, and mixed component/icon/bank styles. A fake-app render can look pixel-clean.
 
 Inspect the system heading for stable spelling or grammar errors (for example a plural noun paired with a singular success result), but keep that as one signal. Also inspect the payment UI and device status bar for visibly duplicated, overlapping, merged, or ghosted glyphs; do not confuse ordinary compression blur with duplication.
@@ -278,6 +294,16 @@ If a third-party warning caption such as scam/fraud/savdhan/beware overlaps the
 receipt controls, record a moderate overlay signal: the submitted image is
 annotated and is not clean payment proof. Do not call the underlying transaction
 fake from that caption alone.
+
+Set replica_probability as a continuous visual-authenticity risk score, not a
+template value. Use the full 0-100 range and keep assessment consistent with it:
+- 0-34 likely_genuine: no material evidence that the submitted image is edited or a clone.
+- 35-69 uncertain: annotated, internally concerning, or insufficiently conclusive.
+- 70-100 likely_replica: clear fabrication/editing or a strongly supported clone screen.
+Do not repeatedly default to 25, 50, 75, or 99. Vary the score according to the
+number, independence, visibility, and strength of the actual signals. An
+overlapping third-party annotation normally belongs in 45-69 unless separate
+evidence shows the payment UI itself is fabricated.
 
 For example, on a confidently PhonePe-branded screen, an odd system heading, a generic banking-name or transaction label, a provider ID that does not cohere with that label, and generic/mixed bank components form separate signals only when actually visible. Any one of them alone is benign. Keep lists short and specific."""
 
@@ -501,6 +527,7 @@ def _model_pass_result(
     model: str,
     view_count: int,
     latency_ms: int = 0,
+    raw_model_score: int | None = None,
 ) -> ModelPassResult:
     usage = getattr(response, "usage", None)
     input_details = (
@@ -537,6 +564,11 @@ def _model_pass_result(
             output_tokens,
         ),
         latency_ms=latency_ms,
+        raw_model_score=(
+            raw_model_score
+            if raw_model_score is not None
+            else observation.fake_probability
+        ),
     )
 
 
@@ -567,6 +599,8 @@ def _reasoning_config(
     normalized_model = model.strip().lower()
     if normalized_model == "gpt-5-nano" or not reasoning_effort:
         return None
+    if normalized_model.startswith("gpt-5-mini") and reasoning_effort == "none":
+        reasoning_effort = "minimal"
     reasoning = {"effort": reasoning_effort}
     if reasoning_mode == "pro" and normalized_model.startswith("gpt-5.6"):
         reasoning["mode"] = "pro"
@@ -925,6 +959,7 @@ def _run_replica_triage(
         model,
         len(image_views),
         latency_ms,
+        raw_model_score=triage.replica_probability,
     )
 
 
@@ -942,6 +977,7 @@ def _normalize_pass_result(
             model=model,
             view_count=view_count,
             estimated_cost_usd=_estimate_cost_usd(model, 0, 0, 0, 0),
+            raw_model_score=value.fake_probability,
         )
     value.observation = _remove_benign_presentation_false_signals(value.observation)
     value.role = role
@@ -1072,6 +1108,7 @@ def _summarize_model_usage(passes: list[ModelPassResult]) -> dict:
                 "app_key": item.observation.app_key,
                 "app_confidence": item.observation.app_confidence,
                 "authenticity_assessment": item.observation.authenticity_assessment,
+                "raw_model_score": item.raw_model_score,
                 "fake_probability": item.observation.fake_probability,
                 "strong_evidence": sum(
                     evidence.strength == "strong"
@@ -1571,6 +1608,132 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
     }
 
 
+def _forensic_logic_score(
+    result: dict,
+    local_forensics: LocalForensicsResult,
+) -> int:
+    """Build the deterministic 25% component from auditable evidence.
+
+    The score is continuous and additive rather than a verdict lookup table.
+    Exact known-fake signatures never reach this path because they short-circuit
+    before the paid model call.
+    """
+    summary = result.get("evidence_summary") or {}
+    weak = max(0, int(summary.get("weak", 0)))
+    moderate = max(0, int(summary.get("moderate", 0)))
+    strong = max(0, int(summary.get("strong", 0)))
+    impossible = max(0, int(summary.get("impossible_inconsistencies", 0)))
+    replica_moderate = max(0, int(summary.get("replica_app_moderate", 0)))
+
+    score = 6.0
+    score += min(10.0, weak * 2.5)
+    score += min(42.0, moderate * 14.0)
+    score += min(56.0, strong * 28.0)
+    score += min(40.0, impossible * 20.0)
+    score += min(12.0, replica_moderate * 4.0)
+
+    if local_forensics.attention_overlay_candidate:
+        score += min(
+            14.0,
+            4.0 + local_forensics.attention_overlay_area_ratio * 220.0,
+        )
+    if local_forensics.red_overlay_candidate:
+        score += min(
+            20.0,
+            7.0 + local_forensics.red_overlay_area_ratio * 260.0,
+        )
+
+    annotation_term = (
+        local_forensics.annotation_overlay_term
+        or (
+            _model_confirmed_annotation_term(result)
+            if local_forensics.attention_overlay_candidate
+            else None
+        )
+    )
+    if annotation_term:
+        score = max(score, 82.0)
+    elif local_forensics.force_review:
+        score = max(score, 46.0)
+
+    clean_votes = max(0, int(summary.get("clean_votes", 0)))
+    if not any((weak, moderate, strong, impossible, annotation_term)):
+        score -= min(4.0, clean_votes * 1.5)
+    return max(0, min(100, round(score)))
+
+
+def _apply_weighted_ensemble(
+    result: dict,
+    model_passes: list[ModelPassResult],
+    local_forensics: LocalForensicsResult,
+) -> None:
+    """Apply the product's explicit 75% vision / 25% forensic blend."""
+    if not model_passes:
+        return
+    observations = [item.observation for item in model_passes]
+    raw_scores = [
+        item.raw_model_score
+        if item.raw_model_score is not None
+        else item.observation.fake_probability
+        for item in model_passes
+    ]
+    model_score = round(mean(raw_scores), 1)
+    forensic_score = _forensic_logic_score(result, local_forensics)
+    combined_score = round(
+        model_score * MODEL_SCORE_WEIGHT
+        + forensic_score * FORENSIC_SCORE_WEIGHT
+    )
+    combined_score = max(0, min(100, combined_score))
+
+    # A screenshot that cannot be read, or materially different GPT reads, is
+    # inherently inconclusive even when their arithmetic average is low.
+    if any(item.readability == "unreadable" for item in observations):
+        combined_score = max(SAFE_MAX_SCORE + 1, combined_score)
+    if len(raw_scores) > 1 and max(raw_scores) - min(raw_scores) >= 30:
+        combined_score = max(SAFE_MAX_SCORE + 1, combined_score)
+
+    if combined_score >= SCAM_MIN_SCORE:
+        verdict = "SCAM"
+    elif combined_score > SAFE_MAX_SCORE:
+        verdict = "SUSPICIOUS"
+    else:
+        verdict = "SAFE"
+
+    disagreement = abs(model_score - forensic_score)
+    threshold_distance = min(
+        abs(combined_score - SAFE_MAX_SCORE),
+        abs(combined_score - SCAM_MIN_SCORE),
+    )
+    confidence = (
+        "low"
+        if disagreement >= 35 or threshold_distance <= 5
+        else "high"
+        if disagreement <= 18 and threshold_distance >= 15
+        else "medium"
+    )
+
+    result.update(
+        {
+            "verdict": verdict,
+            "risk_percentage": combined_score,
+            "safety_percentage": 100 - combined_score,
+            "confidence": confidence,
+            "verdict_label": VERDICT_LABELS[verdict],
+            "what_to_do": WHAT_TO_DO[verdict],
+            "weighted_ensemble": {
+                "model_score": model_score,
+                "forensic_score": forensic_score,
+                "model_weight": MODEL_SCORE_WEIGHT,
+                "forensic_weight": FORENSIC_SCORE_WEIGHT,
+                "combined_score": combined_score,
+                "model_passes": len(model_passes),
+                "model_scores": raw_scores,
+                "score_disagreement": round(disagreement, 1),
+            },
+        }
+    )
+
+
 def _sync_score_metadata(
     result: dict,
     local_forensics: LocalForensicsResult | None = None,
@@ -1595,22 +1758,41 @@ def _sync_score_metadata(
         and local_forensics.attention_overlay_candidate
     ):
         annotation_term = _model_confirmed_annotation_term(result)
+    weighted = result.get("weighted_ensemble") or {}
+    known_fake_match = bool(
+        local_forensics and local_forensics.known_fake is not None
+    )
     result["score_breakdown"] = {
         "risk_indicator": risk,
         "safety_indicator": safety,
         "scale": "0-100 evidence indicator",
-        "method": "evidence_weighted_v2",
+        "method": (
+            "known_fake_signature"
+            if known_fake_match
+            else "gpt_75_forensics_25_v1"
+        ),
         "is_calibrated_probability": False,
         "interpretation": (
             "Visual screenshot evidence only; this does not verify bank settlement."
         ),
+        "components": {
+            "gpt_vision": {
+                "score": weighted.get("model_score"),
+                "weight": weighted.get("model_weight", 0 if known_fake_match else None),
+            },
+            "forensic_logic": {
+                "score": weighted.get("forensic_score", risk if known_fake_match else None),
+                "weight": weighted.get(
+                    "forensic_weight", 1 if known_fake_match else None
+                ),
+            },
+            "combined_score": weighted.get("combined_score", risk),
+        },
         "signals": {
             "strong": int(summary.get("strong", 0)),
             "moderate": int(summary.get("moderate", 0)),
             "weak": int(summary.get("weak", 0)),
-            "known_fake_match": bool(
-                local_forensics and local_forensics.known_fake is not None
-            ),
+            "known_fake_match": known_fake_match,
             "annotation_overlay": bool(annotation_term),
             "annotation_term": annotation_term,
         },
@@ -1992,6 +2174,15 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
 
     _apply_provider_identifier_consensus(observations)
     _apply_success_heading_consensus(observations)
+    for model_pass in model_passes:
+        if (
+            model_pass.observation.authenticity_assessment == "clear_manipulation"
+            and model_pass.observation.fake_probability >= SCAM_MIN_SCORE
+        ):
+            model_pass.raw_model_score = max(
+                model_pass.raw_model_score or 0,
+                model_pass.observation.fake_probability,
+            )
 
     adjudicator_performed = False
     if not review_disabled and observations and _needs_adjudication(observations):
@@ -2024,20 +2215,25 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
 
     result = calibrate_observations(observations)
     _apply_local_overlay_floor(result, local_forensics)
-    if len(observations) < 2 and result["verdict"] == "SCAM":
-        # A high-risk verdict is never exposed from one model report alone.
+    _apply_weighted_ensemble(result, model_passes, local_forensics)
+    if failures and result["verdict"] == "SCAM":
+        # A required reviewer/adjudicator failure cannot leave a single-pass
+        # high-risk decision looking fully confirmed.
         result.update(
             {
                 "verdict": "SUSPICIOUS",
                 "risk_percentage": 69,
+                "safety_percentage": 31,
                 "confidence": "low",
                 "verdict_label": VERDICT_LABELS["SUSPICIOUS"],
                 "what_to_do": WHAT_TO_DO["SUSPICIOUS"],
             }
         )
-        result["why"].append(
+        if result.get("weighted_ensemble"):
+            result["weighted_ensemble"]["combined_score"] = 69
+        result.setdefault("why", []).append(
             {
-                "en": "Independent forensic consensus was unavailable, so a high-risk verdict was not confirmed.",
+                "en": "A required independent forensic pass failed, so the high-risk result remains unconfirmed.",
                 "hi": "",
             }
         )
