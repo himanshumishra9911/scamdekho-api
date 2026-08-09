@@ -10,6 +10,7 @@ import app.services.payment_screenshot_engine as engine
 from app.services.payment_local_forensics import (
     _explicit_overlay_term,
     _large_attention_overlay,
+    _magenta_text_overlay,
     analyze_local_forensics,
     hamming_distance,
 )
@@ -44,6 +45,29 @@ def test_large_magenta_annotation_is_an_attention_candidate():
 
     assert candidate is True
     assert area_ratio >= 0.008
+
+
+def test_many_small_magenta_glyphs_are_a_text_overlay_candidate():
+    rgb = np.full((700, 400, 3), 255, dtype=np.uint8)
+    for row in range(3):
+        for column in range(10):
+            x = 50 + column * 30
+            y = 420 + row * 35
+            rgb[y : y + 20, x : x + 10] = (230, 20, 150)
+
+    candidate, area_ratio = _magenta_text_overlay(rgb)
+
+    assert candidate is True
+    assert area_ratio >= 0.012
+
+
+def test_solid_magenta_promotion_is_not_a_text_overlay_candidate():
+    rgb = np.full((700, 400, 3), 255, dtype=np.uint8)
+    rgb[420:540, 50:350] = (230, 20, 150)
+
+    candidate, _ = _magenta_text_overlay(rgb)
+
+    assert candidate is False
 
 
 def test_warning_annotation_is_queued_for_suspicious_floor_not_known_fake(
@@ -98,6 +122,7 @@ def test_all_genuine_calibration_images_clear_known_fake_and_overlay_checks():
         result = analyze_local_forensics(path.read_bytes())
         assert result.known_fake is None, path.name
         assert result.red_overlay_candidate is False, path.name
+        assert result.magenta_text_overlay_candidate is False, path.name
 
 
 def test_known_fake_short_circuits_all_paid_model_calls(monkeypatch):
