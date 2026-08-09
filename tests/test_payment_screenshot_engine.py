@@ -1112,7 +1112,7 @@ def test_clean_default_cascade_uses_one_nano_triage_without_review(monkeypatch):
     result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
 
     assert result["verdict"] == "SAFE"
-    assert calls == [(1, "gpt-5.4-nano", "none", "low", 1100)]
+    assert calls == [(1, "gpt-5.4-nano", "none", "low", 800)]
     assert result["review_status"] == "not_required"
     assert result["ensemble"]["cascade_path"] == ["primary"]
     assert result["ensemble"]["view_counts"] == {"primary": 1}
@@ -1139,7 +1139,7 @@ def test_clean_partial_readability_skips_review(monkeypatch):
     result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
 
     assert result["verdict"] == "SAFE"
-    assert calls == [(1, "gpt-5.4-nano", "none", "low", 1100)]
+    assert calls == [(1, "gpt-5.4-nano", "none", "low", 800)]
     assert result["review_status"] == "not_required"
     assert result["ensemble"]["cascade_path"] == ["primary"]
     assert result["ensemble"]["adjudicator_performed"] is False
@@ -1167,7 +1167,7 @@ def test_unreadable_primary_still_uses_nano_review(monkeypatch):
 
     assert result["verdict"] == "SUSPICIOUS"
     assert calls == [
-        (1, "gpt-5.4-nano", "none", "low", 1100),
+        (1, "gpt-5.4-nano", "none", "low", 800),
         (2, "gpt-5.4-nano", "none", "auto", 1100),
     ]
     assert result["ensemble"]["adjudicator_performed"] is False
@@ -1208,7 +1208,7 @@ def test_heading_only_consensus_uses_two_nano_passes(monkeypatch):
 
     assert result["verdict"] == "SCAM"
     assert calls == [
-        (1, "gpt-5.4-nano", "none", "low", 1100),
+        (1, "gpt-5.4-nano", "none", "low", 800),
         (2, "gpt-5.4-nano", "none", "auto", 1100),
     ]
     assert result["evidence_summary"]["confirmed_fake_votes"] == 2

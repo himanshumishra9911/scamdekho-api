@@ -42,7 +42,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v29"
+ANALYSIS_VERSION = "payment-vision-v30"
 # GPT-5 mini is the highest-quality direct-vision model that still fits the
 # product's measured ~$0.0014/check operating envelope.  Confirmed local
 # signatures and cache hits continue to bypass the model entirely.
@@ -99,7 +99,7 @@ ADJUDICATOR_MAX_ANALYSIS_VIEWS = min(
     max(1, min(3, int(os.getenv("PAYMENT_SCREENSHOT_ADJUDICATOR_MAX_VIEWS", "2")))),
 )
 PRIMARY_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_PRIMARY_MAX_OUTPUT_TOKENS", "1100"))
-REPLICA_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_REPLICA_MAX_OUTPUT_TOKENS", "1100"))
+REPLICA_MAX_OUTPUT_TOKENS = int(os.getenv("PAYMENT_SCREENSHOT_REPLICA_MAX_OUTPUT_TOKENS", "800"))
 CHEAP_REVIEW_MAX_OUTPUT_TOKENS = int(
     os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MAX_OUTPUT_TOKENS", "1100")
 )
@@ -278,34 +278,17 @@ ANALYST_PROMPT = """Inspect the whole screenshot carefully.
 Use clear_manipulation only when at least one strong, specific item exists in tampering_evidence or an impossible contradiction is directly visible."""
 
 
-REPLICA_TRIAGE_PROMPT = """Perform a compact, independent fake/clone payment-app triage.
+REPLICA_TRIAGE_PROMPT = """Judge the authenticity of this submitted payment screenshot directly from its pixels. Classify it as likely_genuine, uncertain, or likely_replica. This is screenshot authenticity, not proof that bank settlement occurred.
 
-You are the primary direct-image judge. Classify the authenticity of the
-submitted screenshot itself as likely_genuine, uncertain, or likely_replica.
-Do not answer whether bank settlement occurred; pixels cannot verify that.
+Identify the paying app only from visible UI branding. Transcribe the heading, transaction label/ID, amount, UPI ID, names, bank, and time exactly; use null when unreadable. Never infer the app from a UPI-handle domain or bank.
 
-Quote the visible success heading, transaction-ID label, and transaction ID exactly without fixing spelling. Extract the amount, UPI ID, names, bank, and timestamp when visible; otherwise use null. app_name/app_key describe the visible paying-app UI, never the recipient's UPI-handle domain or bank. Check four independent signal families: system wording, claimed-app identity/labels, provider-ID coherence, and mixed component/icon/bank styles. A fake-app render can look pixel-clean.
+Look for independent visible signals across: (1) system wording, (2) app/provider identity, (3) transaction-label/ID coherence, and (4) component, icon, bank, or pixel style. Fake-app screens can be pixel-clean. A single typo, unfamiliar layout, crop, compression, missing field, short/alphanumeric ID, cross-app handle, ad, reward panel, theme, language, OS, or app-version difference is not manipulation. Use likely_replica only for clear editing or at least two mutually supporting signal families with no plausible benign explanation.
 
-Inspect the system heading for stable spelling or grammar errors (for example a plural noun paired with a singular success result), but keep that as one signal. Also inspect the payment UI and device status bar for visibly duplicated, overlapping, merged, or ghosted glyphs; do not confuse ordinary compression blur with duplication.
+A third-party fake/generator label establishes a fabricated presented image. A scam/fraud/savdhan/beware caption overlapping receipt controls establishes an annotated image: use uncertain unless separate evidence proves the underlying UI was fabricated.
 
-Do not enforce one remembered app template. A single typo, short/alphanumeric ID, missing field, unfamiliar layout, or cross-app UPI handle is never enough. Mark likely_replica only when at least two independent visible signal families conflict and benign app-version, merchant-flow, theme, language, accessibility, crop, or OCR explanations do not resolve the combination.
+Set replica_probability continuously: 0-34 likely_genuine, 35-69 uncertain, 70-100 likely_replica. Do not default to round template values such as 25/50/75/99; vary it with evidence quantity, independence, visibility, and strength. An overlapping warning annotation is normally 45-69.
 
-If a third-party warning caption such as scam/fraud/savdhan/beware overlaps the
-receipt controls, record a moderate overlay signal: the submitted image is
-annotated and is not clean payment proof. Do not call the underlying transaction
-fake from that caption alone.
-
-Set replica_probability as a continuous visual-authenticity risk score, not a
-template value. Use the full 0-100 range and keep assessment consistent with it:
-- 0-34 likely_genuine: no material evidence that the submitted image is edited or a clone.
-- 35-69 uncertain: annotated, internally concerning, or insufficiently conclusive.
-- 70-100 likely_replica: clear fabrication/editing or a strongly supported clone screen.
-Do not repeatedly default to 25, 50, 75, or 99. Vary the score according to the
-number, independence, visibility, and strength of the actual signals. An
-overlapping third-party annotation normally belongs in 45-69 unless separate
-evidence shows the payment UI itself is fabricated.
-
-For example, on a confidently PhonePe-branded screen, an odd system heading, a generic banking-name or transaction label, a provider ID that does not cohere with that label, and generic/mixed bank components form separate signals only when actually visible. Any one of them alone is benign. Keep lists short and specific."""
+Keep every evidence/limitation/reason list to at most two short items and each item under 16 words. Populate every schema field."""
 
 
 REPLICA_REVIEW_PROMPT = """Inspect the screenshot independently as a fake/clone payment-app specialist.
