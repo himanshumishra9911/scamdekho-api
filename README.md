@@ -34,9 +34,9 @@ The URL checker also has a stricter per-IP rate limit because it performs extern
 
 The payment screenshot endpoint uses a cost-aware vision cascade plus
 deterministic consensus. A GPT-5.4 Nano pass inspects one optimized full-screen
-view. Clear results stop there. Readability-only uncertainty gets a second Nano
-pass; material anomalies, malformed explicit provider IDs, or a suspicious
-system heading escalate to GPT-5.4 Mini with focused views. GPT-5.6 Luna is a
+view. Clear results stop there. Readability uncertainty and heading-only OCR
+confirmation get a second Nano pass; material anomalies or malformed explicit
+provider IDs escalate to GPT-5.4 Mini with focused views. GPT-5.6 Luna is a
 last-resort adjudicator for unresolved disagreement. A `SCAM` verdict is never
 exposed from one model report. Missing fields, unfamiliar apps, compression,
 cropping, cross-app UPI handles, and suspicious words are not proof of

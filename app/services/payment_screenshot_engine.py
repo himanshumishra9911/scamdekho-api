@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v19"
+ANALYSIS_VERSION = "payment-vision-v20"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -1273,15 +1273,30 @@ def _apply_success_heading_consensus(
 def _needs_precision_review(observations: list[PaymentObservation]) -> bool:
     return any(
         _has_malformed_explicit_transaction_id_review_signal(observation)
-        or _has_suspicious_success_heading_review_signal(observation)
         or _has_confirmed_fake_evidence(observation)
         or bool(observation.impossible_inconsistencies)
-        or any(
-            evidence.strength in {"moderate", "strong"}
-            for evidence in observation.tampering_evidence
-        )
+        or _has_non_heading_material_evidence(observation)
         for observation in observations
     )
+
+
+def _has_non_heading_material_evidence(observation: PaymentObservation) -> bool:
+    """Keep heading-only OCR confirmation on Nano; other evidence uses Mini."""
+    heading = _suspicious_success_heading(observation)
+    for evidence in observation.tampering_evidence:
+        if evidence.strength not in {"moderate", "strong"}:
+            continue
+        evidence_text = _normalized_status_heading(
+            " ".join(
+                filter(
+                    None,
+                    [evidence.observed_text, evidence.description],
+                )
+            )
+        )
+        if not heading or heading not in evidence_text:
+            return True
+    return False
 
 
 def _candidate_signal_suffix(observations: list[PaymentObservation]) -> str:
