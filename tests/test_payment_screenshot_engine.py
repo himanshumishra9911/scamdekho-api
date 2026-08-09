@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+from app.services.payment_local_forensics import LocalForensicsResult
 from app.services.payment_screenshot_engine import (
     PaymentObservation,
     ReplicaTriage,
@@ -133,6 +134,31 @@ def test_prompt_covers_replica_apps_without_overfitting_to_a_typo():
     assert "a single typo" in prompt
     assert "forwarded inside whatsapp" in prompt
     assert "explicit visible label such as fake" in prompt
+    assert "third-party warning annotation" in prompt
+
+
+def test_warning_annotation_prevents_safe_and_exposes_honest_score_metadata():
+    result = calibrate_observations([observation()])
+    local = LocalForensicsResult(
+        known_fake=None,
+        red_overlay_candidate=False,
+        red_overlay_area_ratio=0.0017,
+        attention_overlay_candidate=True,
+        attention_overlay_area_ratio=0.0182,
+        explicit_overlay_term="scam",
+        annotation_overlay_term="scam",
+        latency_ms=520,
+    )
+
+    engine._apply_local_overlay_floor(result, local)
+    engine._sync_score_metadata(result, local)
+
+    assert result["verdict"] == "SUSPICIOUS"
+    assert result["risk_percentage"] == 68
+    assert result["safety_percentage"] == 32
+    assert result["score_breakdown"]["risk_indicator"] == 68
+    assert result["score_breakdown"]["signals"]["annotation_term"] == "scam"
+    assert result["score_breakdown"]["is_calibrated_probability"] is False
 
 
 def test_replica_triage_requires_two_independent_signal_families_for_confirmation():
