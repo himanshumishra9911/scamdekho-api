@@ -176,6 +176,27 @@ def test_high_probability_semantic_claims_cannot_become_strong_evidence():
     assert sum(item.strength == "moderate" for item in converted.tampering_evidence) == 1
 
 
+def test_negated_absence_statements_never_become_visual_evidence():
+    converted = _replica_triage_to_observation(
+        replica_triage(
+            wording_errors=[
+                "No clear grammar/spelling error in the main success heading."
+            ],
+            component_style_conflicts=[
+                "No obvious pixel artifact or duplicated component is visible."
+            ],
+            assessment="uncertain",
+            replica_probability=64,
+        )
+    )
+
+    assert converted.authenticity_assessment == "no_evidence_of_manipulation"
+    assert converted.fake_probability == 25
+    assert converted.tampering_evidence == []
+    assert len(converted.benign_limitations) == 2
+    assert _needs_review(converted) is False
+
+
 def test_one_identifier_format_anomaly_cannot_confirm_a_fake_screen():
     converted = _replica_triage_to_observation(
         replica_triage(
