@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v22"
+ANALYSIS_VERSION = "payment-vision-v23"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -226,6 +226,8 @@ Use only visible evidence. Payment app layouts change by app version, OS, langua
 These are NOT tampering evidence by themselves: crop; compression; blur; missing status bar; missing UPI ID, bank, sender, reference number, date, or time; a non-12-digit or alphanumeric reference; old or future date; dark mode; unusual font caused by OS accessibility; cross-app UPI handles or branding; merchant handles; suspicious words in a name or UPI ID; or a simple/clean design.
 
 Treat normal presentation variants as benign unless there is independent, localized evidence of editing. Examples include masked identifiers, decorative receipts, minimal share receipts, large black or white viewer margins, OS/share-sheet chrome, ads, cashback or rewards panels, and receipts embedded inside another app or image viewer. A full transaction page and a shared receipt for the same payment can look substantially different. The status-bar time may reflect when the receipt was viewed rather than when the payment happened.
+
+An in-app advertisement or promotion below/around a receipt is normal product UI, not proof that the screenshot was composited. Likewise, a status-bar time equal to the visible payment time is internally consistent, not an anomaly. Never place either observation in tampering_evidence unless a separate localized pixel artifact is visible.
 
 An explicit visible label such as FAKE, fake payment, screenshot generator, prank,
 demo, or test payment is not a benign wrapper. It directly establishes that the
@@ -928,8 +930,84 @@ def _normalize_pass_result(
             view_count=view_count,
             estimated_cost_usd=_estimate_cost_usd(model, 0, 0, 0, 0),
         )
+    value.observation = _remove_benign_presentation_false_signals(value.observation)
     value.role = role
     return value
+
+
+_CLOCK_TOKEN_RE = re.compile(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b")
+_PROMOTION_TERMS = (
+    "advertisement",
+    " advertising",
+    " in-app ad",
+    "promo",
+    "promotion",
+    "cashback",
+    "scratch-card",
+    "scratch card",
+    "reward panel",
+)
+_LOCAL_EDIT_ARTIFACT_TERMS = (
+    "paste boundary",
+    "anti-alias",
+    "pixel edge",
+    "resampling",
+    "compression halo",
+    "misaligned glyph",
+)
+
+
+def _is_benign_presentation_claim(evidence: VisualEvidence) -> bool:
+    """Identify model claims that contradict documented normal app behavior."""
+    if evidence.strength == "strong":
+        return False
+    text = " ".join(
+        filter(None, [evidence.description, evidence.location, evidence.observed_text])
+    ).casefold()
+    times = _CLOCK_TOKEN_RE.findall(text)
+    same_clock_time = (
+        "status bar" in text
+        and ("receipt" in text or "transaction" in text or "payment" in text)
+        and len(times) >= 2
+        and len(set(times)) == 1
+    )
+    promotion_only = (
+        any(term in text for term in _PROMOTION_TERMS)
+        and not any(term in text for term in _LOCAL_EDIT_ARTIFACT_TERMS)
+    )
+    return same_clock_time or promotion_only
+
+
+def _remove_benign_presentation_false_signals(
+    observation: PaymentObservation,
+) -> PaymentObservation:
+    """Move normal ad/time observations out of the fraud-evidence channel."""
+    kept: list[VisualEvidence] = []
+    moved: list[str] = []
+    for evidence in observation.tampering_evidence:
+        if _is_benign_presentation_claim(evidence):
+            moved.append(evidence.description)
+        else:
+            kept.append(evidence)
+    if not moved:
+        return observation
+
+    observation.tampering_evidence = kept
+    observation.benign_limitations = _unique_strings(
+        observation.benign_limitations + moved
+    )
+    material_evidence = any(
+        item.strength in {"moderate", "strong"} for item in kept
+    )
+    if (
+        observation.authenticity_assessment == "uncertain"
+        and not material_evidence
+        and not observation.impossible_inconsistencies
+        and observation.fake_probability <= 55
+    ):
+        observation.authenticity_assessment = "no_evidence_of_manipulation"
+        observation.fake_probability = min(observation.fake_probability, 25)
+    return observation
 
 
 def _summarize_model_usage(passes: list[ModelPassResult]) -> dict:
