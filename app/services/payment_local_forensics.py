@@ -49,6 +49,8 @@ class LocalForensicsResult:
     explicit_overlay_term: str | None
     annotation_overlay_term: str | None
     latency_ms: int
+    magenta_text_overlay_candidate: bool = False
+    magenta_text_overlay_area_ratio: float = 0.0
 
     @property
     def force_review(self) -> bool:
@@ -61,7 +63,9 @@ class LocalForensicsResult:
     @property
     def needs_overlay_floor(self) -> bool:
         return self.known_fake is None and (
-            self.red_overlay_candidate or self.annotation_overlay_term is not None
+            self.red_overlay_candidate
+            or self.magenta_text_overlay_candidate
+            or self.annotation_overlay_term is not None
         )
 
     def prompt_suffix(self) -> str:
@@ -74,6 +78,7 @@ class LocalForensicsResult:
         if not (
             self.red_overlay_candidate
             or self.attention_overlay_candidate
+            or self.magenta_text_overlay_candidate
             or self.annotation_overlay_term is not None
         ):
             return ""
@@ -107,6 +112,8 @@ class LocalForensicsResult:
             "red_overlay_area_ratio": self.red_overlay_area_ratio,
             "attention_overlay_candidate": self.attention_overlay_candidate,
             "attention_overlay_area_ratio": self.attention_overlay_area_ratio,
+            "magenta_text_overlay_candidate": self.magenta_text_overlay_candidate,
+            "magenta_text_overlay_area_ratio": self.magenta_text_overlay_area_ratio,
             "explicit_overlay_term": self.explicit_overlay_term,
             "annotation_overlay_term": self.annotation_overlay_term,
             "latency_ms": self.latency_ms,
@@ -216,6 +223,47 @@ def _large_attention_overlay(rgb: np.ndarray) -> tuple[bool, float]:
             component_height >= height * 0.03,
             x + component_width > width * 0.20,
             y < height * 0.86,
+        )
+    )
+    return is_candidate, round(area_ratio, 4)
+
+
+def _magenta_text_overlay(rgb: np.ndarray) -> tuple[bool, float]:
+    """Find broad text-like magenta strokes over a submitted receipt.
+
+    A warning caption is made of many small disconnected glyph components,
+    unlike a payment-app logo or promotional card, which is normally one or a
+    few large solid components.  This narrow geometry check is deliberately
+    independent of OCR so compressed forwards remain detectable.  It marks the
+    submitted image as annotated/suspicious; it does not claim that the
+    underlying bank transfer was fabricated.
+    """
+    height, width = rgb.shape[:2]
+    region = cv2.cvtColor(rgb[: round(height * 0.90)], cv2.COLOR_RGB2HSV)
+    # The narrow hue band captures the vivid pink/magenta ink commonly used by
+    # third-party warning captions while excluding PhonePe's purple UI and most
+    # red app branding.
+    mask = cv2.inRange(region, (158, 80, 70), (166, 255, 255))
+    ink_pixels = int(np.count_nonzero(mask))
+    area_ratio = ink_pixels / float(width * height)
+    if ink_pixels == 0:
+        return False, 0.0
+
+    component_count, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+    component_areas = stats[1:, cv2.CC_STAT_AREA]
+    meaningful = component_areas[component_areas >= 3]
+    if meaningful.size == 0:
+        return False, round(area_ratio, 4)
+
+    x_values = np.where(mask > 0)[1]
+    horizontal_spread = (int(x_values.max()) - int(x_values.min()) + 1) / float(width)
+    largest_share = int(meaningful.max()) / float(ink_pixels)
+    is_candidate = all(
+        (
+            area_ratio >= 0.012,
+            int(meaningful.size) >= 15,
+            horizontal_spread >= 0.55,
+            largest_share <= 0.12,
         )
     )
     return is_candidate, round(area_ratio, 4)
@@ -335,6 +383,7 @@ def analyze_local_forensics(image_bytes: bytes) -> LocalForensicsResult:
 
     red_overlay_candidate, red_area = _large_red_overlay(rgb)
     attention_overlay_candidate, attention_area = _large_attention_overlay(rgb)
+    magenta_text_candidate, magenta_text_area = _magenta_text_overlay(rgb)
     explicit_term = None
     annotation_term = None
     if known_fake is None and (red_overlay_candidate or attention_overlay_candidate):
@@ -361,4 +410,6 @@ def analyze_local_forensics(image_bytes: bytes) -> LocalForensicsResult:
         explicit_overlay_term=explicit_term,
         annotation_overlay_term=annotation_term,
         latency_ms=latency_ms,
+        magenta_text_overlay_candidate=magenta_text_candidate,
+        magenta_text_overlay_area_ratio=magenta_text_area,
     )

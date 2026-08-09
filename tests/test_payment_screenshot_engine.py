@@ -267,6 +267,42 @@ def test_model_annotation_in_limitations_still_corroborates_pixel_candidate():
     assert result["risk_percentage"] == 68
 
 
+def test_text_like_magenta_overlay_is_suspicious_even_when_gpt_misses_it():
+    observed = observation(
+        authenticity_assessment="no_evidence_of_manipulation",
+        fake_probability=55,
+    )
+    result = calibrate_observations([observed])
+    local = LocalForensicsResult(
+        known_fake=None,
+        red_overlay_candidate=False,
+        red_overlay_area_ratio=0.0017,
+        attention_overlay_candidate=True,
+        attention_overlay_area_ratio=0.0182,
+        explicit_overlay_term=None,
+        annotation_overlay_term=None,
+        latency_ms=27,
+        magenta_text_overlay_candidate=True,
+        magenta_text_overlay_area_ratio=0.0183,
+    )
+    model_pass = engine.ModelPassResult(
+        observation=observed,
+        model="gpt-5-mini",
+        view_count=1,
+        raw_model_score=55,
+    )
+
+    engine._apply_local_overlay_floor(result, local)
+    engine._apply_weighted_ensemble(result, [model_pass], local)
+    engine._sync_score_metadata(result, local)
+
+    assert result["verdict"] == "SUSPICIOUS"
+    assert 35 <= result["risk_percentage"] <= 69
+    assert result["score_breakdown"]["components"]["gpt_vision"]["score"] == 34
+    assert result["score_breakdown"]["components"]["forensic_logic"]["score"] >= 80
+    assert result["score_breakdown"]["signals"]["annotation_overlay"] is True
+
+
 def test_promotion_limitation_does_not_become_annotation_evidence():
     result = calibrate_observations([observation(fake_probability=20)])
     result["benign_limitations"] = [

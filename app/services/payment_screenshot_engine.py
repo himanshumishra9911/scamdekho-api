@@ -42,7 +42,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v32"
+ANALYSIS_VERSION = "payment-vision-v33"
 # GPT-5 mini is the highest-quality direct-vision model that still fits the
 # product's measured ~$0.0014/check operating envelope.  Confirmed local
 # signatures and cache hits continue to bypass the model entirely.
@@ -1625,6 +1625,17 @@ def _forensic_logic_score(
             20.0,
             7.0 + local_forensics.red_overlay_area_ratio * 260.0,
         )
+    if local_forensics.magenta_text_overlay_candidate:
+        # This is a high-specificity geometry signal for a third-party warning
+        # caption, validated against the genuine calibration set.  It only makes
+        # the submitted image suspicious; GPT still supplies 75% of the blend.
+        score = max(
+            score,
+            min(
+                88.0,
+                80.0 + local_forensics.magenta_text_overlay_area_ratio * 320.0,
+            ),
+        )
 
     annotation_term = (
         local_forensics.annotation_overlay_term
@@ -1759,6 +1770,12 @@ def _sync_score_metadata(
     annotation_term = (
         local_forensics.annotation_overlay_term if local_forensics else None
     )
+    if (
+        annotation_term is None
+        and local_forensics
+        and local_forensics.magenta_text_overlay_candidate
+    ):
+        annotation_term = "local text-like magenta overlay"
     if (
         annotation_term is None
         and local_forensics
@@ -1932,6 +1949,24 @@ def _apply_local_overlay_floor(
             "bank transaction was fabricated."
         )
         location = "annotation over receipt controls"
+    elif local_forensics.magenta_text_overlay_candidate:
+        floor = round(
+            58
+            + min(
+                8,
+                max(
+                    0,
+                    (local_forensics.magenta_text_overlay_area_ratio - 0.012) * 500,
+                ),
+            )
+        )
+        reason = (
+            "A broad cluster of saturated-magenta, text-like strokes overlays the "
+            "receipt. The submitted image is annotated/edited and cannot be "
+            "accepted as clean payment proof, although this alone does not prove "
+            "the underlying bank transaction was fabricated."
+        )
+        location = "text-like overlay across receipt controls"
     else:
         floor = 58
         reason = (
