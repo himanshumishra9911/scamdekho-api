@@ -42,7 +42,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v30"
+ANALYSIS_VERSION = "payment-vision-v31"
 # GPT-5 mini is the highest-quality direct-vision model that still fits the
 # product's measured ~$0.0014/check operating envelope.  Confirmed local
 # signatures and cache hits continue to bypass the model entirely.
@@ -1660,7 +1660,11 @@ def _apply_weighted_ensemble(
         else item.observation.fake_probability
         for item in model_passes
     ]
-    model_score = round(mean(raw_scores), 1)
+    model_scores = [
+        _category_consistent_model_score(raw_score, item.observation)
+        for raw_score, item in zip(raw_scores, model_passes)
+    ]
+    model_score = round(mean(model_scores), 1)
     forensic_score = _forensic_logic_score(result, local_forensics)
     combined_score = round(
         model_score * MODEL_SCORE_WEIGHT
@@ -1672,7 +1676,7 @@ def _apply_weighted_ensemble(
     # inherently inconclusive even when their arithmetic average is low.
     if any(item.readability == "unreadable" for item in observations):
         combined_score = max(SAFE_MAX_SCORE + 1, combined_score)
-    if len(raw_scores) > 1 and max(raw_scores) - min(raw_scores) >= 30:
+    if len(model_scores) > 1 and max(model_scores) - min(model_scores) >= 30:
         combined_score = max(SAFE_MAX_SCORE + 1, combined_score)
 
     if combined_score >= SCAM_MIN_SCORE:
@@ -1710,11 +1714,31 @@ def _apply_weighted_ensemble(
                 "forensic_weight": FORENSIC_SCORE_WEIGHT,
                 "combined_score": combined_score,
                 "model_passes": len(model_passes),
-                "model_scores": raw_scores,
+                "model_scores": model_scores,
+                "raw_model_scores": raw_scores,
                 "score_disagreement": round(disagreement, 1),
             },
         }
     )
+
+
+def _category_consistent_model_score(
+    raw_score: int | float,
+    observation: PaymentObservation,
+) -> int:
+    """Make the model's numeric score agree with its own categorical verdict.
+
+    Structured-output models can occasionally say "likely genuine" while also
+    emitting a suspicious-range number.  The category remains a GPT judgement,
+    so bounding the number to that category prevents contradictory UI without
+    replacing the score with a fixed bucket value.
+    """
+    score = max(0, min(100, round(float(raw_score))))
+    if observation.authenticity_assessment == "no_evidence_of_manipulation":
+        return min(SAFE_MAX_SCORE, score)
+    if observation.authenticity_assessment == "uncertain":
+        return min(SCAM_MIN_SCORE - 1, max(SAFE_MAX_SCORE + 1, score))
+    return max(SCAM_MIN_SCORE, score)
 
 
 def _sync_score_metadata(
