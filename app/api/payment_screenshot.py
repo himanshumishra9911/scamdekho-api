@@ -201,6 +201,8 @@ async def check_payment_screenshot(
                 "extracted_fields": fields,
                 "reasons":          result.get("reasons", []),
                 "visual_signals":   result.get("visual_forensics", []),
+                "safety_percentage": result.get("safety_percentage"),
+                "local_forensics":  result.get("local_forensics", {}),
                 "analysis_version": result.get("analysis_version"),
                 "review_performed": result.get("review_performed", False),
                 "review_status":    result.get("review_status"),
