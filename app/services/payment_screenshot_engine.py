@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v18"
+ANALYSIS_VERSION = "payment-vision-v19"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -627,9 +627,34 @@ def _run_model(
     )
 
 
+def _is_negated_evidence_claim(claim: str) -> bool:
+    """Do not turn a model's explicit absence statement into evidence."""
+    normalized = " ".join(claim.casefold().split())
+    return any(
+        marker in normalized
+        for marker in (
+            "no clear ",
+            "no obvious ",
+            "no visible ",
+            "no specific ",
+            "no evidence",
+            "no sign of",
+            "no signs of",
+            "none detected",
+            "not detected",
+            "not visible",
+            "without any ",
+            "does not show",
+            "cannot identify",
+        )
+    )
+
+
 def _is_benign_replica_claim(group_name: str, claim: str) -> bool:
     """Reject common model claims that the prompt explicitly defines as benign."""
     normalized = " ".join(claim.casefold().split())
+    if _is_negated_evidence_claim(claim):
+        return True
     soft_wording_markers = (
         "capitalization",
         "pluralization",
