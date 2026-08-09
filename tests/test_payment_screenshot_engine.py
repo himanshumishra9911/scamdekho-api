@@ -844,10 +844,10 @@ def test_clean_default_cascade_uses_one_nano_triage_without_review(monkeypatch):
     assert result["ensemble"]["view_counts"] == {"primary": 1}
 
 
-def test_low_risk_readability_review_uses_nano_instead_of_mini(monkeypatch):
+def test_clean_partial_readability_skips_review(monkeypatch):
     output = io.BytesIO()
     Image.new("RGB", (300, 600), "white").save(output, format="PNG")
-    responses = [observation(readability="partial"), observation(fake_probability=10)]
+    responses = [observation(readability="partial")]
     calls = []
 
     def fake_run_triage(image_views, _prompt, model, effort, detail, tokens):
@@ -865,6 +865,33 @@ def test_low_risk_readability_review_uses_nano_instead_of_mini(monkeypatch):
     result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
 
     assert result["verdict"] == "SAFE"
+    assert calls == [(1, "gpt-5.4-nano", "none", "low", 1100)]
+    assert result["review_status"] == "not_required"
+    assert result["ensemble"]["cascade_path"] == ["primary"]
+    assert result["ensemble"]["adjudicator_performed"] is False
+
+
+def test_unreadable_primary_still_uses_nano_review(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGB", (300, 600), "white").save(output, format="PNG")
+    responses = [observation(readability="unreadable"), observation(fake_probability=10)]
+    calls = []
+
+    def fake_run_triage(image_views, _prompt, model, effort, detail, tokens):
+        calls.append((len(image_views), model, effort, detail, tokens))
+        return responses[len(calls) - 1]
+
+    monkeypatch.setattr(engine, "_run_replica_triage", fake_run_triage)
+    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5.4-nano")
+    monkeypatch.setattr(engine, "CHEAP_REVIEW_MODEL", "gpt-5.4-nano")
+    monkeypatch.setattr(engine, "CHEAP_REVIEW_REASONING_EFFORT", "none")
+    monkeypatch.setattr(engine, "REVIEW_MODEL", "gpt-5.4-mini")
+    monkeypatch.setattr(engine, "REVIEW_MODE", "suspicious")
+    monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "off")
+
+    result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
+
+    assert result["verdict"] == "SUSPICIOUS"
     assert calls == [
         (1, "gpt-5.4-nano", "none", "low", 1100),
         (2, "gpt-5.4-nano", "none", "auto", 1100),
