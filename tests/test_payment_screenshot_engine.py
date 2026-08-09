@@ -640,6 +640,65 @@ def test_weak_dissent_does_not_create_a_false_positive_against_clean_consensus()
     )["verdict"] == "SAFE"
 
 
+def test_normal_in_app_promo_and_matching_clock_are_not_fraud_evidence():
+    paytm = observation(
+        authenticity_assessment="uncertain",
+        fake_probability=45,
+        tampering_evidence=[
+            {
+                "category": "replica_app",
+                "strength": "weak",
+                "description": "A Flipkart promotion below the receipt suggests a composite.",
+                "location": "lower payment screen",
+                "observed_text": "Discover the Perfect Tablet",
+            },
+            {
+                "category": "replica_app",
+                "strength": "moderate",
+                "description": (
+                    "The status bar shows 9:53 while the transaction time shows "
+                    "9:53, which may be an inconsistency."
+                ),
+                "location": "status bar and receipt",
+                "observed_text": "9:53 / 9:53",
+            },
+        ],
+    )
+
+    normalized = engine._normalize_pass_result(
+        paytm, "primary", "gpt-5.4-nano", 1
+    ).observation
+
+    assert normalized.authenticity_assessment == "no_evidence_of_manipulation"
+    assert normalized.fake_probability == 25
+    assert normalized.tampering_evidence == []
+    assert len(normalized.benign_limitations) == 2
+
+
+def test_promotion_with_localized_pixel_artifact_remains_material_evidence():
+    edited_ad = observation(
+        authenticity_assessment="uncertain",
+        fake_probability=55,
+        tampering_evidence=[
+            {
+                "category": "overlay",
+                "strength": "moderate",
+                "description": "A paste boundary is visible around the promotional banner.",
+                "location": "promotion panel",
+                "observed_text": "Claim reward",
+            }
+        ],
+    )
+
+    normalized = engine._normalize_pass_result(
+        edited_ad, "primary", "gpt-5.4-nano", 1
+    ).observation
+
+    assert normalized.authenticity_assessment == "uncertain"
+    assert normalized.fake_probability == 55
+    assert len(normalized.tampering_evidence) == 1
+
+
 def test_replica_app_dissent_is_never_silently_marked_safe():
     replica = observation(
         tampering_evidence=[
