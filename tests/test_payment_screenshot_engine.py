@@ -11,6 +11,7 @@ from app.services.payment_screenshot_engine import (
     SYSTEM_PROMPT,
     _estimate_cost_usd,
     _apply_provider_identifier_consensus,
+    _apply_success_heading_consensus,
     _make_analysis_views,
     _needs_review,
     _prepare_image,
@@ -267,6 +268,66 @@ def test_repeated_invalid_phonepe_transaction_id_confirms_two_votes():
     assert result["verdict"] == "SCAM"
     assert result["evidence_summary"]["confirmed_fake_votes"] == 2
     assert result["evidence_summary"]["strong"] == 2
+
+
+def test_repeated_invalid_success_heading_confirms_two_votes():
+    observations = [
+        _replica_triage_to_observation(
+            replica_triage(
+                headline_text="Payments Successful",
+                assessment="likely_genuine",
+                replica_probability=12,
+            )
+        ),
+        _replica_triage_to_observation(
+            replica_triage(
+                headline_text="Payments Successful",
+                assessment="likely_genuine",
+                replica_probability=10,
+            )
+        ),
+    ]
+
+    assert _needs_review(observations[0]) is True
+    assert _apply_success_heading_consensus(observations) is True
+    result = calibrate_observations(observations)
+
+    assert result["verdict"] == "SCAM"
+    assert result["evidence_summary"]["confirmed_fake_votes"] == 2
+    assert result["evidence_summary"]["strong"] == 2
+
+
+def test_one_invalid_success_heading_cannot_confirm_fake_screen():
+    item = _replica_triage_to_observation(
+        replica_triage(
+            headline_text="Payments Successful",
+            assessment="likely_genuine",
+            replica_probability=12,
+        )
+    )
+
+    assert _needs_review(item) is True
+    assert _apply_success_heading_consensus([item]) is False
+    assert calibrate_observations([item])["verdict"] == "SAFE"
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "Payment Successful",
+        "Transaction Successful",
+        "Sent Successfully",
+        "Paid successfully",
+        "Payment received",
+    ],
+)
+def test_legitimate_success_headings_do_not_trigger_review(heading):
+    item = _replica_triage_to_observation(
+        replica_triage(headline_text=heading)
+    )
+
+    assert _needs_review(item) is False
+    assert _apply_success_heading_consensus([item, item.model_copy(deep=True)]) is False
 
 
 def test_valid_phonepe_transaction_id_is_not_promoted():
