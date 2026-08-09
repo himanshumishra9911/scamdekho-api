@@ -339,6 +339,31 @@ def test_weighted_scores_vary_with_direct_model_score_instead_of_fixed_bucket():
     assert len(set(risks)) == 3
 
 
+def test_model_number_is_bounded_by_its_own_genuine_category():
+    observed = observation(
+        authenticity_assessment="no_evidence_of_manipulation",
+        fake_probability=25,
+    )
+
+    assert engine._category_consistent_model_score(55, observed) == 34
+    assert engine._category_consistent_model_score(22, observed) == 22
+
+
+def test_model_number_is_bounded_by_uncertain_and_fake_categories():
+    uncertain = observation(
+        authenticity_assessment="uncertain",
+        fake_probability=52,
+    )
+    fake = observation(
+        authenticity_assessment="clear_manipulation",
+        fake_probability=88,
+    )
+
+    assert engine._category_consistent_model_score(18, uncertain) == 35
+    assert engine._category_consistent_model_score(92, uncertain) == 69
+    assert engine._category_consistent_model_score(41, fake) == 70
+
+
 def test_replica_triage_requires_two_independent_signal_families_for_confirmation():
     triage = replica_triage(
         headline_text="Transaction Successfull",
