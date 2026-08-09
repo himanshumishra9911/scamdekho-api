@@ -65,7 +65,17 @@ class LocalForensicsResult:
         )
 
     def prompt_suffix(self) -> str:
-        if not self.needs_overlay_floor:
+        # OCR is an optional corroborator, not a production dependency.  Render
+        # images and low-resolution forwards can make Tesseract miss text that a
+        # vision pass can still read.  Supplying the pixel candidate lets the
+        # model inspect it; deterministic post-processing still requires the
+        # model to localize an explicit warning/fabrication term before applying
+        # a verdict floor.
+        if not (
+            self.red_overlay_candidate
+            or self.attention_overlay_candidate
+            or self.annotation_overlay_term is not None
+        ):
             return ""
         annotation = (
             f' OCR read the warning term "{self.annotation_overlay_term}".'

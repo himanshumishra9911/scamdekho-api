@@ -161,6 +161,80 @@ def test_warning_annotation_prevents_safe_and_exposes_honest_score_metadata():
     assert result["score_breakdown"]["is_calibrated_probability"] is False
 
 
+def test_model_confirmed_warning_overlay_floors_safe_when_ocr_misses():
+    result = calibrate_observations(
+        [
+            observation(
+                tampering_evidence=[
+                    {
+                        "category": "replica_app",
+                        "strength": "weak",
+                        "description": (
+                            'Prominent overlaid red handwritten text: "PhonePe scam '
+                            'se savdhan rhe" covering the receipt UI.'
+                        ),
+                        "location": "payment interface",
+                        "observed_text": "PhonePe scam se savdhan rhe",
+                    }
+                ],
+                fake_probability=25,
+            )
+        ]
+    )
+    local = LocalForensicsResult(
+        known_fake=None,
+        red_overlay_candidate=False,
+        red_overlay_area_ratio=0.0017,
+        attention_overlay_candidate=True,
+        attention_overlay_area_ratio=0.0182,
+        explicit_overlay_term=None,
+        annotation_overlay_term=None,
+        latency_ms=27,
+    )
+
+    engine._apply_local_overlay_floor(result, local)
+    engine._sync_score_metadata(result, local)
+
+    assert result["verdict"] == "SUSPICIOUS"
+    assert result["risk_percentage"] == 68
+    assert result["safety_percentage"] == 32
+    assert result["score_breakdown"]["signals"]["annotation_overlay"] is True
+    assert result["score_breakdown"]["signals"]["annotation_term"] == "scam"
+
+
+def test_attention_color_without_model_warning_does_not_floor_genuine_ui():
+    result = calibrate_observations(
+        [
+            observation(
+                tampering_evidence=[
+                    {
+                        "category": "other",
+                        "strength": "weak",
+                        "description": "A normal red promotional card appears below the receipt",
+                        "location": "advertisement panel",
+                        "observed_text": "Rewards",
+                    }
+                ]
+            )
+        ]
+    )
+    local = LocalForensicsResult(
+        known_fake=None,
+        red_overlay_candidate=False,
+        red_overlay_area_ratio=0.0,
+        attention_overlay_candidate=True,
+        attention_overlay_area_ratio=0.02,
+        explicit_overlay_term=None,
+        annotation_overlay_term=None,
+        latency_ms=20,
+    )
+
+    engine._apply_local_overlay_floor(result, local)
+
+    assert result["verdict"] == "SAFE"
+    assert result["risk_percentage"] <= 30
+
+
 def test_replica_triage_requires_two_independent_signal_families_for_confirmation():
     triage = replica_triage(
         headline_text="Transaction Successfull",

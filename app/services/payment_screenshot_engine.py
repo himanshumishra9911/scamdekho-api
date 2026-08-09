@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from app.services.payment_local_forensics import (
     LocalForensicsResult,
+    _explicit_overlay_term,
     analyze_local_forensics,
 )
 
@@ -41,7 +42,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v26"
+ANALYSIS_VERSION = "payment-vision-v27"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -1588,6 +1589,12 @@ def _sync_score_metadata(
     annotation_term = (
         local_forensics.annotation_overlay_term if local_forensics else None
     )
+    if (
+        annotation_term is None
+        and local_forensics
+        and local_forensics.attention_overlay_candidate
+    ):
+        annotation_term = _model_confirmed_annotation_term(result)
     result["score_breakdown"] = {
         "risk_indicator": risk,
         "safety_indicator": safety,
@@ -1706,10 +1713,18 @@ def _apply_local_overlay_floor(
     local_forensics: LocalForensicsResult,
 ) -> None:
     """Keep a materially annotated screenshot from being called clean/safe."""
-    if not local_forensics.needs_overlay_floor or result.get("verdict") == "SCAM":
+    model_annotation_term = None
+    if local_forensics.attention_overlay_candidate:
+        model_annotation_term = _model_confirmed_annotation_term(result)
+    has_confirmed_overlay = (
+        local_forensics.needs_overlay_floor or model_annotation_term is not None
+    )
+    if not has_confirmed_overlay or result.get("verdict") == "SCAM":
         return
 
-    annotation_term = local_forensics.annotation_overlay_term
+    annotation_term = (
+        local_forensics.annotation_overlay_term or model_annotation_term
+    )
     if annotation_term:
         floor = 68
         reason = (
@@ -1759,6 +1774,39 @@ def _apply_local_overlay_floor(
         "found": True,
         "match_count": int(result.get("pattern_match", {}).get("match_count", 0)) + 1,
     }
+
+
+def _model_confirmed_annotation_term(result: dict) -> str | None:
+    """Corroborate an attention-color candidate with localized model evidence.
+
+    This fallback is deliberately conjunctive: pixels must first contain a
+    prominent red/magenta component, and the model must then describe an
+    overlay/annotation containing an explicit warning or fabrication word.
+    Ordinary red branding, app promotions and ads therefore cannot trigger it.
+    """
+    overlay_markers = (
+        "overlay",
+        "overlaid",
+        "annotation",
+        "handwritten",
+        "warning text",
+        "covering the receipt",
+        "covers the receipt",
+        "covering receipt",
+    )
+    for evidence in result.get("visual_forensics") or []:
+        if not isinstance(evidence, dict):
+            continue
+        description = str(evidence.get("en") or "")
+        normalized = " ".join(description.casefold().split())
+        if not any(marker in normalized for marker in overlay_markers):
+            continue
+        location = str(evidence.get("location") or "").casefold()
+        if "advert" in location or "promo" in location:
+            continue
+        if term := _explicit_overlay_term(description):
+            return term
+    return None
 
 
 async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
