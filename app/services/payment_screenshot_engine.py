@@ -42,7 +42,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v27"
+ANALYSIS_VERSION = "payment-vision-v28"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -1725,13 +1725,22 @@ def _apply_local_overlay_floor(
     annotation_term = (
         local_forensics.annotation_overlay_term or model_annotation_term
     )
-    if annotation_term:
+    if annotation_term and annotation_term != "model-confirmed annotation":
         floor = 68
         reason = (
             f'Third-party warning text ("{annotation_term}") overlaps the receipt '
             "controls. The submitted image is annotated/edited and cannot be "
             "accepted as clean payment proof, although this alone does not prove "
             "the underlying bank transaction was fabricated."
+        )
+        location = "annotation over receipt controls"
+    elif annotation_term:
+        floor = 68
+        reason = (
+            "A prominent third-party annotation overlaps the receipt controls. "
+            "The submitted image is edited/annotated and cannot be accepted as "
+            "clean payment proof, although this alone does not prove the underlying "
+            "bank transaction was fabricated."
         )
         location = "annotation over receipt controls"
     else:
@@ -1780,9 +1789,10 @@ def _model_confirmed_annotation_term(result: dict) -> str | None:
     """Corroborate an attention-color candidate with localized model evidence.
 
     This fallback is deliberately conjunctive: pixels must first contain a
-    prominent red/magenta component, and the model must then describe an
-    overlay/annotation containing an explicit warning or fabrication word.
-    Ordinary red branding, app promotions and ads therefore cannot trigger it.
+    prominent red/magenta component, and the model must then localize it as an
+    overlay/annotation over the receipt. Ordinary red branding, app promotions
+    and ads are explicitly excluded. An explicit warning/fabrication word is
+    returned when available, but low-resolution OCR is not required.
     """
     overlay_markers = (
         "overlay",
@@ -1802,10 +1812,14 @@ def _model_confirmed_annotation_term(result: dict) -> str | None:
         if not any(marker in normalized for marker in overlay_markers):
             continue
         location = str(evidence.get("location") or "").casefold()
-        if "advert" in location or "promo" in location:
+        benign_markers = ("advert", "promo", "reward", "banner", "offer")
+        if any(marker in location for marker in benign_markers):
             continue
         if term := _explicit_overlay_term(description):
             return term
+        if any(marker in normalized for marker in benign_markers):
+            continue
+        return "model-confirmed annotation"
     return None
 
 

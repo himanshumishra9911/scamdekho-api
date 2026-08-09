@@ -202,6 +202,49 @@ def test_model_confirmed_warning_overlay_floors_safe_when_ocr_misses():
     assert result["score_breakdown"]["signals"]["annotation_term"] == "scam"
 
 
+def test_model_localized_annotation_floors_safe_without_transcribed_warning():
+    result = calibrate_observations(
+        [
+            observation(
+                tampering_evidence=[
+                    {
+                        "category": "replica_app",
+                        "strength": "weak",
+                        "description": (
+                            "Overlaid red/magenta annotation text over central "
+                            "payment area (candidate tampering/annotation)."
+                        ),
+                        "location": "payment interface",
+                        "observed_text": None,
+                    }
+                ],
+                fake_probability=25,
+            )
+        ]
+    )
+    local = LocalForensicsResult(
+        known_fake=None,
+        red_overlay_candidate=False,
+        red_overlay_area_ratio=0.0017,
+        attention_overlay_candidate=True,
+        attention_overlay_area_ratio=0.0182,
+        explicit_overlay_term=None,
+        annotation_overlay_term=None,
+        latency_ms=27,
+    )
+
+    engine._apply_local_overlay_floor(result, local)
+    engine._sync_score_metadata(result, local)
+
+    assert result["verdict"] == "SUSPICIOUS"
+    assert result["risk_percentage"] == 68
+    assert result["score_breakdown"]["signals"]["annotation_overlay"] is True
+    assert (
+        result["score_breakdown"]["signals"]["annotation_term"]
+        == "model-confirmed annotation"
+    )
+
+
 def test_attention_color_without_model_warning_does_not_floor_genuine_ui():
     result = calibrate_observations(
         [

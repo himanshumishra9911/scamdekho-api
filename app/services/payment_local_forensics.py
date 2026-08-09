@@ -69,8 +69,8 @@ class LocalForensicsResult:
         # images and low-resolution forwards can make Tesseract miss text that a
         # vision pass can still read.  Supplying the pixel candidate lets the
         # model inspect it; deterministic post-processing still requires the
-        # model to localize an explicit warning/fabrication term before applying
-        # a verdict floor.
+        # model to localize an actual annotation (and distinguish it from an ad
+        # or app branding) before applying a verdict floor.
         if not (
             self.red_overlay_candidate
             or self.attention_overlay_candidate
