@@ -871,6 +871,48 @@ def test_low_risk_readability_review_uses_nano_instead_of_mini(monkeypatch):
     assert result["ensemble"]["adjudicator_performed"] is False
 
 
+def test_heading_only_consensus_uses_two_nano_passes(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGB", (300, 600), "white").save(output, format="PNG")
+    heading_fields = {
+        "amount": "1200",
+        "transaction_id": None,
+        "upi_id": "merchant@oksbi",
+        "recipient_name": "Example Merchant",
+        "sender_name": None,
+        "bank_name": None,
+        "timestamp": "03:33 PM, 24 Jun 2026",
+        "status_text": "Payments Successful",
+    }
+    responses = [
+        observation(fields=heading_fields, fake_probability=20),
+        observation(fields=heading_fields, fake_probability=18),
+    ]
+    calls = []
+
+    def fake_run_triage(image_views, _prompt, model, effort, detail, tokens):
+        calls.append((len(image_views), model, effort, detail, tokens))
+        return responses[len(calls) - 1]
+
+    monkeypatch.setattr(engine, "_run_replica_triage", fake_run_triage)
+    monkeypatch.setattr(engine, "PRIMARY_MODEL", "gpt-5.4-nano")
+    monkeypatch.setattr(engine, "CHEAP_REVIEW_MODEL", "gpt-5.4-nano")
+    monkeypatch.setattr(engine, "CHEAP_REVIEW_REASONING_EFFORT", "none")
+    monkeypatch.setattr(engine, "REVIEW_MODEL", "gpt-5.4-mini")
+    monkeypatch.setattr(engine, "REVIEW_MODE", "suspicious")
+    monkeypatch.setattr(engine, "ADJUDICATOR_MODE", "adaptive")
+
+    result = asyncio.run(engine.analyze_payment_screenshot(output.getvalue()))
+
+    assert result["verdict"] == "SCAM"
+    assert calls == [
+        (1, "gpt-5.4-nano", "none", "low", 1100),
+        (2, "gpt-5.4-nano", "none", "auto", 1100),
+    ]
+    assert result["evidence_summary"]["confirmed_fake_votes"] == 2
+    assert result["ensemble"]["adjudicator_performed"] is False
+
+
 def test_fake_candidate_escalates_to_mini_with_focus_views_and_requires_consensus(monkeypatch):
     output = io.BytesIO()
     Image.new("RGB", (300, 600), "white").save(output, format="PNG")
