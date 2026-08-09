@@ -42,7 +42,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v31"
+ANALYSIS_VERSION = "payment-vision-v32"
 # GPT-5 mini is the highest-quality direct-vision model that still fits the
 # product's measured ~$0.0014/check operating envelope.  Confirmed local
 # signatures and cache hits continue to bypass the model entirely.
@@ -1993,14 +1993,28 @@ def _model_confirmed_annotation_term(result: dict) -> str | None:
         "covers the receipt",
         "covering receipt",
     )
+    candidates: list[tuple[str, str]] = []
     for evidence in result.get("visual_forensics") or []:
-        if not isinstance(evidence, dict):
-            continue
-        description = str(evidence.get("en") or "")
+        if isinstance(evidence, dict):
+            candidates.append(
+                (
+                    str(evidence.get("en") or ""),
+                    str(evidence.get("location") or ""),
+                )
+            )
+    # Models sometimes correctly describe a third-party annotation as a
+    # limitation (because it does not prove bank fraud).  It still proves that
+    # the submitted image is annotated, so use it when pixel triage independently
+    # found the matching attention-color region.
+    candidates.extend(
+        (str(item), "") for item in (result.get("benign_limitations") or [])
+    )
+
+    for description, raw_location in candidates:
         normalized = " ".join(description.casefold().split())
         if not any(marker in normalized for marker in overlay_markers):
             continue
-        location = str(evidence.get("location") or "").casefold()
+        location = raw_location.casefold()
         benign_markers = ("advert", "promo", "reward", "banner", "offer")
         if any(marker in location for marker in benign_markers):
             continue
