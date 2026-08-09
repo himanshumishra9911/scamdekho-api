@@ -647,9 +647,12 @@ def test_normal_in_app_promo_and_matching_clock_are_not_fraud_evidence():
         tampering_evidence=[
             {
                 "category": "replica_app",
-                "strength": "weak",
-                "description": "A Flipkart promotion below the receipt suggests a composite.",
-                "location": "lower payment screen",
+                "strength": "moderate",
+                "description": (
+                    "Mixed content layers: payment-success receipt UI is partially "
+                    "covered by a full-width ad banner/landing page-style content."
+                ),
+                "location": "payment interface",
                 "observed_text": "Discover the Perfect Tablet",
             },
             {
