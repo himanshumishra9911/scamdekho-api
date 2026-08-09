@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v17"
+ANALYSIS_VERSION = "payment-vision-v18"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -235,7 +235,7 @@ Populate every schema field. Put possible scam context in content_risk_signals, 
 
 ANALYST_PROMPT = """Inspect the whole screenshot carefully.
 
-1. Identify the app only when supported by visible branding; otherwise use Unknown.
+1. Identify the paying app only when supported by visible UI branding; otherwise use Unknown. Never infer the paying app from a recipient UPI handle or bank name.
 2. Transcribe the success heading, transaction-ID label/value, and other visible fields exactly; do not silently correct spelling.
 3. Separate payment state from screenshot authenticity.
 4. Look for localized editing artifacts, impossible internal contradictions, and combinations of replica-app signals. A clean fake-app render may have no paste boundary.
@@ -247,7 +247,9 @@ Use clear_manipulation only when at least one strong, specific item exists in ta
 
 REPLICA_TRIAGE_PROMPT = """Perform a compact, independent fake/clone payment-app triage.
 
-Quote the visible success heading, transaction-ID label, and transaction ID exactly without fixing spelling. Extract the amount, UPI ID, names, bank, and timestamp when visible; otherwise use null. Check four independent signal families: system wording, claimed-app identity/labels, provider-ID coherence, and mixed component/icon/bank styles. A fake-app render can look pixel-clean.
+Quote the visible success heading, transaction-ID label, and transaction ID exactly without fixing spelling. Extract the amount, UPI ID, names, bank, and timestamp when visible; otherwise use null. app_name/app_key describe the visible paying-app UI, never the recipient's UPI-handle domain or bank. Check four independent signal families: system wording, claimed-app identity/labels, provider-ID coherence, and mixed component/icon/bank styles. A fake-app render can look pixel-clean.
+
+Inspect the system heading for stable spelling or grammar errors (for example a plural noun paired with a singular success result), but keep that as one signal. Also inspect the payment UI and device status bar for visibly duplicated, overlapping, merged, or ghosted glyphs; do not confuse ordinary compression blur with duplication.
 
 Do not enforce one remembered app template. A single typo, short/alphanumeric ID, missing field, unfamiliar layout, or cross-app UPI handle is never enough. Mark likely_replica only when at least two independent visible signal families conflict and benign app-version, merchant-flow, theme, language, accessibility, crop, or OCR explanations do not resolve the combination.
 
@@ -256,7 +258,7 @@ For example, on a confidently PhonePe-branded screen, an odd system heading, a g
 
 REPLICA_REVIEW_PROMPT = """Inspect the screenshot independently as a fake/clone payment-app specialist.
 
-Look for combinations of internally inconsistent app identity, system wording, component families, icon geometry, spacing, duplicated elements, and transaction fields. Then try to falsify every suspected signal using app-version, OS, language, theme, merchant-flow, accessibility, crop, and compression explanations. A single typo, missing field, unfamiliar layout, or non-receipt claim is not enough. Inspect an embedded receipt separately from any chat, gallery, or SMS wrapper.
+Look for combinations of internally inconsistent app identity, system wording, component families, icon geometry, spacing, duplicated/overlapping/ghosted elements (including the status bar), and transaction fields. Transcribe the success heading exactly and never derive the paying-app identity from a UPI handle. Then try to falsify every suspected signal using app-version, OS, language, theme, merchant-flow, accessibility, crop, and compression explanations. A single typo, missing field, unfamiliar layout, or non-receipt claim is not enough. Inspect an embedded receipt separately from any chat, gallery, or SMS wrapper.
 
 Treat a confidently branded screen with three or more independent, visible conflicts across system wording, provider-specific labels/identifier coherence, banking-name semantics, and component/bank identity as strong clone-app evidence when those conflicts cannot be explained by a merchant flow or app variation. This is a combination rule, not a fixed-template rule; each item alone remains benign.
 
@@ -681,6 +683,11 @@ def _is_benign_replica_claim(group_name: str, claim: str) -> bool:
         "future date",
         "timestamp",
     )
+    if group_name == "wording" and any(
+        heading in normalized
+        for heading in _SUSPICIOUS_SUCCESS_HEADINGS
+    ):
+        return False
     if group_name == "wording":
         return any(marker in normalized for marker in soft_wording_markers)
     if group_name in {"app identity", "component style"}:
@@ -719,6 +726,12 @@ def _is_objective_visual_claim(claim: str) -> bool:
             "halo around",
             "different resolution",
             "composite boundary",
+            "duplicat",
+            "overlap",
+            "ghost",
+            "double-render",
+            "merged glyph",
+            "smear",
         )
     )
 
@@ -962,6 +975,7 @@ def _needs_review(observation: PaymentObservation) -> bool:
             observation.screenshot_kind in {"other", "unreadable"},
             _has_provider_identifier_review_signal(observation),
             _has_malformed_explicit_transaction_id_review_signal(observation),
+            _has_suspicious_success_heading_review_signal(observation),
         )
     )
 
@@ -1023,6 +1037,21 @@ _PROVIDER_TRANSACTION_ID_PATTERNS = {
     "phonepe": re.compile(r"^[A-Z]{1,3}\d{18,30}$"),
 }
 
+# These are stable English system-heading errors seen in clone/fake payment
+# apps. One OCR read only requests a precision review; it never confirms a
+# fake. Promotion requires the exact same normalized heading from two
+# independent model passes, which protects legitimate screens from one noisy
+# OCR read while catching clean fake-app renders without paste artifacts.
+_SUSPICIOUS_SUCCESS_HEADINGS = {
+    "payments successful",
+    "payment successfull",
+    "transaction successfull",
+    "payement successful",
+    "payment sucessful",
+    "transaction sucessful",
+    "sent succesfully",
+}
+
 
 def _normalized_app_identity(observation: PaymentObservation) -> str:
     identity = f"{observation.app_key} {observation.app_name}".casefold()
@@ -1034,6 +1063,22 @@ def _normalized_app_identity(observation: PaymentObservation) -> str:
 
 def _normalized_transaction_id(value: str | None) -> str:
     return re.sub(r"\s+", "", value or "").upper()
+
+
+def _normalized_status_heading(value: str | None) -> str:
+    return re.sub(r"[^a-z]+", " ", (value or "").casefold()).strip()
+
+
+def _suspicious_success_heading(observation: PaymentObservation) -> str | None:
+    heading = _normalized_status_heading(observation.fields.status_text)
+    return heading if heading in _SUSPICIOUS_SUCCESS_HEADINGS else None
+
+
+def _has_suspicious_success_heading_review_signal(
+    observation: PaymentObservation,
+) -> bool:
+    """Escalate a likely system-heading error without trusting one OCR pass."""
+    return _suspicious_success_heading(observation) is not None
 
 
 def _is_explicit_transaction_id_label(value: str | None) -> bool:
@@ -1152,9 +1197,58 @@ def _apply_provider_identifier_consensus(
     return applied
 
 
+def _apply_success_heading_consensus(
+    observations: list[PaymentObservation],
+) -> bool:
+    """Confirm a stable fake-app heading only after two independent reads."""
+    candidates = [
+        (heading, observation)
+        for observation in observations
+        if (heading := _suspicious_success_heading(observation))
+    ]
+    repeated = {
+        heading
+        for heading, count in Counter(heading for heading, _ in candidates).items()
+        if count >= 2
+    }
+    if not repeated:
+        return False
+
+    applied = False
+    for heading in sorted(repeated):
+        description = (
+            "Two independent reads confirmed the same grammatically invalid "
+            f'payment-system success heading: "{heading}".'
+        )
+        for candidate_heading, observation in candidates:
+            if candidate_heading != heading:
+                continue
+            if not any(
+                item.category == "replica_app"
+                and item.strength == "strong"
+                and _normalized_status_heading(item.observed_text) == heading
+                for item in observation.tampering_evidence
+            ):
+                observation.tampering_evidence.append(
+                    VisualEvidence(
+                        category="replica_app",
+                        strength="strong",
+                        description=description,
+                        location="payment success heading",
+                        observed_text=observation.fields.status_text,
+                    )
+                )
+            observation.authenticity_assessment = "clear_manipulation"
+            observation.fake_probability = max(observation.fake_probability, 82)
+            observation.reasons = _unique_strings(observation.reasons + [description])
+            applied = True
+    return applied
+
+
 def _needs_precision_review(observations: list[PaymentObservation]) -> bool:
     return any(
         _has_malformed_explicit_transaction_id_review_signal(observation)
+        or _has_suspicious_success_heading_review_signal(observation)
         or _has_confirmed_fake_evidence(observation)
         or bool(observation.impossible_inconsistencies)
         or any(
@@ -1172,6 +1266,11 @@ def _candidate_signal_suffix(observations: list[PaymentObservation]) -> str:
             for observation in observations
             for item in observation.tampering_evidence
             if item.strength in {"moderate", "strong"}
+        ]
+        + [
+            f'Exact system heading "{observation.fields.status_text}" may contain a stable grammar or spelling error.'
+            for observation in observations
+            if _has_suspicious_success_heading_review_signal(observation)
         ]
     )[:6]
     if not candidate_signals:
@@ -1477,6 +1576,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
                 failures.append(exc)
 
     _apply_provider_identifier_consensus(observations)
+    _apply_success_heading_consensus(observations)
 
     adjudicator_performed = False
     if not review_disabled and observations and _needs_adjudication(observations):
