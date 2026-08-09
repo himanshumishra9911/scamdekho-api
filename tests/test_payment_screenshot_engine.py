@@ -278,6 +278,67 @@ def test_attention_color_without_model_warning_does_not_floor_genuine_ui():
     assert result["risk_percentage"] <= 30
 
 
+def test_weighted_ensemble_uses_exact_75_25_continuous_components():
+    observed = observation(fake_probability=17)
+    result = calibrate_observations([observed])
+    local = LocalForensicsResult(
+        known_fake=None,
+        red_overlay_candidate=False,
+        red_overlay_area_ratio=0.0,
+        attention_overlay_candidate=False,
+        attention_overlay_area_ratio=0.0,
+        explicit_overlay_term=None,
+        annotation_overlay_term=None,
+        latency_ms=12,
+    )
+    model_pass = engine.ModelPassResult(
+        observation=observed,
+        model="gpt-5-mini",
+        view_count=1,
+        raw_model_score=17,
+    )
+    forensic_score = engine._forensic_logic_score(result, local)
+
+    engine._apply_weighted_ensemble(result, [model_pass], local)
+    engine._sync_score_metadata(result, local)
+
+    expected = round(17 * 0.75 + forensic_score * 0.25)
+    assert result["risk_percentage"] == expected
+    assert result["safety_percentage"] == 100 - expected
+    assert result["weighted_ensemble"]["model_weight"] == 0.75
+    assert result["weighted_ensemble"]["forensic_weight"] == 0.25
+    assert result["score_breakdown"]["method"] == "gpt_75_forensics_25_v1"
+    assert result["score_breakdown"]["components"]["gpt_vision"]["score"] == 17
+
+
+def test_weighted_scores_vary_with_direct_model_score_instead_of_fixed_bucket():
+    local = LocalForensicsResult(
+        known_fake=None,
+        red_overlay_candidate=False,
+        red_overlay_area_ratio=0.0,
+        attention_overlay_candidate=False,
+        attention_overlay_area_ratio=0.0,
+        explicit_overlay_term=None,
+        annotation_overlay_term=None,
+        latency_ms=10,
+    )
+    risks = []
+    for model_score in (8, 19, 31):
+        observed = observation(fake_probability=model_score)
+        result = calibrate_observations([observed])
+        model_pass = engine.ModelPassResult(
+            observation=observed,
+            model="gpt-5-mini",
+            view_count=1,
+            raw_model_score=model_score,
+        )
+        engine._apply_weighted_ensemble(result, [model_pass], local)
+        risks.append(result["risk_percentage"])
+
+    assert risks[0] < risks[1] < risks[2]
+    assert len(set(risks)) == 3
+
+
 def test_replica_triage_requires_two_independent_signal_families_for_confirmation():
     triage = replica_triage(
         headline_text="Transaction Successfull",
@@ -585,6 +646,14 @@ def test_compact_54_nano_fast_path_meets_per_check_budget_envelope():
 
     assert cost == pytest.approx(0.001025)
     assert cost < engine.BUDGET_TARGET_USD_PER_CHECK
+
+
+def test_direct_gpt5_mini_typical_scan_fits_five_day_credit_target():
+    cost = _estimate_cost_usd("gpt-5-mini", 2100, 0, 0, 331)
+
+    assert cost == pytest.approx(0.001187)
+    assert cost < engine.BUDGET_TARGET_USD_PER_CHECK
+    assert cost * 700 * 5 < 5.0
 
 
 def test_replica_app_signal_is_supported_but_remains_inconclusive_without_strong_proof():
@@ -1010,7 +1079,7 @@ def test_clean_parallel_consensus_skips_costly_adjudicator(monkeypatch):
 
     assert result["verdict"] == "SAFE"
     assert calls == [
-        (1, "gpt-5.4-nano", "none", "low"),
+        (1, "gpt-5-mini", "none", "low"),
         (2, "gpt-5.4-nano", "none", "auto"),
     ]
     assert result["ensemble"]["attempted_passes"] == 2
