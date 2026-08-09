@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v23"
+ANALYSIS_VERSION = "payment-vision-v24"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -937,8 +937,11 @@ def _normalize_pass_result(
 
 _CLOCK_TOKEN_RE = re.compile(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b")
 _PROMOTION_TERMS = (
+    " ad ",
+    " ads ",
+    "ad banner",
     "advertisement",
-    " advertising",
+    "advertising",
     " in-app ad",
     "promo",
     "promotion",
