@@ -245,6 +245,49 @@ def test_model_localized_annotation_floors_safe_without_transcribed_warning():
     )
 
 
+def test_model_annotation_in_limitations_still_corroborates_pixel_candidate():
+    result = calibrate_observations([observation(fake_probability=25)])
+    result["benign_limitations"] = [
+        "Overlaid magenta warning text likely added later"
+    ]
+    local = LocalForensicsResult(
+        known_fake=None,
+        red_overlay_candidate=False,
+        red_overlay_area_ratio=0.0017,
+        attention_overlay_candidate=True,
+        attention_overlay_area_ratio=0.0182,
+        explicit_overlay_term=None,
+        annotation_overlay_term=None,
+        latency_ms=27,
+    )
+
+    engine._apply_local_overlay_floor(result, local)
+
+    assert result["verdict"] == "SUSPICIOUS"
+    assert result["risk_percentage"] == 68
+
+
+def test_promotion_limitation_does_not_become_annotation_evidence():
+    result = calibrate_observations([observation(fake_probability=20)])
+    result["benign_limitations"] = [
+        "Overlaid promotional reward banner is normal in-app UI"
+    ]
+    local = LocalForensicsResult(
+        known_fake=None,
+        red_overlay_candidate=False,
+        red_overlay_area_ratio=0.0,
+        attention_overlay_candidate=True,
+        attention_overlay_area_ratio=0.02,
+        explicit_overlay_term=None,
+        annotation_overlay_term=None,
+        latency_ms=20,
+    )
+
+    engine._apply_local_overlay_floor(result, local)
+
+    assert result["verdict"] == "SAFE"
+
+
 def test_attention_color_without_model_warning_does_not_floor_genuine_ui():
     result = calibrate_observations(
         [
