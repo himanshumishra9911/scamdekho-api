@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v21"
+ANALYSIS_VERSION = "payment-vision-v22"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -1007,8 +1007,12 @@ def _needs_review(observation: PaymentObservation) -> bool:
                 for item in observation.tampering_evidence
             ),
             bool(observation.impossible_inconsistencies),
-            observation.readability != "clear",
-            observation.screenshot_kind in {"other", "unreadable"},
+            # A partially readable or non-standard receipt is common for genuine
+            # apps (for example CRED share cards and Paytm ad-heavy receipts).
+            # Review only when the image is actually unreadable; evidence and
+            # consistency signals above still escalate suspicious screenshots.
+            observation.readability == "unreadable",
+            observation.screenshot_kind == "unreadable",
             _has_provider_identifier_review_signal(observation),
             _has_malformed_explicit_transaction_id_review_signal(observation),
             _has_suspicious_success_heading_review_signal(observation),
