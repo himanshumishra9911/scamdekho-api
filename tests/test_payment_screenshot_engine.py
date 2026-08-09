@@ -132,6 +132,7 @@ def test_prompt_covers_replica_apps_without_overfitting_to_a_typo():
     assert "at least two independent, visible inconsistencies" in prompt
     assert "a single typo" in prompt
     assert "forwarded inside whatsapp" in prompt
+    assert "explicit visible label such as fake" in prompt
 
 
 def test_replica_triage_requires_two_independent_signal_families_for_confirmation():

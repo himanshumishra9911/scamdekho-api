@@ -26,6 +26,11 @@ from openai import OpenAI
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
+from app.services.payment_local_forensics import (
+    LocalForensicsResult,
+    analyze_local_forensics,
+)
+
 try:
     from pillow_heif import register_heif_opener
 
@@ -36,7 +41,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v20"
+ANALYSIS_VERSION = "payment-vision-v21"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -221,6 +226,12 @@ Use only visible evidence. Payment app layouts change by app version, OS, langua
 These are NOT tampering evidence by themselves: crop; compression; blur; missing status bar; missing UPI ID, bank, sender, reference number, date, or time; a non-12-digit or alphanumeric reference; old or future date; dark mode; unusual font caused by OS accessibility; cross-app UPI handles or branding; merchant handles; suspicious words in a name or UPI ID; or a simple/clean design.
 
 Treat normal presentation variants as benign unless there is independent, localized evidence of editing. Examples include masked identifiers, decorative receipts, minimal share receipts, large black or white viewer margins, OS/share-sheet chrome, ads, cashback or rewards panels, and receipts embedded inside another app or image viewer. A full transaction page and a shared receipt for the same payment can look substantially different. The status-bar time may reflect when the receipt was viewed rather than when the payment happened.
+
+An explicit visible label such as FAKE, fake payment, screenshot generator, prank,
+demo, or test payment is not a benign wrapper. It directly establishes that the
+presented image is not an unmodified, genuine payment proof. A watermark or
+graphic that materially covers the payment receipt is also manipulation of the
+presented screenshot even if the receipt underneath resembles a real app.
 
 Strong evidence must be specific and visible, such as a localized paste boundary, inconsistent anti-aliasing around an edited value, an impossible internal contradiction visible in two fields, or a clearly composited logo/status element. Name its location. If a benign explanation is plausible, use weak/moderate evidence or no evidence.
 
@@ -1462,9 +1473,148 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
     }
 
 
+def _known_fake_result(
+    local_forensics: LocalForensicsResult,
+    dimensions: tuple[int, int],
+) -> dict:
+    """Return a complete zero-token result for a confirmed fake signature."""
+    match = local_forensics.known_fake
+    if match is None:  # pragma: no cover - guarded by the caller
+        raise ValueError("Known-fake result requested without a signature match")
+
+    risk = 99 if match.method == "exact_sha256" else 96
+    reason = (
+        "This image matches a confirmed fake-payment screenshot signature "
+        f"({match.family}) using {match.method.replace('_', ' ')}."
+    )
+    visual_forensics = [
+        {
+            "en": reason,
+            "hi": "",
+            "strength": "strong",
+            "category": "replica_app",
+            "location": "whole screenshot",
+        }
+    ]
+    why = [{"en": reason, "hi": ""}]
+    return {
+        "verdict": "SCAM",
+        "risk_percentage": risk,
+        "safety_percentage": 100 - risk,
+        "confidence": "high",
+        "verdict_label": VERDICT_LABELS["SCAM"],
+        "detected_app": {
+            "name": match.app_name,
+            "app_key": match.app_key,
+            "detection_confidence": 95,
+        },
+        "extracted_fields": ExtractedFields(
+            amount=None,
+            transaction_id=None,
+            upi_id=None,
+            recipient_name=None,
+            sender_name=None,
+            bank_name=None,
+            timestamp=None,
+            status_text=None,
+            transaction_label=None,
+        ).model_dump(),
+        "payment_state": "unknown",
+        "screenshot_kind": "payment_success",
+        "why": why,
+        "reasons": why,
+        "visual_forensics": visual_forensics,
+        "visual_signals": visual_forensics,
+        "benign_limitations": [],
+        "content_risk_signals": [],
+        "evidence_summary": {
+            "strong": 1,
+            "moderate": 0,
+            "weak": 0,
+            "replica_app_moderate": 0,
+            "impossible_inconsistencies": 0,
+            "review_count": 0,
+            "clean_votes": 0,
+            "confirmed_fake_votes": 1,
+            "required_consensus_votes": 1,
+        },
+        "pattern_match": {"found": True, "match_count": 1},
+        "what_to_do": WHAT_TO_DO["SCAM"],
+        "how_to_avoid": HOW_TO_AVOID,
+        "analysis_version": ANALYSIS_VERSION,
+        "review_performed": False,
+        "review_status": "not_required",
+        "ensemble": {
+            "attempted_passes": 0,
+            "successful_passes": 0,
+            "failed_passes": 0,
+            "adjudicator_performed": False,
+            "analysis_views": 0,
+            "view_counts": {},
+            "cascade_path": ["local_known_fake"],
+        },
+        "model_usage": {
+            **_summarize_model_usage([]),
+            "analysis_latency_ms": local_forensics.latency_ms,
+        },
+        "image_dimensions": {"width": dimensions[0], "height": dimensions[1]},
+        "local_forensics": local_forensics.telemetry(),
+    }
+
+
+def _apply_local_overlay_floor(
+    result: dict,
+    local_forensics: LocalForensicsResult,
+) -> None:
+    """Keep a material red-overlay candidate from being silently called safe."""
+    if not local_forensics.force_review or result.get("verdict") == "SCAM":
+        return
+
+    reason = (
+        "A large saturated-red graphic overlaps the upper payment area. The "
+        "result is inconclusive until the overlay text and original transaction "
+        "are independently verified."
+    )
+    if result.get("verdict") == "SAFE":
+        result.update(
+            {
+                "verdict": "SUSPICIOUS",
+                "risk_percentage": 58,
+                "confidence": "low",
+                "verdict_label": VERDICT_LABELS["SUSPICIOUS"],
+                "what_to_do": WHAT_TO_DO["SUSPICIOUS"],
+            }
+        )
+    else:
+        result["risk_percentage"] = max(58, int(result.get("risk_percentage", 0)))
+
+    result.setdefault("why", []).append({"en": reason, "hi": ""})
+    result["reasons"] = result["why"]
+    evidence = {
+        "en": reason,
+        "hi": "",
+        "strength": "moderate",
+        "category": "overlay",
+        "location": "upper/central payment area",
+    }
+    result.setdefault("visual_forensics", []).append(evidence)
+    result["visual_signals"] = result["visual_forensics"]
+    summary = result.setdefault("evidence_summary", {})
+    summary["moderate"] = int(summary.get("moderate", 0)) + 1
+    result["pattern_match"] = {
+        "found": True,
+        "match_count": int(result.get("pattern_match", {}).get("match_count", 0)) + 1,
+    }
+
+
 async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     analysis_started_at = time.perf_counter()
     prepared_bytes, media_type, dimensions = _prepare_image(image_bytes)
+    local_forensics = analyze_local_forensics(prepared_bytes)
+    if local_forensics.known_fake is not None:
+        return _known_fake_result(local_forensics, dimensions)
+
+    local_prompt_suffix = local_forensics.prompt_suffix()
     loop = asyncio.get_running_loop()
     observations: list[PaymentObservation] = []
     model_passes: list[ModelPassResult] = []
@@ -1540,7 +1690,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         execute_replica_triage(
             "primary",
             primary_views,
-            REPLICA_TRIAGE_PROMPT,
+            REPLICA_TRIAGE_PROMPT + local_prompt_suffix,
             PRIMARY_MODEL,
             PRIMARY_REASONING_EFFORT,
             _normalize_image_detail(PRIMARY_IMAGE_DETAIL, "low"),
@@ -1555,7 +1705,10 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             execute_replica_triage(
                 "review",
                 review_views,
-                f"{REPLICA_TRIAGE_PROMPT}\n\n{REPLICA_REVIEW_PROMPT}",
+                (
+                    f"{REPLICA_TRIAGE_PROMPT}\n\n{REPLICA_REVIEW_PROMPT}"
+                    + local_prompt_suffix
+                ),
                 REVIEW_MODEL,
                 REVIEW_REASONING_EFFORT,
                 _normalize_image_detail(REVIEW_IMAGE_DETAIL, "auto"),
@@ -1577,13 +1730,18 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
 
     if REVIEW_MODE != "always":
         review_required = not review_disabled and (
-            not observations or any(_needs_review(item) for item in observations)
+            not observations
+            or local_forensics.force_review
+            or any(_needs_review(item) for item in observations)
         )
         if review_required:
             review_views = get_views(REVIEW_MAX_ANALYSIS_VIEWS)
             attempted_passes += 1
             attempted_view_counts["review"] = len(review_views)
-            precision_review = _needs_precision_review(observations)
+            precision_review = (
+                local_forensics.force_review
+                or _needs_precision_review(observations)
+            )
             selected_review_model = REVIEW_MODEL if precision_review else CHEAP_REVIEW_MODEL
             selected_review_effort = (
                 REVIEW_REASONING_EFFORT
@@ -1598,6 +1756,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             review_prompt = (
                 f"{REPLICA_TRIAGE_PROMPT}\n\n{REPLICA_REVIEW_PROMPT}"
                 + _candidate_signal_suffix(observations)
+                + local_prompt_suffix
             )
             try:
                 review_pass = await execute_replica_triage(
@@ -1624,7 +1783,11 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         attempted_passes += 1
         attempted_view_counts["adjudicator"] = len(adjudicator_views)
         adjudicator_performed = True
-        adjudicator_prompt = ADJUDICATOR_PROMPT + _candidate_signal_suffix(observations)
+        adjudicator_prompt = (
+            ADJUDICATOR_PROMPT
+            + _candidate_signal_suffix(observations)
+            + local_prompt_suffix
+        )
         try:
             adjudicator_pass = await execute_pass(
                 "adjudicator",
@@ -1644,6 +1807,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
         raise RuntimeError("All payment screenshot forensic passes failed") from failures[0]
 
     result = calibrate_observations(observations)
+    _apply_local_overlay_floor(result, local_forensics)
     if len(observations) < 2 and result["verdict"] == "SCAM":
         # A high-risk verdict is never exposed from one model report alone.
         result.update(
@@ -1671,6 +1835,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     review_succeeded = any(item.role == "review" for item in model_passes)
     result.update(
         {
+            "safety_percentage": 100 - int(result.get("risk_percentage", 0)),
             "analysis_version": ANALYSIS_VERSION,
             "review_performed": review_performed,
             "review_status": (
@@ -1691,6 +1856,7 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             },
             "model_usage": model_usage,
             "image_dimensions": {"width": dimensions[0], "height": dimensions[1]},
+            "local_forensics": local_forensics.telemetry(),
         }
     )
     return result
