@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover - dependency is present in production
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "payment-vision-v25"
+ANALYSIS_VERSION = "payment-vision-v26"
 PRIMARY_MODEL = os.getenv("PAYMENT_SCREENSHOT_MODEL", "gpt-5.4-nano")
 REPLICA_MODEL = os.getenv("PAYMENT_SCREENSHOT_REPLICA_MODEL", PRIMARY_MODEL)
 CHEAP_REVIEW_MODEL = os.getenv("PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL", PRIMARY_MODEL)
@@ -235,6 +235,13 @@ presented image is not an unmodified, genuine payment proof. A watermark or
 graphic that materially covers the payment receipt is also manipulation of the
 presented screenshot even if the receipt underneath resembles a real app.
 
+A large third-party warning annotation such as "scam", "fraud", "savdhan", or
+"beware" overlapping receipt controls establishes that the presented screenshot
+was annotated/edited and must not be called visually genuine. Report it as
+uncertain manipulation unless separate visible evidence proves the underlying
+transaction UI itself was fabricated. Do not convert a warning caption alone
+into a claim that the underlying bank transaction was fake.
+
 Strong evidence must be specific and visible, such as a localized paste boundary, inconsistent anti-aliasing around an edited value, an impossible internal contradiction visible in two fields, or a clearly composited logo/status element. Name its location. If a benign explanation is plausible, use weak/moderate evidence or no evidence.
 
 A fake-app screen may be internally clean and have no paste boundary. Consider replica_app evidence only when at least two independent, visible inconsistencies occur inside the payment UI, for example a stable grammatical error in a system heading plus mixed branding/component styles, or mutually incompatible app identity elements. A single typo, unfamiliar layout, missing transaction details, absent reference number, or the recipient saying money was not received is not enough. Use moderate replica_app evidence and uncertain when the combination is concerning but not decisive; use strong only when the visible combination has no plausible app-version, theme, language, accessibility, crop, compression, or OCR explanation.
@@ -265,6 +272,11 @@ Quote the visible success heading, transaction-ID label, and transaction ID exac
 Inspect the system heading for stable spelling or grammar errors (for example a plural noun paired with a singular success result), but keep that as one signal. Also inspect the payment UI and device status bar for visibly duplicated, overlapping, merged, or ghosted glyphs; do not confuse ordinary compression blur with duplication.
 
 Do not enforce one remembered app template. A single typo, short/alphanumeric ID, missing field, unfamiliar layout, or cross-app UPI handle is never enough. Mark likely_replica only when at least two independent visible signal families conflict and benign app-version, merchant-flow, theme, language, accessibility, crop, or OCR explanations do not resolve the combination.
+
+If a third-party warning caption such as scam/fraud/savdhan/beware overlaps the
+receipt controls, record a moderate overlay signal: the submitted image is
+annotated and is not clean payment proof. Do not call the underlying transaction
+fake from that caption alone.
 
 For example, on a confidently PhonePe-branded screen, an odd system heading, a generic banking-name or transaction label, a provider ID that does not cohere with that label, and generic/mixed bank components form separate signals only when actually visible. Any one of them alone is benign. Keep lists short and specific."""
 
@@ -1558,6 +1570,46 @@ def calibrate_observations(observations: list[PaymentObservation]) -> dict:
     }
 
 
+def _sync_score_metadata(
+    result: dict,
+    local_forensics: LocalForensicsResult | None = None,
+) -> None:
+    """Expose an honest, frontend-ready 0-100 evidence indicator.
+
+    The legacy percentage keys remain for API compatibility, but this is not a
+    calibrated probability that a bank transfer settled. The UI can use the
+    explicit indicator fields without presenting false statistical precision.
+    """
+    risk = max(0, min(100, int(result.get("risk_percentage", 0))))
+    safety = 100 - risk
+    result["risk_percentage"] = risk
+    result["safety_percentage"] = safety
+    summary = result.get("evidence_summary") or {}
+    annotation_term = (
+        local_forensics.annotation_overlay_term if local_forensics else None
+    )
+    result["score_breakdown"] = {
+        "risk_indicator": risk,
+        "safety_indicator": safety,
+        "scale": "0-100 evidence indicator",
+        "method": "evidence_weighted_v2",
+        "is_calibrated_probability": False,
+        "interpretation": (
+            "Visual screenshot evidence only; this does not verify bank settlement."
+        ),
+        "signals": {
+            "strong": int(summary.get("strong", 0)),
+            "moderate": int(summary.get("moderate", 0)),
+            "weak": int(summary.get("weak", 0)),
+            "known_fake_match": bool(
+                local_forensics and local_forensics.known_fake is not None
+            ),
+            "annotation_overlay": bool(annotation_term),
+            "annotation_term": annotation_term,
+        },
+    }
+
+
 def _known_fake_result(
     local_forensics: LocalForensicsResult,
     dimensions: tuple[int, int],
@@ -1582,7 +1634,7 @@ def _known_fake_result(
         }
     ]
     why = [{"en": reason, "hi": ""}]
-    return {
+    result = {
         "verdict": "SCAM",
         "risk_percentage": risk,
         "safety_percentage": 100 - risk,
@@ -1645,33 +1697,50 @@ def _known_fake_result(
         "image_dimensions": {"width": dimensions[0], "height": dimensions[1]},
         "local_forensics": local_forensics.telemetry(),
     }
+    _sync_score_metadata(result, local_forensics)
+    return result
 
 
 def _apply_local_overlay_floor(
     result: dict,
     local_forensics: LocalForensicsResult,
 ) -> None:
-    """Keep a material red-overlay candidate from being silently called safe."""
-    if not local_forensics.force_review or result.get("verdict") == "SCAM":
+    """Keep a materially annotated screenshot from being called clean/safe."""
+    if not local_forensics.needs_overlay_floor or result.get("verdict") == "SCAM":
         return
 
-    reason = (
-        "A large saturated-red graphic overlaps the upper payment area. The "
-        "result is inconclusive until the overlay text and original transaction "
-        "are independently verified."
-    )
+    annotation_term = local_forensics.annotation_overlay_term
+    if annotation_term:
+        floor = 68
+        reason = (
+            f'Third-party warning text ("{annotation_term}") overlaps the receipt '
+            "controls. The submitted image is annotated/edited and cannot be "
+            "accepted as clean payment proof, although this alone does not prove "
+            "the underlying bank transaction was fabricated."
+        )
+        location = "annotation over receipt controls"
+    else:
+        floor = 58
+        reason = (
+            "A large saturated-red graphic overlaps the upper payment area. The "
+            "result is inconclusive until the overlay text and original transaction "
+            "are independently verified."
+        )
+        location = "upper/central payment area"
     if result.get("verdict") == "SAFE":
         result.update(
             {
                 "verdict": "SUSPICIOUS",
-                "risk_percentage": 58,
+                "risk_percentage": floor,
                 "confidence": "low",
                 "verdict_label": VERDICT_LABELS["SUSPICIOUS"],
                 "what_to_do": WHAT_TO_DO["SUSPICIOUS"],
             }
         )
     else:
-        result["risk_percentage"] = max(58, int(result.get("risk_percentage", 0)))
+        result["risk_percentage"] = max(
+            floor, int(result.get("risk_percentage", 0))
+        )
 
     result.setdefault("why", []).append({"en": reason, "hi": ""})
     result["reasons"] = result["why"]
@@ -1680,7 +1749,7 @@ def _apply_local_overlay_floor(
         "hi": "",
         "strength": "moderate",
         "category": "overlay",
-        "location": "upper/central payment area",
+        "location": location,
     }
     result.setdefault("visual_forensics", []).append(evidence)
     result["visual_signals"] = result["visual_forensics"]
@@ -1920,7 +1989,6 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
     review_succeeded = any(item.role == "review" for item in model_passes)
     result.update(
         {
-            "safety_percentage": 100 - int(result.get("risk_percentage", 0)),
             "analysis_version": ANALYSIS_VERSION,
             "review_performed": review_performed,
             "review_status": (
@@ -1944,4 +2012,5 @@ async def analyze_payment_screenshot(image_bytes: bytes) -> dict:
             "local_forensics": local_forensics.telemetry(),
         }
     )
+    _sync_score_metadata(result, local_forensics)
     return result

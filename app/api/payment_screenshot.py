@@ -202,6 +202,7 @@ async def check_payment_screenshot(
                 "reasons":          result.get("reasons", []),
                 "visual_signals":   result.get("visual_forensics", []),
                 "safety_percentage": result.get("safety_percentage"),
+                "score_breakdown":  result.get("score_breakdown", {}),
                 "local_forensics":  result.get("local_forensics", {}),
                 "analysis_version": result.get("analysis_version"),
                 "review_performed": result.get("review_performed", False),
