@@ -34,10 +34,9 @@ The URL checker also has a stricter per-IP rate limit because it performs extern
 
 The payment screenshot endpoint uses a cost-aware vision cascade plus
 deterministic consensus. A GPT-5.4 Nano pass inspects one optimized full-screen
-view. Clear results stop there. Readability uncertainty and heading-only OCR
-confirmation get a second Nano pass; material anomalies or malformed explicit
-provider IDs escalate to GPT-5.4 Mini with focused views. GPT-5.6 Luna is a
-last-resort adjudicator for unresolved disagreement. A `SCAM` verdict is never
+view. Clear results stop there. Readability uncertainty, material anomalies,
+and heading/provider-ID confirmation get focused Nano review passes. A final
+independent Nano pass adjudicates unresolved disagreement. A `SCAM` verdict is never
 exposed from one model report. Missing fields, unfamiliar apps, compression,
 cropping, cross-app UPI handles, and suspicious words are not proof of
 fabrication. Repeated independent reads are required before provider-ID or
@@ -49,13 +48,13 @@ Optional Render environment variables:
 
 - `PAYMENT_SCREENSHOT_MODEL` (default `gpt-5.4-nano`): low-cost primary triage.
 - `PAYMENT_SCREENSHOT_CHEAP_REVIEW_MODEL` (default: primary model): readability/low-risk second pass.
-- `PAYMENT_SCREENSHOT_REVIEW_MODEL` (default `gpt-5.4-mini`): precision clone-app specialist.
-- `PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL` (default `gpt-5.6-luna`): blind last-resort adjudicator.
+- `PAYMENT_SCREENSHOT_REVIEW_MODEL` (default `gpt-5.4-nano`): focused clone-app specialist.
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_MODEL` (default `gpt-5.4-nano`): blind last-resort adjudicator.
 - `PAYMENT_SCREENSHOT_REVIEW_MODE`: `suspicious` (default), `always`, or `off`.
 - `PAYMENT_SCREENSHOT_ADJUDICATOR_MODE`: `adaptive` (default), `always`, or `off`.
 - `PAYMENT_SCREENSHOT_REASONING_EFFORT` (default `none`) supplies the primary baseline.
 - `PAYMENT_SCREENSHOT_PRIMARY_REASONING_EFFORT` and `PAYMENT_SCREENSHOT_REVIEW_REASONING_EFFORT` optionally override that baseline.
-- `PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_EFFORT` (default `medium`).
+- `PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_EFFORT` (default `none`).
 - `PAYMENT_SCREENSHOT_ADJUDICATOR_REASONING_MODE`: `standard` (default) or `pro`. Enable `pro` only after a representative holdout demonstrates a worthwhile gain.
 - `PAYMENT_SCREENSHOT_PRIMARY_IMAGE_DETAIL` (default `low`).
 - `PAYMENT_SCREENSHOT_REVIEW_IMAGE_DETAIL` (default `auto`).
