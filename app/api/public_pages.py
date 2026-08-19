@@ -33,6 +33,8 @@ from app.services.seo_content_engine import ensure_seo_content
 router = APIRouter()
 
 SITE = "https://scamdekho.in"
+# The scan API is on its own host — scamdekho.in does not proxy /api/v1.
+API_BASE = "https://api.scamdekho.in"
 SITEMAP_PAGE_SIZE = 5000
 
 
@@ -838,13 +840,18 @@ def build_scanning_page_html(domain: str) -> str:
   var tick=setInterval(function(){{
     i++; if(i<steps.length){{ steps[i].classList.add("on"); }} else {{ clearInterval(tick); }}
   }}, 2200);
+  var done=false;
   function fail(){{
+    if(done) return;
+    done=true;
     clearInterval(tick);
     document.getElementById("sdSpin").style.display="none";
     document.getElementById("sdSteps").style.display="none";
     document.getElementById("sdErr").style.display="block";
   }}
-  fetch("{SITE}/api/v1/check/url", {{
+  // A full scan is ~15-20s; give up rather than spin forever.
+  setTimeout(fail, 90000);
+  fetch("{API_BASE}/api/v1/check/url", {{
     method:"POST",
     headers:{{"Content-Type":"application/json"}},
     body:JSON.stringify({{url:"https://{d}"}})
@@ -852,6 +859,8 @@ def build_scanning_page_html(domain: str) -> str:
     if(!r.ok) throw new Error("scan failed");
     return r.json();
   }}).then(function(){{
+    if(done) return;
+    done=true;
     // page now exists server-side -> reload into the real report
     window.location.replace("{SITE}/check/{d}?scanned=1");
   }}).catch(fail);
