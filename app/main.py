@@ -26,6 +26,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from app.api.public_sitemaps import router as public_sitemaps_router
 from app.api.public_pages import router as public_pages_router
 from app.api.listing_pages import router as listing_router
+from app.api.globe_activity import router as globe_activity_router
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ async def shutdown():
 # ================= ROUTES =================
 app.include_router(v1_router, prefix="/api/v1")
 app.include_router(partner_url_check_router, prefix="/api/v1")
+app.include_router(globe_activity_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/analytics")
 app.include_router(feedback_router, prefix="/feedback")
 
