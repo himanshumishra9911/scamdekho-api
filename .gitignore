@@ -13,3 +13,6 @@ tests/payment_screenshot_dataset/**/*.heic
 tests/payment_screenshot_dataset/**/*.heif
 tests/payment_screenshot_dataset/**/*.avif
 payment-screenshot-eval*.json
+
+# MaxMind GeoLite2 (downloaded at build time, not redistributable)
+*.mmdb
