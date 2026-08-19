@@ -50,6 +50,7 @@ TYPE_LABELS = {
     "offer_letter": "Job Scam",
     "paypal_email": "PayPal Phishing",
     "paypal_invoice": "PayPal Invoice Scam",
+    "paypal_link": "PayPal Link Scam",
 }
 
 _cache = {"at": 0.0, "payload": None}

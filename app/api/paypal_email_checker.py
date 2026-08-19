@@ -9,6 +9,8 @@ from app.services.paypal_email_engine import PayPalEmailEngine
 from app.services.paypal_gpt_analyzer import PayPalGPTAnalyzer
 from app.services.paypal_constants import get_risk_level, SCAM_TYPES
 from app.services.cache_service import get_cached_scan, set_cached_scan
+from app.services.db_service import save_scan
+from app.services.security import request_meta
 
 router = APIRouter(
     prefix="/api/v1/paypal/email",
@@ -194,6 +196,13 @@ async def check_paypal_email(request: Request, data: EmailCheckRequest):
                 "support_url": "https://www.paypal.com/help",
             },
         }
+        await save_scan(
+            "paypal_email",
+            data.sender or data.subject or "paypal_email",
+            risk["label"],
+            final_score,
+            request_meta(request),
+        )
         await set_cached_scan("paypal_email", cache_payload, response)
         return response
 

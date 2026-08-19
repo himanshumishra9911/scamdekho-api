@@ -2,7 +2,7 @@
 PayPal Invoice Scam Checker API - 3-Tier Scoring
 Detects fake PayPal invoices with tech support scams
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -10,6 +10,8 @@ from app.services.paypal_invoice_engine import PayPalInvoiceEngine
 from app.services.paypal_gpt_analyzer import PayPalGPTAnalyzer
 from app.services.paypal_constants import get_risk_level, SCAM_TYPES
 from app.services.cache_service import get_cached_scan, set_cached_scan
+from app.services.db_service import save_scan
+from app.services.security import request_meta
 
 router = APIRouter(
     prefix="/api/v1/paypal/invoice",
@@ -57,7 +59,7 @@ class InvoiceCheckRequest(BaseModel):
 # MAIN ENDPOINT
 # ═══════════════════════════════════════════════════
 @router.post("/check")
-async def check_paypal_invoice(data: InvoiceCheckRequest):
+async def check_paypal_invoice(data: InvoiceCheckRequest, request: Request):
     """
     🧾 Check PayPal Invoice - Returns: Likely Safe / Suspicious / Likely Scam
     
@@ -345,6 +347,13 @@ async def check_paypal_invoice(data: InvoiceCheckRequest):
                 ),
             },
         }
+        await save_scan(
+            "paypal_invoice",
+            data.sender_email or "paypal_invoice",
+            risk["label"],
+            final_score,
+            request_meta(request),
+        )
         await set_cached_scan("paypal_invoice", cache_payload, response)
         return response
 

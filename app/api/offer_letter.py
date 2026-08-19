@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Request
 import httpx
 import os
 from app.services.offer_letter_engine import (
@@ -9,6 +9,7 @@ from app.services.offer_letter_engine import (
 )
 from app.services.db_service import save_scan
 from app.services.cache_service import get_cached_scan, set_cached_scan
+from app.services.security import request_meta
 
 router = APIRouter()
 
@@ -37,6 +38,7 @@ async def verify_recaptcha(token: str) -> bool:
 
 @router.post("/check/offer-letter")
 async def check_offer_letter(
+    request: Request,
     file: UploadFile = File(...),
     recaptcha_token: str = Form(default="")
 ):
@@ -69,7 +71,7 @@ async def check_offer_letter(
     if not extracted_text or len(extracted_text.strip()) < 50:
         if file_type == "pdf":
             result = run_vision_analysis(file_bytes)
-            await save_scan("offer_letter", file.filename or "unknown", result["verdict"], result["trust_score"])
+            await save_scan("offer_letter", file.filename or "unknown", result["verdict"], result["trust_score"], request_meta(request))
             await set_cached_scan("offer_letter", cache_payload, result)
             return result
         response = {
@@ -93,6 +95,6 @@ async def check_offer_letter(
         return response
 
     result = run_full_analysis(extracted_text, file_bytes, file_type)
-    await save_scan("offer_letter", file.filename or "unknown", result["verdict"], result["trust_score"])
+    await save_scan("offer_letter", file.filename or "unknown", result["verdict"], result["trust_score"], request_meta(request))
     await set_cached_scan("offer_letter", cache_payload, result)
     return result

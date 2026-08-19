@@ -64,6 +64,21 @@ def get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def request_meta(request: Request) -> dict:
+    """
+    Per-scan request metadata stored alongside a check.
+
+    Same shape v1.scan_meta has always written for URL checks — kept here so
+    the other checkers can record it too without importing across API modules.
+    """
+    if request is None:
+        return {}
+    return {
+        "client_ip": get_client_ip(request),
+        "user_agent": request.headers.get("user-agent", "")[:300],
+    }
+
+
 def _has_valid_api_key(request: Request) -> bool:
     api_key = os.getenv("PUBLIC_API_KEY")
     if not api_key:
