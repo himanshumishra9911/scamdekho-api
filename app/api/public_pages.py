@@ -180,36 +180,43 @@ def _faq_items(domain, ts, verdict, verdict_phrase, total_sources, answer, summa
 # CHROME + ADS
 # ══════════════════════════════════════════════════════════════════
 
+NAV_CSS = """.sdnav2-wrap{ position:fixed; top:16px; left:0; right:0; z-index:2000; padding:0 20px; font-family:Manrope,'Segoe UI',system-ui,sans-serif; }.sdnav2{ max-width:1280px; margin:0 auto; display:flex; align-items:center; gap:20px; height:106px; padding:0 12px 0 22px; background:#FFFFFF; border:1px solid #E9EDF3; border-radius:18px; box-shadow:0 10px 34px rgba(16,20,30,0.09); box-sizing:border-box; }.sdnav2-logo{ display:flex; align-items:center; height:100%; flex-shrink:0; }.sdnav2-logo img{ height:auto; width:auto; max-width:200px; max-height:58px; object-fit:contain; display:block; }.sdnav2-search{ display:flex; align-items:center; gap:10px; flex:1 1 0; min-width:150px; max-width:300px; height:44px; padding:0 5px 0 16px; background:#F3F6FA; border:1px solid #E9EDF3; border-radius:999px; margin:0; }.sdnav2-search input{ flex:1 1 0; min-width:0; background:transparent; border:none; outline:none; font-family:inherit; font-size:13px; color:#14171F; padding:0; }.sdnav2-search button{ width:34px; height:34px; border-radius:50%; background:#0B63C5; border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; padding:0; }.sdnav2-links{ display:flex; align-items:center; gap:22px; margin-left:auto; }.sdnav2-links > a{ color:#4B5563; text-decoration:none; font-size:13.5px; font-weight:600; white-space:nowrap; transition:color .15s; }.sdnav2-links > a:hover{ color:#0B63C5; }.sdnav2-dropdown{ position:relative; }.sdnav2-dropdown-btn{ display:flex; align-items:center; gap:6px; background:none; border:none; cursor:pointer; font-family:inherit; color:#4B5563; font-size:13.5px; font-weight:600; padding:0; white-space:nowrap; }.sdnav2-dropdown-btn:hover{ color:#0B63C5; }.sdnav2-dropdown-btn svg{ transition:transform .2s; }.sdnav2-dropdown.open .sdnav2-dropdown-btn svg{ transform:rotate(180deg); }.sdnav2-dropdown-menu{ display:none; position:absolute; top:calc(100% + 16px); left:50%; transform:translateX(-50%); background:#FFFFFF; border:1px solid #E5E9F0; border-radius:14px; box-shadow:0 2px 10px rgba(16,20,30,0.06), 0 12px 32px rgba(16,20,30,0.08); min-width:260px; padding:8px; z-index:200; }.sdnav2-dropdown.open .sdnav2-dropdown-menu{ display:block; }.sdnav2-dropdown-menu a{ display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:9px; color:#14171F; text-decoration:none; font-size:13px; font-weight:600; }.sdnav2-dropdown-menu a:hover{ background:#F3F6FA; color:#0B63C5; }.sdnav2-dropdown-divider{ height:1px; background:#F1F4F9; margin:6px 0; }.sdnav2-cta{ flex-shrink:0; background:#F5811F; color:#FFFFFF !important; text-decoration:none; font-size:13.5px; font-weight:700; padding:12px 22px; border-radius:999px; white-space:nowrap; box-shadow:0 6px 18px rgba(245,129,31,0.28); }.sdnav2-toggle{ display:none; background:none; border:none; cursor:pointer; margin-left:8px; padding:4px; }.sdnav2-toggle span{ display:block; width:22px; height:2.5px; margin:5px 0; background:#14171F; border-radius:3px; }@media (max-width:1079px){ .sdnav2-logo img{ height:auto; max-width:160px; } }@media (max-width:940px){ .sdnav2-search{ display:none; } }@media (max-width: 860px){.sdnav2-wrap{ top:clamp(8px,2.6vw,12px); left:0; right:0; padding:0 clamp(8px,3vw,12px); }.sdnav2{ position:relative; border-radius:16px; height:clamp(60px,17vw,74px); padding:0 clamp(6px,2.4vw,10px) 0 clamp(10px,3.6vw,14px); gap:clamp(6px,2.6vw,12px); }.sdnav2-logo img{ height:auto; max-width:min(160px,34vw); }.sdnav2-search{ display:none; }.sdnav2-links{ display:none; position:absolute; top:calc(100% + 10px); left:0; right:0; width:auto; max-height:calc(100vh - 120px); overflow-y:auto; flex-direction:column; align-items:stretch; gap:0; margin-left:0; background:#FFFFFF; border:1px solid #E9EDF3; border-radius:16px; box-shadow:0 18px 44px rgba(16,20,30,0.16); z-index:999; padding:6px 0; }.sdnav2-links.active{ display:flex; }.sdnav2-links > a{ padding:15px 22px; font-size:15px; border-bottom:1px solid #F1F4F9; }.sdnav2-dropdown{ width:100%; }.sdnav2-dropdown-btn{ width:100%; padding:15px 22px; font-size:15px; border-bottom:1px solid #F1F4F9; justify-content:space-between; }.sdnav2-dropdown-menu{ position:static; transform:none; box-shadow:none; border:none; border-radius:0; padding:0 0 0 22px; min-width:unset; }.sdnav2-dropdown.open .sdnav2-dropdown-menu{ display:flex; flex-direction:column; }.sdnav2-dropdown-menu a{ padding:12px; border-radius:0; border-bottom:1px solid #F8FAFC; }.sdnav2-cta{ padding:clamp(7px,2.2vw,10px) clamp(10px,3.6vw,16px); font-size:clamp(10.5px,3vw,12.5px); margin-left:auto; }.sdnav2-toggle{ display:block; margin-left:clamp(2px,1vw,6px); }}"""
+
+
 def _navbar_html() -> str:
+    """Same navbar the rest of the site uses (see homepage sdnav2)."""
     return f"""
-<nav class="navbar">
-  <a href="{SITE}/"><img src="{SITE}/logo.webp" class="site-logo" alt="ScamDekho Free Scam Checker India"></a>
-  <div class="nav-links" id="navLinks">
+<style>{NAV_CSS}</style>
+<div class="sdnav2-wrap" id="sdnav2Wrap"><nav class="sdnav2">
+  <a href="{SITE}/" class="sdnav2-logo"><img src="{SITE}/logo-wide.webp" alt="ScamDekho - Check Before You Click"></a>
+  <form class="sdnav2-search" id="sdnav2Search" action="{SITE}/url-checker" method="get">
+    <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="#8A93A3" stroke-width="2"></circle><path d="M16 16l4.5 4.5" stroke="#8A93A3" stroke-width="2" stroke-linecap="round"></path></svg>
+    <input type="text" name="q" placeholder="Paste a URL to check" aria-label="Paste a URL to check">
+    <button type="submit" aria-label="Check for scam"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 19V6M6 12l6-6 6 6" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+  </form>
+  <div class="sdnav2-links" id="sdnav2Links">
     <a href="{SITE}/">Home</a>
-    <div class="nav-dropdown" id="servicesDropdown">
-      <button class="nav-dropdown-btn" onclick="toggleServicesDropdown()" aria-expanded="false" aria-controls="servicesMenu">
-        Services <i class="fa-solid fa-chevron-down"></i>
-      </button>
-      <div class="nav-dropdown-menu" id="servicesMenu" role="menu">
-        <a href="{SITE}/paypal-email-checker" role="menuitem"><i class="fa-solid fa-envelope"></i> PayPal Email Checker</a>
-        <a href="{SITE}/paypal-invoice-checker" role="menuitem"><i class="fa-solid fa-file-invoice-dollar"></i> PayPal Invoice Checker</a>
-        <a href="{SITE}/scam-message-checker" role="menuitem"><i class="fa-solid fa-comment-dots"></i> Message Scam Checker</a>
-        <a href="{SITE}/url-checker" role="menuitem"><i class="fa-solid fa-globe"></i> Website / URL Checker</a>
-        <a href="{SITE}/fake-payment-screenshot-checker" role="menuitem"><i class="fa-solid fa-image"></i> Screenshot Scam Checker</a>
-        <a href="{SITE}/upi-qr-checker" role="menuitem"><i class="fa-solid fa-qrcode"></i> UPI & QR Code Checker</a>
-        <div class="nav-dropdown-divider"></div>
-        <a href="{SITE}/fake-offer-letter-checker" role="menuitem"><i class="fa-solid fa-file-lines"></i> Job Offer Letter Checker</a>
+    <div class="sdnav2-dropdown" id="sdnav2Services">
+      <button type="button" class="sdnav2-dropdown-btn" onclick="sdnav2ToggleServices(event)" aria-expanded="false" aria-controls="sdnav2ServicesMenu">Services
+        <svg width="10" height="10" viewBox="0 0 24 24"><path d="M4 8l8 8 8-8" fill="none" stroke="#4B5563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+      <div class="sdnav2-dropdown-menu" id="sdnav2ServicesMenu" role="menu">
+        <a href="{SITE}/scam-message-checker" role="menuitem">Message Scam Checker</a>
+        <a href="{SITE}/url-checker" role="menuitem">Website / URL Checker</a>
+        <a href="{SITE}/fake-payment-screenshot-checker" role="menuitem">Screenshot Scam Checker</a>
+        <a href="{SITE}/upi-qr-checker" role="menuitem">UPI &amp; QR Code Checker</a>
+        <div class="sdnav2-dropdown-divider"></div>
+        <a href="{SITE}/fake-offer-letter-checker" role="menuitem">Job Offer Letter Checker</a>
+        <a href="{SITE}/paypal-email-checker" role="menuitem">PayPal Email Checker</a>
+        <a href="{SITE}/paypal-invoice-checker" role="menuitem">PayPal Invoice Checker</a>
       </div>
     </div>
     <a href="{SITE}/blog/">Blog</a>
     <a href="{SITE}/global/">Global</a>
     <a href="{SITE}/about">About</a>
   </div>
-  <button class="menu-toggle" aria-label="Toggle Menu" aria-expanded="false" id="menuToggle">
-    <span></span><span></span><span></span>
-  </button>
-</nav>"""
-
+  <a href="{SITE}/#reportModal" class="sdnav2-cta">Report a Scam</a>
+  <button class="sdnav2-toggle" id="sdnav2Toggle" aria-label="Toggle Menu" aria-expanded="false"><span></span><span></span><span></span></button>
+</nav></div>"""
 
 def _footer_html() -> str:
     return f"""
@@ -249,12 +256,38 @@ def _footer_html() -> str:
 def _nav_js() -> str:
     return """
 <script>
-function toggleServicesDropdown(){var dd=document.getElementById("servicesDropdown");var b=dd.querySelector(".nav-dropdown-btn");var o=dd.classList.toggle("open");b.setAttribute("aria-expanded",o);}
-document.addEventListener("click",function(e){var dd=document.getElementById("servicesDropdown");if(dd&&!dd.contains(e.target)){dd.classList.remove("open");dd.querySelector(".nav-dropdown-btn").setAttribute("aria-expanded",false);}});
-var mt=document.getElementById("menuToggle"),nl=document.getElementById("navLinks");
-if(mt&&nl){mt.addEventListener("click",function(){var o=nl.classList.toggle("active");mt.setAttribute("aria-expanded",o);document.body.style.overflow=o?"hidden":"";});}
+function sdNormalizeDomain(v){
+  var d=(v||"").trim().toLowerCase();
+  if(d.indexOf("http://")===0||d.indexOf("https://")===0){
+    try{ d=new URL(d).hostname; }catch(e){ d=d.replace(/^https?:\\/\\//,""); }
+  }
+  d=d.split("/")[0].split("?")[0].split("#")[0].split(":")[0].trim();
+  if(d.indexOf("www.")===0) d=d.slice(4);
+  if(!d||d.indexOf(".")===-1||d.length>100) return null;
+  if(/^\\d{1,3}(\\.\\d{1,3}){3}$/.test(d)) return null;
+  if(!/^[a-z0-9.-]+\\.[a-z]{2,}$/.test(d)) return null;
+  return d;
+}
+function sdnav2ToggleServices(e){ e.stopPropagation(); document.getElementById("sdnav2Services").classList.toggle("open"); }
+document.addEventListener("click",function(e){
+  var dd=document.getElementById("sdnav2Services");
+  if(dd&&!dd.contains(e.target)) dd.classList.remove("open");
+});
+(function(){
+  var t=document.getElementById("sdnav2Toggle"), l=document.getElementById("sdnav2Links");
+  if(t&&l){ t.addEventListener("click",function(){
+    var o=l.classList.toggle("active");
+    t.setAttribute("aria-expanded",o);
+    document.body.style.overflow=o?"hidden":"";
+  }); }
+  var f=document.getElementById("sdnav2Search");
+  if(f){ f.addEventListener("submit",function(e){
+    var input=f.querySelector("input[name=q]");
+    var d=sdNormalizeDomain(input?input.value:"");
+    if(d){ e.preventDefault(); window.location.href="https://scamdekho.in/check/"+encodeURIComponent(d); }
+  }); }
+})();
 </script>"""
-
 
 # ══════════════════════════════════════════════════════════════════
 # MAIN PAGE BUILDER
@@ -555,7 +588,7 @@ crossorigin="anonymous"></script>
 /* ===== BASE ===== */
 *{{box-sizing:border-box;}}
 body{{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#f1f5f9;color:#0f172a;margin:0;line-height:1.65;}}
-.report-wrap{{max-width:760px;margin:0 auto;padding:110px 16px 40px;}}
+.report-wrap{{max-width:760px;margin:0 auto;padding:150px 16px 40px;}}
 .crumb{{font-size:12px;color:#64748b;margin:0 0 14px;}}
 .crumb a{{color:#0284c7;text-decoration:none;}}
 .card{{background:#fff;border:1px solid #e6ebf1;border-radius:16px;padding:28px;margin-bottom:20px;box-shadow:0 1px 3px rgba(15,23,42,0.04);}}
@@ -627,7 +660,7 @@ p{{margin:0 0 14px;color:#334155;}}
   .nav-dropdown{{width:100%;text-align:center;}}
   .nav-dropdown-btn{{width:100%;padding:16px!important;font-size:16px!important;border-bottom:1px solid #eef2f7;justify-content:center;}}
   .nav-dropdown-menu{{position:static;box-shadow:none;border:none;border-radius:0;padding:0 0 0 20px;min-width:unset;}}
-  .report-wrap{{padding:90px 12px 30px;}}
+  .report-wrap{{padding:110px 12px 30px;}}
   .card{{padding:20px;}}
   .hl-grid,.facts-grid{{grid-template-columns:1fr;gap:16px;}}
   .footer-container{{grid-template-columns:1fr;}}
@@ -747,6 +780,87 @@ p{{margin:0 0 14px;color:#334155;}}
 # ROUTES
 # ══════════════════════════════════════════════════════════════════
 
+def build_scanning_page_html(domain: str) -> str:
+    """Shown once, for a domain we have never scanned. Kicks off the real
+    scan client-side, then reloads into the cached SSR report."""
+    d = esc(domain)
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checking {d} — ScamDekho</title>
+<meta name="robots" content="noindex, follow">
+<meta name="description" content="Running a free safety check on {d} — trust score, SSL, domain age and blacklist status.">
+<link rel="canonical" href="{SITE}/check/{d}">
+<link rel="icon" type="image/x-icon" href="{SITE}/favicon/favicon.ico">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet"/>
+<link rel="stylesheet" href="{SITE}/style.css">
+<link rel="stylesheet" href="{SITE}/mobile.css">
+<style>
+.sd-scan-wrap{{max-width:680px;margin:0 auto;padding:160px 20px 90px;text-align:center;font-family:'Segoe UI',system-ui,sans-serif;}}
+@media(max-width:860px){{.sd-scan-wrap{{padding-top:120px;}}}}
+.sd-scan-dom{{font-size:clamp(21px,4vw,30px);font-weight:800;color:#0f172a;margin:0 0 10px;word-break:break-all;}}
+.sd-scan-sub{{color:#64748b;font-size:15px;margin:0 0 30px;}}
+.sd-spin{{width:46px;height:46px;margin:0 auto 24px;border:4px solid #e2e8f0;border-top-color:#0B63C5;border-radius:50%;animation:sdspin .9s linear infinite;}}
+@keyframes sdspin{{to{{transform:rotate(360deg);}}}}
+.sd-steps{{list-style:none;padding:0;margin:0 auto;max-width:330px;text-align:left;}}
+.sd-steps li{{padding:9px 0;color:#94a3b8;font-size:14px;transition:color .3s;}}
+.sd-steps li.on{{color:#0f172a;font-weight:600;}}
+.sd-steps li::before{{content:"\\25CB  ";color:#cbd5e1;}}
+.sd-steps li.on::before{{content:"\\25CF  ";color:#16a34a;}}
+.sd-err{{display:none;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:12px;padding:20px;margin-top:8px;font-size:14px;}}
+.sd-err a{{color:#0B63C5;font-weight:700;}}
+</style>
+</head>
+<body>
+{_navbar_html()}
+<main class="sd-scan-wrap">
+  <div class="sd-spin" id="sdSpin"></div>
+  <h1 class="sd-scan-dom">Checking {d}</h1>
+  <p class="sd-scan-sub">Running a free safety scan across 14 sources. This takes a few seconds.</p>
+  <ul class="sd-steps" id="sdSteps">
+    <li class="on">Resolving domain &amp; SSL certificate</li>
+    <li>Checking domain age &amp; ownership</li>
+    <li>Matching against phishing blacklists</li>
+    <li>Scoring and building your report</li>
+  </ul>
+  <div class="sd-err" id="sdErr">
+    We could not complete the scan for <strong>{d}</strong> right now.
+    <br><a href="{SITE}/url-checker">Try it on the URL checker &rarr;</a>
+  </div>
+</main>
+{_footer_html()}
+{_nav_js()}
+<script>
+(function(){{
+  var steps=document.querySelectorAll("#sdSteps li"), i=0;
+  var tick=setInterval(function(){{
+    i++; if(i<steps.length){{ steps[i].classList.add("on"); }} else {{ clearInterval(tick); }}
+  }}, 2200);
+  function fail(){{
+    clearInterval(tick);
+    document.getElementById("sdSpin").style.display="none";
+    document.getElementById("sdSteps").style.display="none";
+    document.getElementById("sdErr").style.display="block";
+  }}
+  fetch("{SITE}/api/v1/check/url", {{
+    method:"POST",
+    headers:{{"Content-Type":"application/json"}},
+    body:JSON.stringify({{url:"https://{d}"}})
+  }}).then(function(r){{
+    if(!r.ok) throw new Error("scan failed");
+    return r.json();
+  }}).then(function(){{
+    // page now exists server-side -> reload into the real report
+    window.location.replace("{SITE}/check/{d}?scanned=1");
+  }}).catch(fail);
+}})();
+</script>
+</body>
+</html>"""
+
+
 @router.get("/check/{domain}", response_class=HTMLResponse)
 async def public_check_page(domain: str):
     d = normalize_domain(domain)
@@ -758,17 +872,10 @@ async def public_check_page(domain: str):
 
     doc = await get_public_page(d)
     if not doc:
-        return HTMLResponse(
-            f"""<!DOCTYPE html><html><head><title>Check {esc(d)} — ScamDekho</title>
-            <meta name="robots" content="noindex"></head>
-            <body style="font-family:sans-serif;text-align:center;padding:60px 20px;">
-            <h1>We haven't analyzed {esc(d)} yet</h1>
-            <p>Run a free instant scan to get its trust score.</p>
-            <a href="https://scamdekho.in/url-checker" style="display:inline-block;background:#0ea5e9;color:#fff;
-            padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:14px;">
-            Scan {esc(d)} Now →</a></body></html>""",
-            status_code=404,
-        )
+        # Not scanned yet -> render instantly and run the scan in the browser.
+        # The scan writes the page (save_public_scan), so the reload below
+        # lands on the normal SSR report and the sitemap picks it up.
+        return HTMLResponse(build_scanning_page_html(d), status_code=200)
 
     # generate-once-cache-forever (sirf jab page actually khule)
     seo_html = await ensure_seo_content(doc)
