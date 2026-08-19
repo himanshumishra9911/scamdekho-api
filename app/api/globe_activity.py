@@ -9,8 +9,8 @@ know that, so nothing here should ever be labelled that way on the front end.
 
 Privacy rules baked in below:
   - only a scan category is exposed, never what the user actually pasted
-  - a city only appears once MIN_CHECKS_PER_CITY separate checks came from it,
-    so a single person is never a dot on the map
+  - a city+category pair only appears once MIN_CHECKS_PER_CITY separate checks
+    match it, so a single person is never a dot on the map
   - locations stay at city-centroid resolution
   - no per-check timestamps go out, only a bucket age for the whole feed
 """
@@ -34,8 +34,9 @@ router = APIRouter()
 # Verdicts are free text and vary per checker ("SCAM", "SUSPICIOUS",
 # "HIGH RISK SCAM", "VERY HIGH RISK SCAM"...), so match on substring.
 RISKY_VERDICT_RE = "SCAM|SUSPICIOUS|HIGH RISK"
-MIN_CHECKS_PER_CITY = 3      # k-anonymity floor
+MIN_CHECKS_PER_CITY = 3      # k-anonymity floor, applied per city+category
 MAX_MARKERS = 24
+MAX_MARKERS_PER_CITY = 2
 SCAN_FETCH_LIMIT = 1500
 CACHE_TTL_SECONDS = 90
 
@@ -112,18 +113,27 @@ async def _load_scans(since: datetime) -> list:
 
 
 def _build_markers(scans: list) -> list:
-    """Group risky checks by city, drop anything below the anonymity floor."""
-    groups = defaultdict(lambda: {"count": 0, "types": defaultdict(int), "score": 0, "geo": None})
+    """
+    Group risky checks by city *and* check type.
+
+    Grouping by city alone meant each city reported only its most common type.
+    URL checks outnumber everything else, so UPI, message, QR and PayPal
+    scams could never surface no matter how many came in. Keying on the type
+    as well lets each category stand on its own, and the anonymity floor now
+    applies per category, which is the stricter reading anyway.
+    """
+    groups = defaultdict(lambda: {"count": 0, "type": "", "score": 0, "geo": None})
 
     for doc in scans:
         geo = geo_lookup(doc.get("client_ip") or "")
         if not geo:
             continue
-        key = (geo["country_code"], geo["region"], geo["city"])
+        scan_type = (doc.get("type") or "").strip().lower()
+        key = (geo["country_code"], geo["region"], geo["city"], scan_type)
         g = groups[key]
         g["geo"] = geo
+        g["type"] = scan_type
         g["count"] += 1
-        g["types"][(doc.get("type") or "").strip().lower()] += 1
         try:
             g["score"] = max(g["score"], float(doc.get("risk_score") or 0))
         except (TypeError, ValueError):
@@ -134,7 +144,7 @@ def _build_markers(scans: list) -> list:
         if g["count"] < MIN_CHECKS_PER_CITY:
             continue
         geo = g["geo"]
-        top_type = max(g["types"].items(), key=lambda kv: kv[1])[0] if g["types"] else ""
+        top_type = g["type"]
         primary, secondary = _place_labels(geo)
         markers.append({
             "lat": geo["lat"],
@@ -150,9 +160,32 @@ def _build_markers(scans: list) -> list:
             "checks": g["count"],
         })
 
-    # busiest first, then trim
     markers.sort(key=lambda m: m["checks"], reverse=True)
-    return markers[:MAX_MARKERS]
+
+    # One city can now yield several markers (one per category). Cap how many
+    # it gets so a single busy city cannot fill the globe on its own.
+    per_city, kept = defaultdict(int), []
+    for m in markers:
+        if per_city[m["place"]] >= MAX_MARKERS_PER_CITY:
+            continue
+        per_city[m["place"]] += 1
+        kept.append(m)
+        if len(kept) >= MAX_MARKERS:
+            break
+
+    # Same-city markers share a centroid, so nudge the repeats apart. This is
+    # well under the resolution we already publish, and stops the dots from
+    # sitting exactly on top of each other.
+    seen = defaultdict(int)
+    for m in kept:
+        coord = (m["lat"], m["lng"])
+        n = seen[coord]
+        seen[coord] += 1
+        if n:
+            m["lat"] = round(m["lat"] + 0.18 * n, 2)
+            m["lng"] = round(m["lng"] + 0.18 * n, 2)
+
+    return kept
 
 
 @router.get("/globe-activity")
