@@ -46,6 +46,7 @@ TYPE_LABELS = {
     "upi": "UPI Fraud",
     "qr": "QR Code Fraud",
     "image": "Fake Payment Screenshot",
+    "payment_screenshot": "Fake Payment Screenshot",
     "offer_letter": "Job Scam",
     "paypal_email": "PayPal Phishing",
     "paypal_invoice": "PayPal Invoice Scam",
@@ -68,6 +69,25 @@ def _severity(score) -> str:
 
 def _label(scan_type: str) -> str:
     return TYPE_LABELS.get((scan_type or "").strip().lower(), "Reported Scam")
+
+
+def _place_labels(geo: dict) -> tuple:
+    """
+    (primary, secondary) for the banner.
+
+    GeoLite2 sometimes resolves only to a country, which used to render as
+    "India, India". Some region names are also far too long for the ticker
+    ("National Capital Territory of Delhi"), so fall back to the country.
+    """
+    city = (geo.get("city") or "").strip()
+    region = (geo.get("region") or "").strip()
+    country = (geo.get("country") or "").strip()
+
+    if not city:
+        return country, ""
+    if not region or region == city or len(region) > 20:
+        return city, country
+    return city, region
 
 
 async def _load_scans(since: datetime) -> list:
@@ -114,12 +134,16 @@ def _build_markers(scans: list) -> list:
             continue
         geo = g["geo"]
         top_type = max(g["types"].items(), key=lambda kv: kv[1])[0] if g["types"] else ""
+        primary, secondary = _place_labels(geo)
         markers.append({
             "lat": geo["lat"],
             "lng": geo["lng"],
-            "city": geo["city"] or geo["country"],
-            "state": geo["region"] or geo["country"],
+            "city": primary,
+            "state": secondary,
             "country": geo["country"],
+            # ready to print — avoids the caller having to guess about
+            # empty halves ("India, India", "Mumbai, ")
+            "place": f"{primary}, {secondary}" if secondary else primary,
             "type": _label(top_type),
             "severity": _severity(g["score"]),
             "checks": g["count"],
