@@ -1,7 +1,7 @@
 """
 PayPal Link Checker API - 3-Tier Scoring
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import List
 
@@ -9,6 +9,8 @@ from app.services.paypal_link_engine import PayPalLinkEngine
 from app.services.paypal_gpt_analyzer import PayPalGPTAnalyzer
 from app.services.paypal_constants import get_risk_level
 from app.services.cache_service import get_cached_scan, set_cached_scan
+from app.services.db_service import save_scan
+from app.services.security import request_meta
 
 router = APIRouter(
     prefix="/api/v1/paypal/link",
@@ -27,7 +29,7 @@ class BulkLinkCheckRequest(BaseModel):
 
 
 @router.post("/check")
-async def check_paypal_link(data: LinkCheckRequest):
+async def check_paypal_link(data: LinkCheckRequest, request: Request):
     """🔗 Check PayPal link - Returns: Likely Safe / Suspicious / Likely Scam"""
     try:
         cache_payload = {"url": data.url}
@@ -147,6 +149,13 @@ async def check_paypal_link(data: LinkCheckRequest):
                 "🔒 Enable 2FA on your account",
             ],
         }
+        await save_scan(
+            "paypal_link",
+            data.url,
+            risk["label"],
+            final_score,
+            request_meta(request),
+        )
         await set_cached_scan("paypal_link", cache_payload, response)
         return response
 
