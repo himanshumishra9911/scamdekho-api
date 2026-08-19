@@ -61,6 +61,21 @@ app.add_middleware(
 # ================= STARTUP =================
 @app.on_event("startup")
 async def startup():
+    # GeoLite2 for the globe. Runs in a worker thread so a ~60MB download
+    # never holds up boot or a request; the globe just stays on its curated
+    # markers until the file lands.
+    async def _prepare_geoip():
+        try:
+            import asyncio
+            from app.services.geo_service import ensure_db
+            ok = await asyncio.get_event_loop().run_in_executor(None, ensure_db)
+            logger.info("GeoLite2 ready: %s", ok)
+        except Exception as e:
+            logger.warning("GeoLite2 preparation skipped: %s", e)
+
+    import asyncio as _asyncio
+    _asyncio.create_task(_prepare_geoip())
+
     await setup_cache_ttl_index()
     await setup_screenshot_cache_index()
     await setup_partner_api_indexes()
