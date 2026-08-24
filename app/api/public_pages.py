@@ -650,6 +650,24 @@ p{{margin:0 0 14px;color:#334155;}}
 /* ===== AD SLOTS (AdSense-safe) ===== */
 .ad-wrap{{margin:30px 0;padding:10px;background:#fafbfc;border:1px solid #eef2f7;border-radius:12px;text-align:center;min-height:120px;overflow:hidden;}}
 .ad-label{{display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#b6c0cc;margin-bottom:6px;}}
+/* ===== DESKTOP SIDE RAILS ===== */
+/* Fixed position, so they sit in the empty gutter beside the 760px column and
+   never affect the content flow. Shown only when the gutter is wide enough. */
+.sd-rail{{display:none;}}
+.sd-rail ins{{display:block;}}
+.sd-rail:not(:has(ins[data-ad-status='filled'])) .ad-label{{visibility:hidden;}}
+/* max()/min() keep a rail on screen even when a scrollbar eats part of the
+   gutter, which is what pushed it off the edge at exactly the breakpoint. */
+@media(min-width:1440px){{
+  .sd-rail{{display:block;position:fixed;top:150px;width:300px;z-index:5;text-align:center;}}
+  .sd-rail-left{{left:max(12px, calc(50% - 700px));}}
+  .sd-rail-right{{left:min(calc(100% - 312px), calc(50% + 400px));}}
+  .sd-rail ins{{min-height:600px;}}
+}}
+@media(min-width:1180px) and (max-width:1439px){{
+  .sd-rail-right{{display:block;position:fixed;top:150px;width:160px;z-index:5;text-align:center;left:min(calc(100% - 172px), calc(50% + 400px));}}
+  .sd-rail-right ins{{min-height:600px;}}
+}}
 {age_gate_css}
 /* mobile */
 @media(max-width:768px){{
@@ -676,6 +694,25 @@ p{{margin:0 0 14px;color:#334155;}}
 {_navbar_html()}
 
 <main class="report-wrap">
+
+  <aside class="sd-rail sd-rail-left" aria-label="Advertisement">
+    <span class="ad-label">Advertisement</span>
+    <ins class="adsbygoogle"
+         data-ad-client="ca-pub-3772619201860644"
+         data-ad-slot="6697065974"
+         data-ad-format="vertical"
+         data-full-width-responsive="false"></ins>
+    <script>(adsbygoogle = window.adsbygoogle || []).push({{}});</script>
+  </aside>
+  <aside class="sd-rail sd-rail-right" aria-label="Advertisement">
+    <span class="ad-label">Advertisement</span>
+    <ins class="adsbygoogle"
+         data-ad-client="ca-pub-3772619201860644"
+         data-ad-slot="6697065974"
+         data-ad-format="vertical"
+         data-full-width-responsive="false"></ins>
+    <script>(adsbygoogle = window.adsbygoogle || []).push({{}});</script>
+  </aside>
 
   <nav class="crumb" aria-label="Breadcrumb">
     <a href="{SITE}/">Home</a> › <a href="{SITE}/url-checker">Website Checker</a> › <span>{domain}</span>
