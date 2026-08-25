@@ -29,6 +29,7 @@ from app.services.public_pages_service import (
     pages_collection,
 )
 from app.services.seo_content_engine import ensure_seo_content
+from app.utils.scoring import display_verdict
 
 router = APIRouter()
 
@@ -299,7 +300,7 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
     domain = esc(doc["domain"])
     r = doc.get("result", {})
     ts = int(r.get("trust_score", 50))
-    verdict = esc(r.get("verdict", "UNKNOWN"))
+    verdict = display_verdict(ts)
     color, bg, verdict_phrase = verdict_color(ts)
     other = r.get("other_info") or {}
     category_label = r.get("category_label") or r.get("category") or get_domain_category(doc.get("domain"))
