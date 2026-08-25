@@ -20,8 +20,6 @@ import html as html_lib
 import logging
 from openai import AsyncOpenAI
 
-from app.utils.scoring import display_verdict
-
 logger = logging.getLogger(__name__)
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -54,7 +52,7 @@ def _compact_facts(domain: str, result: dict) -> str:
     return "\n".join([
         f"Domain: {domain}",
         f"Trust score: {result.get('trust_score', 50)}/100",
-        f"Verdict: {display_verdict(result.get('trust_score', 50))}",
+        f"Verdict: {result.get('verdict', 'UNKNOWN')}",
         f"Domain created: {other.get('domain_created', 'Unknown')}",
         f"SSL issuer: {other.get('ssl_issuer', 'Unknown')}",
         f"Server location: {other.get('server_location', 'Unknown')}",
