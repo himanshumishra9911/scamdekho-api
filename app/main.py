@@ -7,6 +7,7 @@ from app.api.v1 import router as v1_router
 from app.api.analytics import router as analytics_router
 from app.api.feedback import router as feedback_router
 from app.services.cache_service import setup_cache_ttl_index
+from app.services.public_pages_service import sync_public_page_indexability
 from app.services.website_screenshot import setup_screenshot_cache_index
 from app.services.partner_api_service import (
     seed_default_partner_keys,
@@ -80,6 +81,7 @@ async def startup():
     await setup_screenshot_cache_index()
     await setup_partner_api_indexes()
     await seed_default_partner_keys()
+    await sync_public_page_indexability()
 
     # Scam DB initial sync
     try:

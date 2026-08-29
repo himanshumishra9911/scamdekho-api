@@ -21,7 +21,7 @@ def esc(value) -> str:
 
 async def _find_sitemap_docs(skip: int, limit: int, sort_field: str | None) -> list:
     projection = {"domain": 1, "last_scanned": 1, "first_scanned": 1}
-    cursor = pages_collection.find({}, projection)
+    cursor = pages_collection.find({"indexable": True}, projection)
     if sort_field:
         cursor = cursor.sort(sort_field, -1)
     cursor = cursor.skip(skip).limit(limit)
@@ -69,7 +69,7 @@ def _urlset_xml(items: str) -> str:
 @router.get("/sitemap-index.xml", include_in_schema=False)
 async def sitemap_index():
     try:
-        total = await pages_collection.count_documents({})
+        total = await pages_collection.count_documents({"indexable": True})
     except Exception as exc:
         logger.warning("Sitemap count failed: %s", exc)
         total = 0

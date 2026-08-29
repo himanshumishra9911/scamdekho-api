@@ -27,6 +27,7 @@ from app.services.public_pages_service import (
     get_recent_pages,
     normalize_domain,
     pages_collection,
+    should_index_public_domain,
 )
 from app.services.seo_content_engine import ensure_seo_content
 
@@ -296,7 +297,8 @@ document.addEventListener("click",function(e){
 # ══════════════════════════════════════════════════════════════════
 
 def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
-    domain = esc(doc["domain"])
+    raw_domain = str(doc["domain"])
+    domain = esc(raw_domain)
     r = doc.get("result", {})
     ts = int(r.get("trust_score", 50))
     verdict = esc(r.get("verdict", "UNKNOWN"))
@@ -310,7 +312,9 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
     last_str = last_scanned.strftime("%B %d, %Y") if isinstance(last_scanned, datetime) else "Recently"
     last_iso = last_scanned.strftime("%Y-%m-%d") if isinstance(last_scanned, datetime) else ""
     scan_count = int(doc.get("scan_count", 1))
-    indexable = bool(doc.get("indexable"))
+    # Recompute at render time so a stale stored flag cannot suppress a page
+    # while the deployment-time backfill is still running.
+    indexable = should_index_public_domain(raw_domain)
     robots = "index, follow" if indexable else "noindex, follow"
     canonical = f"{SITE}/check/{domain}"
 
@@ -823,13 +827,14 @@ def build_scanning_page_html(domain: str) -> str:
     """Shown once, for a domain we have never scanned. Kicks off the real
     scan client-side, then reloads into the cached SSR report."""
     d = esc(domain)
+    robots = "index, follow" if should_index_public_domain(domain) else "noindex, follow"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Checking {d} — ScamDekho</title>
-<meta name="robots" content="noindex, follow">
+<meta name="robots" content="{robots}">
 <meta name="description" content="Running a free safety check on {d} — trust score, SSL, domain age and blacklist status.">
 <link rel="canonical" href="{SITE}/check/{d}">
 <link rel="icon" type="image/x-icon" href="{SITE}/favicon/favicon.ico">

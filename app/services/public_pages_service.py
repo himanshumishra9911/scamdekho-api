@@ -2,7 +2,7 @@
 Public Pages Service — ScamDekho
 =================================
 Har URL scan ko ek public /check/{domain} page document me save karta hai.
-Quality score decide karta hai ki page Google me INDEX hoga ya NOINDEX.
+Public pages default INDEX hote hain; explicit major domains NOINDEX rehte hain.
 
 File location: app/services/public_pages_service.py
 """
@@ -29,7 +29,7 @@ IP_PATTERN = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
 LOCALHOST_PATTERN = re.compile(r"localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.|10\.\d+\.")
 
 # ──────────────────────────────────────────────
-# SEO-WORTHLESS DOMAINS
+# MAJOR/TRUSTED DOMAINS
 # Page BANEGA (user ko result milega) par INDEX nahi hoga (sitemap se bahar).
 # ──────────────────────────────────────────────
 FAMOUS_DOMAINS = {
@@ -47,33 +47,73 @@ FAMOUS_DOMAINS = {
     "clinikally.com", "headphonezone.in", "crazygames.com",
 }
 
-SHORTENER_HOSTS = {
-    "wa.link", "bit.ly", "t.co", "goo.gl", "tinyurl.com", "cutt.ly", "rebrand.ly",
-    "lnkd.in", "rb.gy", "is.gd", "shorturl.at", "ow.ly", "buff.ly", "linktr.ee",
-    "share.google",
-}
-
-TRANSIENT_SUFFIXES = (
-    ".app.goo.gl", ".goo.gl", ".zoom.us", ".archive.org", ".sharepoint.com",
-    ".safelinks.protection.outlook.com", ".google.com", ".googleusercontent.com",
-    ".firebaseapp.com", ".web.app", ".translate.goog", ".blogspot.com",
-)
-
-
 def is_seo_worthless(domain: str) -> bool:
     """True → page banao par index/sitemap se bahar rakho."""
     d = (domain or "").lower().strip()
     if not d:
         return True
-    if d in SHORTENER_HOSTS or d in FAMOUS_DOMAINS:
+    if d in FAMOUS_DOMAINS:
         return True
-    for suf in TRANSIENT_SUFFIXES:
-        if d.endswith(suf):
-            return True
     for fam in FAMOUS_DOMAINS:
         if d.endswith("." + fam):
             return True
     return False
+
+
+def should_index_public_domain(domain: str) -> bool:
+    """Return the canonical robots/sitemap decision for a /check page.
+
+    Adult, gambling, shortener, thin, and newly scanned domains are indexable
+    by default. Only the explicit major-domain list and its subdomains are not.
+    """
+    d = normalize_domain(domain)
+    return bool(d) and not is_seo_worthless(d)
+
+
+def _major_domain_mongo_conditions() -> list[dict]:
+    """Mongo filters matching major domains and any of their subdomains."""
+    exact = sorted(FAMOUS_DOMAINS)
+    suffixes = "|".join(re.escape(domain) for domain in exact)
+    subdomain_pattern = re.compile(rf"\.(?:{suffixes})$", re.IGNORECASE)
+    return [
+        {"domain": {"$in": exact}},
+        {"_id": {"$in": exact}},
+        {"domain": {"$regex": subdomain_pattern}},
+        {"_id": {"$regex": subdomain_pattern}},
+    ]
+
+
+async def sync_public_page_indexability() -> dict:
+    """Backfill existing records without rescanning or calling paid APIs."""
+    try:
+        major_conditions = _major_domain_mongo_conditions()
+        allowed_result = await pages_collection.update_many(
+            {
+                "$and": [
+                    {"$nor": major_conditions},
+                    {"indexable": {"$ne": True}},
+                ]
+            },
+            {"$set": {"indexable": True}},
+        )
+        blocked_result = await pages_collection.update_many(
+            {
+                "$and": [
+                    {"$or": major_conditions},
+                    {"indexable": {"$ne": False}},
+                ]
+            },
+            {"$set": {"indexable": False}},
+        )
+        updated = {
+            "made_indexable": int(getattr(allowed_result, "modified_count", 0)),
+            "made_noindex": int(getattr(blocked_result, "modified_count", 0)),
+        }
+        logger.info("Public page indexability sync complete: %s", updated)
+        return updated
+    except Exception as exc:
+        logger.error("Public page indexability sync failed: %s", exc)
+        return {"made_indexable": 0, "made_noindex": 0, "error": str(exc)}
 
 
 def get_domain_category(domain: str) -> str | None:
@@ -174,7 +214,9 @@ async def save_public_scan(url: str, result: dict) -> None:
 
         quality = calculate_page_quality(result)
         # famous brand / shortener / transient host → page rahe par index na ho
-        indexable = quality["indexable"] and not is_seo_worthless(domain)
+        # Allow by default. Quality remains diagnostic metadata, but it must not
+        # suppress adult, gambling, thin, or newly discovered public pages.
+        indexable = should_index_public_domain(domain)
 
         # Result se heavy/private cheezein hatao
         clean_result = {
