@@ -57,15 +57,15 @@ class PublicPageIndexingPolicyTests(unittest.IsolatedAsyncioTestCase):
         major_html = build_page_html(minimal_doc("google.com", True), [])
         self.assertIn('<meta name="robots" content="noindex, follow">', major_html)
 
-    def test_unscanned_page_uses_same_policy(self):
-        self.assertIn(
-            '<meta name="robots" content="index, follow">',
-            build_scanning_page_html("adult-example.xxx"),
-        )
-        self.assertIn(
-            '<meta name="robots" content="noindex, follow">',
-            build_scanning_page_html("facebook.com"),
-        )
+    def test_unscanned_page_is_always_noindex(self):
+        # The scanning page is a JS-driven skeleton; a crawler never waits for
+        # the scan to finish, so it must never be offered for indexing --
+        # regardless of what the domain policy says about the eventual report.
+        for domain in ("adult-example.xxx", "new-unknown-site.com", "facebook.com"):
+            with self.subTest(domain=domain):
+                html = build_scanning_page_html(domain)
+                self.assertIn('<meta name="robots" content="noindex, follow">', html)
+                self.assertNotIn('content="index, follow"', html)
 
     async def test_low_quality_scan_is_still_indexable(self):
         collection = RecordingCollection()

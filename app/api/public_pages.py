@@ -825,9 +825,17 @@ p{{margin:0 0 14px;color:#334155;}}
 
 def build_scanning_page_html(domain: str) -> str:
     """Shown once, for a domain we have never scanned. Kicks off the real
-    scan client-side, then reloads into the cached SSR report."""
+    scan client-side, then reloads into the cached SSR report.
+
+    Always noindex: the scan runs in the browser and takes ~15-20s, so a
+    crawler never waits long enough to see the report — it only ever gets
+    this 156-word skeleton. Letting it be indexable made every /check/<any
+    string> URL return an indexable 200, which is what filled Search Console's
+    "Crawled - currently not indexed" bucket. The real report sets its own
+    robots value via should_index_public_domain() once the scan has landed.
+    """
     d = esc(domain)
-    robots = "index, follow" if should_index_public_domain(domain) else "noindex, follow"
+    robots = "noindex, follow"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
