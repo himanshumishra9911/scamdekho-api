@@ -823,6 +823,21 @@ p{{margin:0 0 14px;color:#334155;}}
 # ROUTES
 # ══════════════════════════════════════════════════════════════════
 
+# Keep public reports available at the edge even when the Render origin has a
+# brief cold start or deployment restart. Browsers may revalidate after five
+# minutes, while shared CDNs can retain the stable scan report for a week and
+# serve stale content during an origin failure.
+PUBLIC_REPORT_HEADERS = {
+    "Cache-Control": (
+        "public, max-age=300, s-maxage=604800, "
+        "stale-while-revalidate=2592000, stale-if-error=2592000"
+    ),
+    "CDN-Cache-Control": (
+        "public, max-age=604800, "
+        "stale-while-revalidate=2592000, stale-if-error=2592000"
+    ),
+}
+
 def build_scanning_page_html(domain: str) -> str:
     """Shown once, for a domain we have never scanned. Kicks off the real
     scan client-side, then reloads into the cached SSR report.
@@ -941,7 +956,24 @@ async def public_check_page(domain: str):
 
     related = await get_recent_pages(limit=7)
     page = build_page_html(doc, related, seo_html)
-    return HTMLResponse(page, headers={"Cache-Control": "public, max-age=3600"})
+    return HTMLResponse(page, headers=PUBLIC_REPORT_HEADERS)
+
+
+@router.head("/check/{domain}", include_in_schema=False)
+async def public_check_page_head(domain: str):
+    """Return crawler/monitoring metadata without doing a MongoDB read.
+
+    A valid but not-yet-scanned domain has a 200 GET that renders the scanning
+    page, so HEAD must use the same status. Previously these requests returned
+    405, which inflated Google Search Console's host error rate.
+    """
+    if not normalize_domain(domain):
+        return Response(status_code=404, headers={"Cache-Control": "no-store"})
+    return Response(
+        status_code=200,
+        media_type="text/html",
+        headers=PUBLIC_REPORT_HEADERS,
+    )
 
 
 @router.get("/sitemap-index.xml")

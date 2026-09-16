@@ -12,7 +12,16 @@ logger = logging.getLogger(__name__)
 
 SITE = "https://scamdekho.in"
 SITEMAP_PAGE_SIZE = 50000
-SITEMAP_HEADERS = {"Cache-Control": "no-store, max-age=0"}
+SITEMAP_HEADERS = {
+    "Cache-Control": (
+        "public, max-age=300, s-maxage=3600, "
+        "stale-while-revalidate=86400, stale-if-error=86400"
+    ),
+    "CDN-Cache-Control": (
+        "public, max-age=3600, stale-while-revalidate=86400, "
+        "stale-if-error=86400"
+    ),
+}
 
 
 def esc(value) -> str:

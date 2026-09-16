@@ -2,7 +2,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.api.public_pages import build_page_html, build_scanning_page_html
+from app.api.public_pages import (
+    PUBLIC_REPORT_HEADERS,
+    build_page_html,
+    build_scanning_page_html,
+    public_check_page_head,
+)
 from app.services import public_pages_service
 
 
@@ -101,6 +106,21 @@ class PublicPageIndexingPolicyTests(unittest.IsolatedAsyncioTestCase):
             collection.update_many_calls[1][0][1],
             {"$set": {"indexable": False}},
         )
+
+    async def test_head_check_is_available_and_cdn_cacheable(self):
+        response = await public_check_page_head("casino-example.com")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.body, b"")
+        self.assertIn("s-maxage=604800", response.headers["cache-control"])
+        self.assertEqual(
+            response.headers["cdn-cache-control"],
+            PUBLIC_REPORT_HEADERS["CDN-Cache-Control"],
+        )
+
+    async def test_head_check_rejects_invalid_domain(self):
+        response = await public_check_page_head("not-a-domain")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.headers["cache-control"], "no-store")
 
 
 if __name__ == "__main__":

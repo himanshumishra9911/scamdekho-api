@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+.test-venv/
 .env
 pyvenv.cfg
 scamdekho.db
