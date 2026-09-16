@@ -836,6 +836,15 @@ PUBLIC_REPORT_HEADERS = {
         "public, max-age=604800, "
         "stale-while-revalidate=2592000, stale-if-error=2592000"
     ),
+    "X-ScamDekho-Edge-Cacheable": "yes",
+}
+
+# The JS scanning shell is temporary. Caching it would keep serving the shell
+# after the scan has written the real report, so explicitly bypass every cache.
+PUBLIC_SCANNING_HEADERS = {
+    "Cache-Control": "no-store, max-age=0",
+    "X-Robots-Tag": "noindex, follow",
+    "X-ScamDekho-Edge-Cacheable": "no",
 }
 
 def build_scanning_page_html(domain: str) -> str:
@@ -949,7 +958,11 @@ async def public_check_page(domain: str):
         # Not scanned yet -> render instantly and run the scan in the browser.
         # The scan writes the page (save_public_scan), so the reload below
         # lands on the normal SSR report and the sitemap picks it up.
-        return HTMLResponse(build_scanning_page_html(d), status_code=200)
+        return HTMLResponse(
+            build_scanning_page_html(d),
+            status_code=200,
+            headers=PUBLIC_SCANNING_HEADERS,
+        )
 
     # generate-once-cache-forever (sirf jab page actually khule)
     seo_html = await ensure_seo_content(doc)

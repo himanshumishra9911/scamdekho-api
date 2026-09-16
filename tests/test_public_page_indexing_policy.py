@@ -4,8 +4,10 @@ from unittest.mock import patch
 
 from app.api.public_pages import (
     PUBLIC_REPORT_HEADERS,
+    PUBLIC_SCANNING_HEADERS,
     build_page_html,
     build_scanning_page_html,
+    public_check_page,
     public_check_page_head,
 )
 from app.services import public_pages_service
@@ -121,6 +123,20 @@ class PublicPageIndexingPolicyTests(unittest.IsolatedAsyncioTestCase):
         response = await public_check_page_head("not-a-domain")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.headers["cache-control"], "no-store")
+
+    async def test_unscanned_shell_is_never_edge_cached(self):
+        with patch(
+            "app.api.public_pages.get_public_page",
+            return_value=None,
+        ):
+            response = await public_check_page("new-unknown-site.com")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["cache-control"],
+            PUBLIC_SCANNING_HEADERS["Cache-Control"],
+        )
+        self.assertEqual(response.headers["x-robots-tag"], "noindex, follow")
+        self.assertEqual(response.headers["x-scamdekho-edge-cacheable"], "no")
 
 
 if __name__ == "__main__":

@@ -97,6 +97,20 @@ export default {
         });
       }
 
+      // Only completed scan reports opt in. The temporary browser-driven
+      // scanning shell is noindex/no-store and must never survive at the edge
+      // after the scan writes the real report.
+      if (isPublicReport(incoming.pathname) &&
+          originResponse.headers.get("X-ScamDekho-Edge-Cacheable") !== "yes") {
+        const headers = new Headers(originResponse.headers);
+        headers.set("X-ScamDekho-Edge-Cache", "BYPASS");
+        return new Response(method === "HEAD" ? null : originResponse.body, {
+          status: originResponse.status,
+          statusText: originResponse.statusText,
+          headers,
+        });
+      }
+
       const cacheResponse = responseWithCacheHeaders(
         originResponse.clone(),
         ttl,
