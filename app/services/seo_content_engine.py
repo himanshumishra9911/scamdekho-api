@@ -20,6 +20,8 @@ import html as html_lib
 import logging
 from openai import AsyncOpenAI
 
+from app.utils.scoring import display_verdict
+
 logger = logging.getLogger(__name__)
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -30,10 +32,21 @@ SEO_CONTENT_MODEL = os.getenv("SEO_CONTENT_MODEL", "gpt-4.1-nano")
 # Score itna badle tabhi content dobara banega (paisa bachane ke liye)
 REGEN_SCORE_DELTA = 6
 
+# Article ka version. Prompt ya verdict logic badle -> ye bump karo, aur har
+# page apne AGLE render pe khud regenerate ho jayega. Bina iske ek prompt fix
+# sirf naye scans pe lagta tha aur purane stored articles verdict se ulta bolte
+# rehte the — 25 Aug ka label fix isi wajah se revert karna pada tha.
+# Lazy hai: bulk bill nahi aata, aur jin pages pe traffic hai wo pehle sudhrte hain.
+SEO_CONTENT_VERSION = 2
+
 SYSTEM_PROMPT = (
     "You are an SEO copywriter for ScamDekho, a website-safety checker for Indian users. "
     "You write clear, factual, original website reviews split into labelled sections. "
     "STRICT RULES: Use ONLY the facts provided — never invent owner names, dates, scores, or sources. "
+    "A fact given as Unknown, Unavailable or missing is NOT a positive signal: say plainly that it "
+    "could not be verified, and never write that its absence supports trust or safety. "
+    "Your conclusion must agree with the Verdict you are given — never call a site safe or legitimate "
+    "when the verdict is SUSPICIOUS, HIGH RISK or SCAM, and never call it a scam when the verdict is SAFE. "
     "Simple English, neutral and helpful tone, no fluff, no repetition. Total 400-500 words across all sections. "
     "Return ONLY valid JSON, no markdown."
 )
@@ -52,7 +65,7 @@ def _compact_facts(domain: str, result: dict) -> str:
     return "\n".join([
         f"Domain: {domain}",
         f"Trust score: {result.get('trust_score', 50)}/100",
-        f"Verdict: {result.get('verdict', 'UNKNOWN')}",
+        f"Verdict: {display_verdict(result.get('trust_score', 50))}",
         f"Domain created: {other.get('domain_created', 'Unknown')}",
         f"SSL issuer: {other.get('ssl_issuer', 'Unknown')}",
         f"Server location: {other.get('server_location', 'Unknown')}",
@@ -126,7 +139,13 @@ async def ensure_seo_content(doc: dict) -> str | None:
 
     cached = doc.get("seo_content")
     cached_score = doc.get("seo_content_score")
-    if cached and cached_score is not None and abs(int(cached_score) - current_score) <= REGEN_SCORE_DELTA:
+    cached_version = doc.get("seo_content_version", 1)
+    if (
+        cached
+        and cached_score is not None
+        and cached_version == SEO_CONTENT_VERSION
+        and abs(int(cached_score) - current_score) <= REGEN_SCORE_DELTA
+    ):
         return cached  # cache hit — koi GPT call nahi
 
     domain = doc.get("domain")
@@ -140,7 +159,11 @@ async def ensure_seo_content(doc: dict) -> str | None:
     try:
         await pages_collection.update_one(
             {"_id": domain},
-            {"$set": {"seo_content": content, "seo_content_score": current_score}},
+            {"$set": {
+                "seo_content": content,
+                "seo_content_score": current_score,
+                "seo_content_version": SEO_CONTENT_VERSION,
+            }},
         )
     except Exception as e:
         logger.error(f"Could not cache seo_content for {domain}: {e}")
