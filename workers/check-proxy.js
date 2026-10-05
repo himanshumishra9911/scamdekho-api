@@ -82,7 +82,9 @@ export default {
       headers.delete(name);
     }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    // A cold report may refresh its stored article on the existing backend.
+    // Allow that normal work; use a short deadline only when a safe fallback exists.
+    const timeout = setTimeout(() => controller.abort(), cached ? 10000 : 45000);
     try {
       // Forced subrequest caching overrides the origin's no-store before our
       // completed-report check. Disable it, and use only the explicit Cache API.
