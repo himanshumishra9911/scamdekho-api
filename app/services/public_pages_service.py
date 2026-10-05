@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 pages_collection = db["public_pages"]
 
+
+class PublicPageStorageUnavailable(RuntimeError):
+    """The report lookup failed; this is not evidence that a page is missing."""
+
 # ──────────────────────────────────────────────
 # ADULT DOMAIN TEXT CATEGORY LABELS
 # ──────────────────────────────────────────────
@@ -254,8 +258,9 @@ async def get_public_page(domain: str) -> dict | None:
         return None
     try:
         return await pages_collection.find_one({"_id": d})
-    except Exception:
-        return None
+    except Exception as exc:
+        logger.warning("Public report lookup unavailable for %s (%s)", d, type(exc).__name__)
+        raise PublicPageStorageUnavailable(d) from exc
 
 
 async def get_recent_pages(limit: int = 10) -> list:

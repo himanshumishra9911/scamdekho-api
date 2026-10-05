@@ -22,6 +22,7 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, Response, JSONResponse
 
 from app.services.public_pages_service import (
+    PublicPageStorageUnavailable,
     get_domain_category,
     get_public_page,
     get_recent_pages,
@@ -954,7 +955,10 @@ async def public_check_page(domain: str):
             status_code=404,
         )
 
-    doc = await get_public_page(d)
+    try:
+        doc = await get_public_page(d)
+    except PublicPageStorageUnavailable:
+        return public_storage_unavailable()
     if not doc:
         # Not scanned yet -> render instantly and run the scan in the browser.
         # The scan writes the page (save_public_scan), so the reload below
@@ -973,20 +977,37 @@ async def public_check_page(domain: str):
     return HTMLResponse(page, headers=PUBLIC_REPORT_HEADERS)
 
 
+def public_storage_unavailable() -> Response:
+    # A temporary database outage must not replace existing reports with a
+    # successful noindex shell (or replace the sitemap with an empty 200 XML).
+    return Response(
+        content="Reports temporarily unavailable. Please retry shortly.",
+        status_code=503,
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "CDN-Cache-Control": "no-store",
+            "Retry-After": "60",
+            "X-ScamDekho-Edge-Cacheable": "no",
+        },
+    )
+
+
 @router.head("/check/{domain}", include_in_schema=False)
 async def public_check_page_head(domain: str):
-    """Return crawler/monitoring metadata without doing a MongoDB read.
-
-    A valid but not-yet-scanned domain has a 200 GET that renders the scanning
-    page, so HEAD must use the same status. Previously these requests returned
-    405, which inflated Google Search Console's host error rate.
-    """
-    if not normalize_domain(domain):
+    """Match GET availability/cache policy without generating content or scans."""
+    d = normalize_domain(domain)
+    if not d:
         return Response(status_code=404, headers={"Cache-Control": "no-store"})
+    try:
+        doc = await get_public_page(d)
+    except PublicPageStorageUnavailable:
+        unavailable = public_storage_unavailable()
+        return Response(status_code=503, headers=unavailable.headers)
     return Response(
         status_code=200,
         media_type="text/html",
-        headers=PUBLIC_REPORT_HEADERS,
+        headers=PUBLIC_REPORT_HEADERS if doc else PUBLIC_SCANNING_HEADERS,
     )
 
 
@@ -995,7 +1016,7 @@ async def sitemap_index():
     try:
         total = await pages_collection.count_documents({"indexable": True})
     except Exception:
-        total = 0
+        return public_storage_unavailable()
     page_count = max(1, (total + SITEMAP_PAGE_SIZE - 1) // SITEMAP_PAGE_SIZE)
     items = "".join(
         f"<sitemap><loc>{SITE}/sitemap-checks-{i}.xml</loc></sitemap>" for i in range(page_count)
@@ -1014,7 +1035,7 @@ async def sitemap_checks_paginated(page: int):
         ).sort("last_scanned", -1).skip(skip).limit(SITEMAP_PAGE_SIZE)
         docs = [doc async for doc in cursor]
     except Exception:
-        docs = []
+        return public_storage_unavailable()
     items = ""
     for doc in docs:
         lastmod = ""

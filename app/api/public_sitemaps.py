@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import Response
 
-from app.services.public_pages_service import get_recent_pages, pages_collection
+from app.services.public_pages_service import PublicPageStorageUnavailable, pages_collection
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -38,26 +38,21 @@ async def _find_sitemap_docs(skip: int, limit: int, sort_field: str | None) -> l
 
 
 async def _fetch_sitemap_docs(skip: int, limit: int) -> list:
-    """Fetch sitemap docs with fallbacks so the XML is never empty while pages exist."""
+    """Try alternate sort plans, but never turn database errors into empty XML."""
     for sort_field in ("last_scanned", "first_scanned", None):
         try:
-            docs = await _find_sitemap_docs(skip, limit, sort_field)
-            if docs or skip > 0:
-                return docs
+            return await _find_sitemap_docs(skip, limit, sort_field)
         except Exception as exc:
-            logger.warning("Sitemap query failed using %s sort: %s", sort_field, exc)
+            logger.warning("Sitemap query failed using %s sort (%s)", sort_field, type(exc).__name__)
+    raise PublicPageStorageUnavailable("sitemap")
 
-    # recent-checks is proven live in production; use it as a final page-0 fallback.
-    if skip == 0:
-        for fallback_limit in (min(limit, 50000), 1000, 100, 10):
-            try:
-                docs = await get_recent_pages(limit=fallback_limit)
-                if docs:
-                    return docs
-            except Exception as exc:
-                logger.warning("Recent sitemap fallback failed at limit %s: %s", fallback_limit, exc)
 
-    return []
+def _unavailable() -> Response:
+    return Response(
+        "Sitemap temporarily unavailable. Please retry shortly.",
+        status_code=503,
+        headers={"Cache-Control": "no-store", "CDN-Cache-Control": "no-store", "Retry-After": "60"},
+    )
 
 
 def _lastmod(doc: dict) -> str:
@@ -80,15 +75,8 @@ async def sitemap_index():
     try:
         total = await pages_collection.count_documents({"indexable": True})
     except Exception as exc:
-        logger.warning("Sitemap count failed: %s", exc)
-        total = 0
-
-    if total <= 0:
-        try:
-            total = len(await get_recent_pages(limit=SITEMAP_PAGE_SIZE))
-        except Exception as exc:
-            logger.warning("Sitemap count fallback failed: %s", exc)
-            total = 0
+        logger.warning("Sitemap count failed (%s)", type(exc).__name__)
+        return _unavailable()
 
     page_count = max(1, (total + SITEMAP_PAGE_SIZE - 1) // SITEMAP_PAGE_SIZE)
     items = "".join(
@@ -113,7 +101,10 @@ async def sitemap_checks_paginated(page: int):
             headers=SITEMAP_HEADERS,
         )
 
-    docs = await _fetch_sitemap_docs(page * SITEMAP_PAGE_SIZE, SITEMAP_PAGE_SIZE)
+    try:
+        docs = await _fetch_sitemap_docs(page * SITEMAP_PAGE_SIZE, SITEMAP_PAGE_SIZE)
+    except PublicPageStorageUnavailable:
+        return _unavailable()
     items = ""
     for doc in docs:
         domain = doc.get("domain") or doc.get("_id")

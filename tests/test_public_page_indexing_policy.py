@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.api.public_pages import (
     PUBLIC_REPORT_HEADERS,
@@ -9,6 +9,8 @@ from app.api.public_pages import (
     build_scanning_page_html,
     public_check_page,
     public_check_page_head,
+    sitemap_index,
+    sitemap_checks_paginated,
 )
 from app.services import public_pages_service
 
@@ -110,7 +112,8 @@ class PublicPageIndexingPolicyTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_head_check_is_available_and_cdn_cacheable(self):
-        response = await public_check_page_head("casino-example.com")
+        with patch("app.api.public_pages.get_public_page", return_value=minimal_doc("casino-example.com", True)):
+            response = await public_check_page_head("casino-example.com")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.body, b"")
         self.assertIn("s-maxage=604800", response.headers["cache-control"])
@@ -137,6 +140,42 @@ class PublicPageIndexingPolicyTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.headers["x-robots-tag"], "noindex, follow")
         self.assertEqual(response.headers["x-scamdekho-edge-cacheable"], "no")
+
+    async def test_database_failure_is_not_a_missing_report(self):
+        collection = SimpleNamespace(find_one=AsyncMock(side_effect=RuntimeError("offline")))
+        with patch.object(public_pages_service, "pages_collection", collection):
+            with self.assertRaises(public_pages_service.PublicPageStorageUnavailable):
+                await public_pages_service.get_public_page("existing.example")
+
+    async def test_report_outage_is_retryable_not_noindex(self):
+        for handler in (public_check_page, public_check_page_head):
+            with patch("app.api.public_pages.get_public_page", side_effect=public_pages_service.PublicPageStorageUnavailable("offline")):
+                response = await handler("existing.example")
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.headers["retry-after"], "60")
+            self.assertIn("no-store", response.headers["cache-control"])
+            self.assertNotIn("x-robots-tag", response.headers)
+            self.assertNotIn(b"noindex", response.body)
+
+    async def test_missing_report_head_matches_get_cache_policy(self):
+        with patch("app.api.public_pages.get_public_page", return_value=None):
+            response = await public_check_page_head("new.example")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.body, b"")
+        self.assertEqual(response.headers["x-robots-tag"], "noindex, follow")
+        self.assertIn("no-store", response.headers["cache-control"])
+
+    async def test_sitemap_database_errors_are_not_empty_successful_sitemaps(self):
+        collection = SimpleNamespace(
+            count_documents=AsyncMock(side_effect=RuntimeError("offline")),
+            find=lambda *args: (_ for _ in ()).throw(RuntimeError("offline")),
+        )
+        with patch("app.api.public_pages.pages_collection", collection):
+            responses = [await sitemap_index(), await sitemap_checks_paginated(0)]
+        for response in responses:
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("no-store", response.headers["cache-control"])
+            self.assertNotIn(b"<urlset", response.body)
 
 
 if __name__ == "__main__":
