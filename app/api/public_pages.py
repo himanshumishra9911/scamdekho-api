@@ -58,6 +58,62 @@ def is_adult_category_label(category_label) -> bool:
     return any(term in label for term in ("adult", "18+", "nsfw"))
 
 
+def _scan_history_html(domain: str, doc: dict, current_ts: int, first_scanned_str: str) -> str:
+    """Render how this domain's verdict moved across our own past scans.
+
+    Returns "" when there is nothing real to show — a single data point is a
+    restatement of the facts table, and a fabricated trend would be worse
+    than no section at all.
+    """
+    history = doc.get("score_history") or []
+    points = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        at = entry.get("at")
+        score = entry.get("trust_score")
+        if not isinstance(at, datetime) or score is None:
+            continue
+        try:
+            points.append((at, int(score)))
+        except (TypeError, ValueError):
+            continue
+
+    if len(points) < 2:
+        return ""
+
+    points.sort(key=lambda p: p[0])
+    first_score = points[0][1]
+    delta = current_ts - first_score
+
+    if delta > 0:
+        trend = f"Trust score has risen {delta} points since we first checked it."
+    elif delta < 0:
+        trend = f"Trust score has fallen {abs(delta)} points since we first checked it."
+    else:
+        trend = "Trust score has not moved since we first checked it."
+
+    rows = "".join(
+        f'<tr><td>{at.strftime("%d %b %Y")}</td><td>{score}/100</td></tr>'
+        for at, score in reversed(points)
+    )
+    since = f" since {esc(first_scanned_str)}" if first_scanned_str else ""
+
+    return f"""
+  <!-- SCAN HISTORY -->
+  <section class="card">
+    <h2>What Has Changed on {esc(domain)}</h2>
+    <p class="muted" style="margin-bottom:14px;">
+      We have re-checked this domain {len(points)} times{since}. {esc(trend)}
+    </p>
+    <table class="hist-table">
+      <thead><tr><th>Checked on</th><th>Trust score</th></tr></thead>
+      <tbody>{rows}</tbody>
+    </table>
+  </section>
+"""
+
+
 # ══════════════════════════════════════════════════════════════════
 # UNIQUE CONTENT (template fallback — jab GPT na chale)
 # ══════════════════════════════════════════════════════════════════
@@ -314,9 +370,19 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
     last_str = last_scanned.strftime("%B %d, %Y") if isinstance(last_scanned, datetime) else "Recently"
     last_iso = last_scanned.strftime("%Y-%m-%d") if isinstance(last_scanned, datetime) else ""
     scan_count = int(doc.get("scan_count", 1))
-    # Recompute at render time so a stale stored flag cannot suppress a page
-    # while the deployment-time backfill is still running.
-    indexable = should_index_public_domain(raw_domain)
+    first_scanned = doc.get("first_scanned")
+    first_scanned_str = (
+        first_scanned.strftime("%B %d, %Y") if isinstance(first_scanned, datetime) else ""
+    )
+    # The stored flag is the decision — it is what the quality gate wrote at
+    # scan time and what the sitemap reads. Ignoring it here meant a pruned
+    # page kept serving "index, follow" and stayed in the index; only its
+    # sitemap entry disappeared. Absent flag → fall back to the domain veto,
+    # so a doc written before the gate existed still renders sensibly.
+    stored_indexable = doc.get("indexable")
+    if stored_indexable is None:
+        stored_indexable = True
+    indexable = bool(stored_indexable) and should_index_public_domain(raw_domain)
     robots = "index, follow" if indexable else "noindex, follow"
     canonical = f"{SITE}/check/{domain}"
 
@@ -373,6 +439,9 @@ def build_page_html(doc: dict, related: list, seo_html: str = None) -> str:
         + fact("Trust Score", f"{ts}/100")
         + fact("Verdict", verdict)
     )
+
+    # ── scan history ──
+    history_html = _scan_history_html(domain, doc, ts, first_scanned_str)
 
     # ── source grid ──
     src_html = ""
@@ -631,6 +700,12 @@ p{{margin:0 0 14px;color:#334155;}}
 .fact-cell{{background:#f8fafc;border:1px solid #eef2f7;border-radius:10px;padding:12px 14px;}}
 .fact-k{{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;}}
 .fact-v{{font-size:14px;font-weight:600;color:#334155;margin-top:4px;word-break:break-all;}}
+/* scan history */
+.hist-table{{width:100%;border-collapse:collapse;font-size:14px;}}
+.hist-table th{{text-align:left;font-size:10px;font-weight:700;color:#94a3b8;
+  text-transform:uppercase;letter-spacing:.05em;padding:0 0 8px;}}
+.hist-table td{{padding:9px 0;border-top:1px solid #eef2f7;color:#334155;}}
+.hist-table td:last-child{{text-align:right;font-weight:600;}}
 /* sources */
 .grid-src{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;}}
 .src-cell{{border:1px solid #e2e8f0;border-radius:10px;padding:13px 15px;}}
@@ -780,6 +855,7 @@ p{{margin:0 0 14px;color:#334155;}}
     <h2>Facts About {domain}</h2>
     <div class="facts-grid">{facts_html}</div>
   </section>
+{history_html}
 
   <!-- SOURCES -->
   <section class="card">
