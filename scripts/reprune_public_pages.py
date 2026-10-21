@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from collections import Counter
 from pathlib import Path
 
 from dotenv import load_dotenv
 from pymongo import UpdateOne
+from pymongo.errors import PyMongoError
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -87,6 +89,14 @@ def decide(doc: dict) -> tuple[bool, list[str]]:
 async def main() -> int:
     args = parse_args()
 
+    if not os.getenv("MONGO_URL"):
+        print("MONGO_URL is not set.")
+        print("Put it in a .env file at the repo root (it is gitignored):")
+        print("")
+        print("    MONGO_URL=<the value from Render > scamdekho-api > Environment>")
+        print("    OPENAI_API_KEY=<any non-empty value; this script makes no API calls>")
+        return 2
+
     demand = load_search_demand_domains()
     if not demand:
         print("WARNING: search-demand list is empty — pages that earn clicks")
@@ -120,30 +130,38 @@ async def main() -> int:
     if args.limit:
         cursor = cursor.limit(args.limit)
 
-    async for doc in cursor:
-        total += 1
-        domain = doc.get("domain") or doc.get("_id") or ""
-        was = bool(doc.get("indexable"))
-        now, reasons = decide(doc)
-        if now:
-            indexed_after += 1
+    try:
+        async for doc in cursor:
+            total += 1
+            domain = doc.get("domain") or doc.get("_id") or ""
+            was = bool(doc.get("indexable"))
+            now, reasons = decide(doc)
+            if now:
+                indexed_after += 1
 
-        if reasons == ["search_demand"]:
-            kept_by_demand += 1
-        elif not now:
-            for reason in reasons:
-                reason_counts[reason] += 1
+            if reasons == ["search_demand"]:
+                kept_by_demand += 1
+            elif not now:
+                for reason in reasons:
+                    reason_counts[reason] += 1
 
-        if now == was:
-            unchanged += 1
-            continue
+            if now == was:
+                unchanged += 1
+                continue
 
-        (now_indexable if now else now_noindex).append(domain)
-        pending.append((doc.get("_id") or domain, now))
-        if len(pending) >= BATCH_SIZE:
-            applied += await flush()
+            (now_indexable if now else now_noindex).append(domain)
+            pending.append((doc.get("_id") or domain, now))
+            if len(pending) >= BATCH_SIZE:
+                applied += await flush()
 
-    applied += await flush()
+        applied += await flush()
+    except PyMongoError as exc:
+        print(f"Could not reach MongoDB: {type(exc).__name__}")
+        print(f"  {exc}"[:400])
+        print("")
+        print("Check that MONGO_URL is correct and that this machine's IP is")
+        print("allowed in Atlas (Network Access). Nothing was written.")
+        return 1
 
     print("=" * 62)
     print(f"{'DRY RUN — nothing written' if not args.apply else 'APPLIED'}")
